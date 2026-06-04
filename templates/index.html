@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReelForge</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+</head>
+<body>
+  <header class="header">
+    <h1>⚡ ReelForge</h1>
+    <p class="subtitle">Clips horizontales → verticales para reels &amp; shorts</p>
+  </header>
+
+  <main class="container">
+    <!-- 1. Upload zone -->
+    <section id="upload-zone" class="card drop-zone">
+      <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+      <div class="drop-inner">
+        <p class="drop-icon">⬆</p>
+        <p>Arrastra un video aquí o <span class="link">haz click para seleccionar</span></p>
+        <p class="hint">mp4, mov, mkv, avi</p>
+      </div>
+    </section>
+
+    <!-- 2. Preview + controls -->
+    <section id="editor" class="hidden">
+      <div class="editor-grid">
+        <div class="card preview-panel">
+          <h2>Preview</h2>
+          <div class="preview-row">
+            <div class="preview-col">
+              <span class="preview-tag">Original 16:9</span>
+              <video id="preview" controls></video>
+            </div>
+            <div class="preview-col">
+              <span class="preview-tag">Resultado 9:16</span>
+              <canvas id="vertical-preview"></canvas>
+            </div>
+          </div>
+          <p id="file-name" class="file-name"></p>
+        </div>
+
+        <div class="card controls-panel">
+          <h2>Ajustes</h2>
+
+          <label class="control">
+            <span>Blur del fondo <em id="blur-val">20</em></span>
+            <input type="range" id="blur_intensity" min="0" max="50" value="20">
+          </label>
+
+          <label class="control">
+            <span>Brillo del fondo <em id="brightness-val">0.6</em></span>
+            <input type="range" id="bg_brightness" min="0.3" max="1.0" step="0.05" value="0.6">
+          </label>
+
+          <label class="control">
+            <span>Zoom clip principal <em id="scale-val">1.0</em></span>
+            <input type="range" id="main_clip_scale" min="0.7" max="5" step="0.05" value="1.0">
+          </label>
+
+          <label class="control">
+            <span>Posición del clip</span>
+            <select id="main_clip_position">
+              <option value="center" selected>Centro</option>
+              <option value="top">Arriba</option>
+              <option value="bottom">Abajo</option>
+            </select>
+          </label>
+
+          <button id="process-btn" class="btn-primary">Procesar a vertical</button>
+        </div>
+      </div>
+
+      <!-- Progress + result -->
+      <div id="progress-wrap" class="card hidden">
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <p id="progress-label">Procesando… 0%</p>
+      </div>
+
+      <div id="result-wrap" class="card hidden">
+        <p class="success">✓ Listo</p>
+        <a id="download-btn" class="btn-primary" download>Descargar video</a>
+        <button id="reset-btn" class="btn-secondary">Procesar otro</button>
+      </div>
+
+      <div id="error-wrap" class="card error hidden">
+        <p id="error-msg"></p>
+        <button id="error-reset-btn" class="btn-secondary">Reintentar</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
