@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Archivos temporales de la app (videos subidos y procesados)
+uploads/
+outputs/
+
+# macOS
+.DS_Store
