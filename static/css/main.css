@@ -313,6 +313,57 @@ h2 { font-size: 1rem; margin: 0 0 16px; color: var(--muted); text-transform: upp
   line-height: 1.4;
 }
 
+/* Downloader */
+.dl-url {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 1rem;
+}
+.dl-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.dl-field { display: flex; flex-direction: column; gap: 8px; }
+.dl-quality-field { min-width: 140px; }
+.dl-label { font-size: .9rem; color: var(--muted); }
+.dl-toggle {
+  display: flex;
+  gap: 6px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+}
+.dl-fmt {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: .9rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dl-fmt:hover { color: var(--text); }
+.dl-fmt.active { background: var(--accent); color: #fff; }
+#dl-quality {
+  padding: 9px 10px;
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: .95rem;
+}
+.dl-note { color: var(--muted); font-size: .8rem; margin: 12px 0 0; }
+#dl-result-title { margin: 0 0 12px; font-size: .95rem; color: var(--text); }
+
 /* Buttons */
 .btn-primary, .btn-secondary {
   display: inline-block;

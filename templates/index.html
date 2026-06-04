@@ -20,6 +20,9 @@
         <button class="nav-item" data-target="view-insert">
           <span class="nav-icon">✂️</span> Insert
         </button>
+        <button class="nav-item" data-target="view-downloader">
+          <span class="nav-icon">⬇️</span> Downloader
+        </button>
       </nav>
     </aside>
 
@@ -33,6 +36,9 @@
       <section id="view-insert" class="module-view hidden">
         {% include "modules/insert.html" %}
       </section>
+      <section id="view-downloader" class="module-view hidden">
+        {% include "modules/downloader.html" %}
+      </section>
     </main>
   </div>
 
@@ -40,6 +46,7 @@
   <script src="{{ url_for('static', filename='js/vertical_convert.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sound_drop.js') }}"></script>
   <script src="{{ url_for('static', filename='js/insert.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/downloader.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
