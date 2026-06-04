@@ -7,6 +7,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 OUTPUT_FOLDER = os.path.join(BASE_DIR, "outputs")
+DOWNLOAD_FOLDER = os.path.join(BASE_DIR, "downloads")
 
 MAX_UPLOAD_SIZE_MB = 2000
 MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024

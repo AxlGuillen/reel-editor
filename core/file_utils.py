@@ -8,9 +8,10 @@ import config
 
 
 def ensure_dirs() -> None:
-    """Crea las carpetas de uploads y outputs si no existen."""
+    """Crea las carpetas temporales (uploads, outputs, downloads) si no existen."""
     os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
     os.makedirs(config.OUTPUT_FOLDER, exist_ok=True)
+    os.makedirs(config.DOWNLOAD_FOLDER, exist_ok=True)
 
 
 def save_upload(file_storage) -> str:

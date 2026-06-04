@@ -5,9 +5,10 @@ __pycache__/
 venv/
 env/
 
-# Archivos temporales de la app (videos subidos y procesados)
+# Archivos temporales de la app (videos subidos, procesados y descargados)
 uploads/
 outputs/
+downloads/
 
 # macOS
 .DS_Store
