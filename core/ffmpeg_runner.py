@@ -53,6 +53,46 @@ def has_audio_stream(input_path: str) -> bool:
         return True
 
 
+def probe_resolution(input_path: str) -> tuple[int, int] | None:
+    """Retorna (width, height) del primer stream de video, o None si falla."""
+    cmd = [
+        config.FFPROBE_PATH,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-print_format", "json",
+        input_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        streams = json.loads(result.stdout or "{}").get("streams", [])
+        if not streams:
+            return None
+        return int(streams[0]["width"]), int(streams[0]["height"])
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
+        return None
+
+
+def probe_fps(input_path: str) -> float | None:
+    """Retorna los fps del primer stream de video (r_frame_rate), o None."""
+    cmd = [
+        config.FFPROBE_PATH,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=r_frame_rate",
+        "-print_format", "json",
+        input_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        streams = json.loads(result.stdout or "{}").get("streams", [])
+        num, den = streams[0]["r_frame_rate"].split("/")
+        den = float(den)
+        return float(num) / den if den else None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError, ZeroDivisionError):
+        return None
+
+
 def _hms_to_seconds(match) -> float:
     hours, minutes, seconds = match.groups()
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
