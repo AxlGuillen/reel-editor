@@ -97,8 +97,8 @@ function drawVerticalPreview() {
   const bh = vh * cover;
   vCtx.drawImage(preview, (CANVAS_W - bw) / 2, (CANVAS_H - bh) / 2, bw, bh);
 
-  // Clip principal: ajustado por ancho del lienzo, sin filtro.
-  vCtx.filter = "none";
+  // Clip principal: ajustado por ancho del lienzo, con realce opcional.
+  const enhance = +el("enhance_intensity").value;
   const fgW = CANVAS_W * scale;
   const fgH = fgW * (vh / vw);
   const fgX = (CANVAS_W - fgW) / 2;
@@ -106,7 +106,18 @@ function drawVerticalPreview() {
   if (position === "top") fgY = 0;
   else if (position === "bottom") fgY = CANVAS_H - fgH;
   else fgY = (CANVAS_H - fgH) / 2;
+
+  if (enhance > 0) {
+    const i = enhance / 100;
+    const bright   = (1 + i * 0.12).toFixed(2);
+    const contrast = (1 + i * 0.10).toFixed(2);
+    const sat      = (1 + i * 0.50).toFixed(2);
+    vCtx.filter = `brightness(${bright}) contrast(${contrast}) saturate(${sat})`;
+  } else {
+    vCtx.filter = "none";
+  }
   vCtx.drawImage(preview, fgX, fgY, fgW, fgH);
+  vCtx.filter = "none";
 }
 
 // --- Sliders: live value labels ---
@@ -114,6 +125,7 @@ const liveLabels = {
   blur_intensity: "blur-val",
   bg_brightness: "brightness-val",
   main_clip_scale: "scale-val",
+  enhance_intensity: "enhance-val",
 };
 Object.entries(liveLabels).forEach(([inputId, labelId]) => {
   const input = el(inputId);
@@ -130,6 +142,7 @@ processBtn.addEventListener("click", async () => {
   form.append("bg_brightness", el("bg_brightness").value);
   form.append("main_clip_scale", el("main_clip_scale").value);
   form.append("main_clip_position", el("main_clip_position").value);
+  form.append("enhance_intensity", el("enhance_intensity").value);
 
   resetOutputs();
   processBtn.disabled = true;

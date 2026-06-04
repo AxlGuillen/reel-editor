@@ -41,10 +41,29 @@ def build_filter_complex(params: VerticalConvertParams) -> str:
         f"gblur=sigma={sigma},"
         f"colorchannelmixer=rr={bm}:gg={bm}:bb={bm}[bg]"
     )
-    fg = f"[0:v]scale={fg_width}:-2[fg]"
-    overlay = f"[bg][fg]overlay=(W-w)/2:{overlay_y}[out]"
 
-    return f"{bg};{fg};{overlay}"
+    parts = [bg]
+
+    if params.enhance_intensity > 0:
+        i = params.enhance_intensity / 100
+        # Curva asimétrica: sombras casi intactas, medios y brillos levantados.
+        shadow    = round(0.25 - i * 0.02, 4)   # toca poco las sombras
+        midtone   = round(0.50 + i * 0.04, 4)   # levanta los medios
+        highlight = round(0.75 + i * 0.10, 4)   # levanta bien los brillos
+        brightness = round(i * 0.04, 3)          # boost general de exposición
+        sat       = round(1.0 + i * 0.5, 3)
+        sharp     = round(i * 0.5, 3)
+        parts.append(f"[0:v]scale={fg_width}:-2[fg_raw]")
+        parts.append(
+            f"[fg_raw]curves=all='0/0 0.25/{shadow} 0.5/{midtone} 0.75/{highlight} 1/1',"
+            f"eq=brightness={brightness}:saturation={sat},"
+            f"unsharp=lx=3:ly=3:la={sharp}:cx=3:cy=3:ca=0[fg]"
+        )
+    else:
+        parts.append(f"[0:v]scale={fg_width}:-2[fg]")
+
+    parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}[out]")
+    return ";".join(parts)
 
 
 def build_command(input_path: str, output_path: str,
