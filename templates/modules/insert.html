@@ -1,0 +1,88 @@
+<div class="module-header">
+  <h1>✂️ Insert</h1>
+  <p class="subtitle">Inserta un mini-clip en los momentos que marques del video</p>
+</div>
+
+<!-- 1. Upload del video original -->
+<section id="ins-video-zone" class="card drop-zone">
+  <input type="file" id="ins-video-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+  <div class="drop-inner">
+    <p class="drop-icon">⬆</p>
+    <p>Arrastra tu <strong>video original</strong> o <span class="link">haz click para seleccionar</span></p>
+    <p class="hint">mp4, mov, mkv, avi</p>
+  </div>
+</section>
+
+<!-- 2. Editor -->
+<section id="ins-editor" class="hidden">
+  <div class="editor-grid">
+    <div class="card preview-panel">
+      <h2>Timeline</h2>
+      <div class="sd-video-wrap">
+        <video id="ins-video"></video>
+      </div>
+      <p id="ins-video-name" class="file-name"></p>
+
+      <!-- Timeline con marcadores -->
+      <div class="ins-timeline">
+        <div id="ins-track" class="ins-track" title="Click para marcar aquí">
+          <div id="ins-playhead" class="ins-playhead"></div>
+        </div>
+        <div class="ins-time-row">
+          <span id="ins-cur-time">0:00</span>
+          <span id="ins-dur-time">0:00</span>
+        </div>
+      </div>
+
+      <div class="ins-add-row">
+        <button id="ins-play-btn" class="btn-secondary ins-mini-btn">▶ Play</button>
+        <button id="ins-mark-here" class="btn-secondary ins-mini-btn">📍 Marcar en el punto actual</button>
+      </div>
+      <div class="ins-add-row">
+        <input type="text" id="ins-time-input" class="ins-time-input" placeholder="m:ss (ej. 1:23)">
+        <button id="ins-add-time" class="btn-secondary ins-mini-btn">＋ Añadir</button>
+      </div>
+
+      <ul id="ins-marker-list" class="ins-marker-list"></ul>
+    </div>
+
+    <div class="card controls-panel">
+      <h2>Mini-clip</h2>
+
+      <div id="ins-clip-zone" class="card drop-zone sd-audio-zone">
+        <input type="file" id="ins-clip-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+        <div class="drop-inner">
+          <p class="drop-icon">🎬</p>
+          <p>Arrastra el <strong>mini-clip</strong> o <span class="link">selecciónalo</span></p>
+          <p class="hint">mismo formato que el original</p>
+        </div>
+      </div>
+      <p id="ins-clip-name" class="file-name"></p>
+
+      <p class="ins-hint-box">
+        El mini-clip debe tener la <strong>misma resolución</strong> que el original
+        (pásalo antes por <em>Vertical</em> si hace falta). Se inserta completo, con
+        su propio audio, en cada marca.
+      </p>
+
+      <button id="ins-process-btn" class="btn-primary" disabled>Generar video</button>
+    </div>
+  </div>
+
+  <!-- Progress + result -->
+  <div id="ins-progress-wrap" class="card hidden">
+    <div class="progress-bar"><div id="ins-progress-fill"></div></div>
+    <p id="ins-progress-label">Procesando… 0%</p>
+  </div>
+
+  <div id="ins-result-wrap" class="card hidden">
+    <p class="success">✓ Listo</p>
+    <a id="ins-download-btn" class="btn-primary" download>Descargar video</a>
+    <button id="ins-reset-btn" class="btn-secondary">Hacer otro</button>
+  </div>
+
+  <div id="ins-error-wrap" class="card error hidden">
+    <p id="ins-error-msg"></p>
+    <button id="ins-error-reset-btn" class="btn-secondary">Reintentar</button>
+  </div>
+</section>

@@ -17,6 +17,9 @@
         <button class="nav-item" data-target="view-sound">
           <span class="nav-icon">🔊</span> SoundDrop
         </button>
+        <button class="nav-item" data-target="view-insert">
+          <span class="nav-icon">✂️</span> Insert
+        </button>
       </nav>
     </aside>
 
@@ -27,12 +30,16 @@
       <section id="view-sound" class="module-view hidden">
         {% include "modules/sound_drop.html" %}
       </section>
+      <section id="view-insert" class="module-view hidden">
+        {% include "modules/insert.html" %}
+      </section>
     </main>
   </div>
 
   <script src="{{ url_for('static', filename='js/shared.js') }}"></script>
   <script src="{{ url_for('static', filename='js/vertical_convert.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sound_drop.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/insert.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
