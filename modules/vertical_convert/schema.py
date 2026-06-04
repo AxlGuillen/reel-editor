@@ -4,6 +4,7 @@ from dataclasses import dataclass
 # nombre -> (default, min, max)
 _INT_PARAMS = {
     "blur_intensity": (50, 0, 50),
+    "enhance_intensity": (0, 0, 100),
 }
 _FLOAT_PARAMS = {
     "bg_brightness": (0.5, 0.3, 1.0),
@@ -18,6 +19,7 @@ class VerticalConvertParams:
     bg_brightness: float = 0.5
     main_clip_scale: float = 1.55
     main_clip_position: str = "center"
+    enhance_intensity: int = 0
 
     @classmethod
     def from_form(cls, form) -> "VerticalConvertParams":
