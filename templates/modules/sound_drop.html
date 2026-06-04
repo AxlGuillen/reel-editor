@@ -1,0 +1,83 @@
+<div class="module-header">
+  <h1>🔊 SoundDrop</h1>
+  <p class="subtitle">Ponle un audio de fondo a tu video vertical</p>
+</div>
+
+<!-- 1. Upload del video vertical -->
+<section id="sd-video-zone" class="card drop-zone">
+  <input type="file" id="sd-video-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+  <div class="drop-inner">
+    <p class="drop-icon">⬆</p>
+    <p>Arrastra tu <strong>video vertical</strong> o <span class="link">haz click para seleccionar</span></p>
+    <p class="hint">mp4, mov, mkv, avi</p>
+  </div>
+</section>
+
+<!-- 2. Editor -->
+<section id="sd-editor" class="hidden">
+  <div class="editor-grid">
+    <div class="card preview-panel">
+      <h2>Preview</h2>
+      <div class="sd-video-wrap">
+        <video id="sd-video" controls></video>
+      </div>
+      <p id="sd-video-name" class="file-name"></p>
+
+      <!-- Fuente de audio -->
+      <div id="sd-audio-zone" class="card drop-zone sd-audio-zone">
+        <input type="file" id="sd-audio-input" accept="audio/*,video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+        <div class="drop-inner">
+          <p class="drop-icon">🎵</p>
+          <p>Arrastra el <strong>audio</strong> (o un video) o <span class="link">selecciónalo</span></p>
+          <p class="hint">mp3, wav, m4a, aac, ogg, mp4…</p>
+        </div>
+      </div>
+      <p id="sd-audio-name" class="file-name"></p>
+      <audio id="sd-audio" class="hidden"></audio>
+      <button id="sd-preview-btn" class="btn-secondary" disabled>▶ Escuchar mezcla</button>
+    </div>
+
+    <div class="card controls-panel">
+      <h2>Ajustes</h2>
+
+      <label class="control">
+        <span>Volumen original <em id="sd-vo-val">0</em></span>
+        <input type="range" id="sd-original-volume" min="0" max="100" value="0">
+      </label>
+
+      <label class="control">
+        <span>Volumen audio nuevo <em id="sd-vn-val">100</em></span>
+        <input type="range" id="sd-new-volume" min="0" max="150" value="100">
+      </label>
+
+      <label class="control-check">
+        <input type="checkbox" id="sd-fade" checked>
+        <span>Fade in/out suave</span>
+      </label>
+
+      <label class="control-check">
+        <input type="checkbox" id="sd-speed-match" checked>
+        <span>Ajustar velocidad del video al audio</span>
+      </label>
+
+      <button id="sd-process-btn" class="btn-primary" disabled>Generar video</button>
+    </div>
+  </div>
+
+  <!-- Progress + result -->
+  <div id="sd-progress-wrap" class="card hidden">
+    <div class="progress-bar"><div id="sd-progress-fill"></div></div>
+    <p id="sd-progress-label">Procesando… 0%</p>
+  </div>
+
+  <div id="sd-result-wrap" class="card hidden">
+    <p class="success">✓ Listo</p>
+    <a id="sd-download-btn" class="btn-primary" download>Descargar video</a>
+    <button id="sd-reset-btn" class="btn-secondary">Hacer otro</button>
+  </div>
+
+  <div id="sd-error-wrap" class="card error hidden">
+    <p id="sd-error-msg"></p>
+    <button id="sd-error-reset-btn" class="btn-secondary">Reintentar</button>
+  </div>
+</section>

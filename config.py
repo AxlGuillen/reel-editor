@@ -1,5 +1,6 @@
 """Configuración global de ReelForge."""
 import os
+import re
 import shutil
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,12 +39,44 @@ def _resolve_ffmpeg() -> str:
 # En Windows suele ser algo como "C:/ffmpeg/bin/ffmpeg.exe".
 FFMPEG_PATH = os.environ.get("FFMPEG_PATH") or _resolve_ffmpeg()
 
+
+def _resolve_ffprobe() -> str:
+    """Deriva el path de ffprobe del de ffmpeg.
+
+    No basta con FFMPEG_PATH.replace("ffmpeg", "ffprobe"): el path suele
+    contener "ffmpeg" también en el nombre de la carpeta (p. ej.
+    "ffmpeg-8.1.1-full_build"), y reemplazar todo arma una ruta inexistente.
+    Sólo tocamos el nombre del archivo, de forma case-insensitive.
+    """
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    folder, name = os.path.split(FFMPEG_PATH)
+    probe_name = re.sub(r"ffmpeg", "ffprobe", name, flags=re.IGNORECASE)
+    candidate = os.path.join(folder, probe_name)
+    if os.path.isfile(candidate):
+        return candidate
+    return "ffprobe"
+
+
+FFPROBE_PATH = os.environ.get("FFPROBE_PATH") or _resolve_ffprobe()
+
 ALLOWED_EXTENSIONS = {"mp4", "mov", "mkv", "avi"}
+# Fuentes de audio para sound_drop: archivos de audio o videos (se extrae su pista).
+ALLOWED_AUDIO_EXTENSIONS = {"mp3", "wav", "m4a", "aac", "ogg"} | ALLOWED_EXTENSIONS
 
 # Lienzo vertical de salida (9:16)
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
 
 
+def _has_allowed_ext(filename: str, allowed: set[str]) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed
+
+
 def allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return _has_allowed_ext(filename, ALLOWED_EXTENSIONS)
+
+
+def allowed_audio_file(filename: str) -> bool:
+    return _has_allowed_ext(filename, ALLOWED_AUDIO_EXTENSIONS)

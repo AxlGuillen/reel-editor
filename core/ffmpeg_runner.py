@@ -17,9 +17,8 @@ _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)")
 
 def probe_duration(input_path: str) -> float | None:
     """Retorna la duración del video en segundos usando ffprobe, o None."""
-    ffprobe = config.FFMPEG_PATH.replace("ffmpeg", "ffprobe")
     cmd = [
-        ffprobe,
+        config.FFPROBE_PATH,
         "-v", "error",
         "-print_format", "json",
         "-show_format",
@@ -33,6 +32,25 @@ def probe_duration(input_path: str) -> float | None:
         # ffprobe ausente o salida inesperada: la duración es opcional, sólo
         # se usa para calcular el porcentaje de progreso.
         return None
+
+
+def has_audio_stream(input_path: str) -> bool:
+    """Indica si el archivo tiene al menos una pista de audio."""
+    cmd = [
+        config.FFPROBE_PATH,
+        "-v", "error",
+        "-select_streams", "a",
+        "-show_entries", "stream=index",
+        "-print_format", "json",
+        input_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        data = json.loads(result.stdout or "{}")
+        return bool(data.get("streams"))
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        # Ante la duda asumimos que sí hay audio; si no, FFmpeg lo reportará.
+        return True
 
 
 def _hms_to_seconds(match) -> float:

@@ -20,17 +20,66 @@ body {
   color: var(--text);
 }
 
-.header {
-  text-align: center;
-  padding: 32px 16px 8px;
+/* App shell: sidebar fija + contenido */
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  padding: 24px 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
 }
-.header h1 { margin: 0; font-size: 2rem; }
+.brand { font-size: 1.3rem; font-weight: 700; padding: 0 8px 24px; }
+.nav { display: flex; flex-direction: column; gap: 4px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.nav-item:hover { background: var(--card-2); color: var(--text); }
+.nav-item.active { background: var(--accent); color: #fff; }
+.nav-icon { font-size: 1.1rem; }
+
+.content {
+  flex: 1;
+  min-width: 0;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 24px 64px;
+}
+
+.module-header { padding: 8px 0 20px; }
+.module-header h1 { margin: 0; font-size: 1.6rem; }
 .subtitle { color: var(--muted); margin: 4px 0 0; }
 
-.container {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 16px 64px;
+@media (max-width: 720px) {
+  .app { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+  }
+  .brand { padding: 0 0 12px; }
+  .nav { flex-direction: row; flex-wrap: wrap; }
+  .nav-item { width: auto; }
 }
 
 .card {
@@ -125,6 +174,39 @@ h2 { font-size: 1rem; margin: 0 0 16px; color: var(--muted); text-transform: upp
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+
+/* Checkbox rows (sound_drop) */
+.control-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-size: .9rem;
+  cursor: pointer;
+}
+.control-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* SoundDrop: preview de video vertical + zona de audio */
+.sd-video-wrap { display: flex; justify-content: center; }
+.preview-panel #sd-video {
+  height: 340px;
+  width: auto;
+  max-width: 100%;
+  border-radius: 8px;
+  background: #000;
+}
+.sd-audio-zone {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  padding: 0;
+}
+.sd-audio-zone .drop-inner { padding: 20px 16px; }
+.sd-audio-zone .drop-icon { font-size: 1.8rem; }
 
 /* Buttons */
 .btn-primary, .btn-secondary {
