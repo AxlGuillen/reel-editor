@@ -3,20 +3,20 @@ from dataclasses import dataclass
 
 # nombre -> (default, min, max)
 _INT_PARAMS = {
-    "blur_intensity": (20, 0, 50),
+    "blur_intensity": (50, 0, 50),
 }
 _FLOAT_PARAMS = {
-    "bg_brightness": (0.6, 0.3, 1.0),
-    "main_clip_scale": (1.0, 0.7, 5.0),
+    "bg_brightness": (0.5, 0.3, 1.0),
+    "main_clip_scale": (1.55, 0.7, 5.0),
 }
 _VALID_POSITIONS = {"center", "top", "bottom"}
 
 
 @dataclass
 class VerticalConvertParams:
-    blur_intensity: int = 20
-    bg_brightness: float = 0.6
-    main_clip_scale: float = 1.0
+    blur_intensity: int = 50
+    bg_brightness: float = 0.5
+    main_clip_scale: float = 1.55
     main_clip_position: str = "center"
 
     @classmethod

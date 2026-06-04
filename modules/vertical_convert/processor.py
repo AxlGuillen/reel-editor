@@ -19,8 +19,10 @@ def _even(value: float) -> int:
 def build_filter_complex(params: VerticalConvertParams) -> str:
     """Arma el filter_complex a partir de los parámetros validados."""
     sigma = params.blur_intensity
-    # bg_brightness es un multiplicador (0.3-1.0); eq.brightness es aditivo.
-    brightness = round(params.bg_brightness - 1.0, 3)
+    # bg_brightness es un multiplicador (0.3-1.0); colorchannelmixer lo aplica
+    # de forma multiplicativa igual que CSS brightness(), evitando el clipping
+    # negro que produce eq=brightness (que es aditivo).
+    bm = round(params.bg_brightness, 3)
 
     # Capa principal: escalada por ancho del lienzo y zoom configurable.
     fg_width = _even(W * params.main_clip_scale)
@@ -37,7 +39,7 @@ def build_filter_complex(params: VerticalConvertParams) -> str:
         f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
         f"crop={W}:{H},"
         f"gblur=sigma={sigma},"
-        f"eq=brightness={brightness}[bg]"
+        f"colorchannelmixer=rr={bm}:gg={bm}:bb={bm}[bg]"
     )
     fg = f"[0:v]scale={fg_width}:-2[fg]"
     overlay = f"[bg][fg]overlay=(W-w)/2:{overlay_y}[out]"
