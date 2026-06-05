@@ -32,6 +32,8 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 .brand { font-size: 1.3rem; font-weight: 700; padding: 0 8px 24px; }
 .nav { display: flex; flex-direction: column; gap: 4px; }
@@ -54,6 +56,34 @@ body {
 .nav-item:hover { background: var(--card-2); color: var(--text); }
 .nav-item.active { background: var(--accent); color: #fff; }
 .nav-icon { font-size: 1.1rem; }
+
+/* Footer de la sidebar: botón de limpieza */
+.sidebar-footer { margin-top: auto; padding-top: 16px; }
+.cleanup-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: .9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.cleanup-btn:hover { background: var(--card-2); color: var(--text); border-color: var(--err); }
+.cleanup-btn:disabled { opacity: .5; cursor: not-allowed; }
+.cleanup-status {
+  font-size: .75rem;
+  color: var(--muted);
+  margin: 8px 4px 0;
+  min-height: 1em;
+}
+.cleanup-status.err { color: var(--err); }
 
 .content {
   flex: 1;

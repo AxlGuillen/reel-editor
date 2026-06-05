@@ -1,5 +1,5 @@
 """Entry point Flask de ReelForge. Registra blueprints de cada módulo."""
-from flask import Flask, render_template
+from flask import Flask, jsonify, render_template
 
 import config
 from core import file_utils
@@ -24,6 +24,12 @@ def create_app() -> Flask:
     @app.route("/")
     def index():
         return render_template("index.html")
+
+    @app.post("/api/cleanup")
+    def cleanup():
+        """Vacía las carpetas temporales (uploads, outputs, downloads)."""
+        stats = file_utils.clear_temp_dirs()
+        return jsonify(stats)
 
     return app
 

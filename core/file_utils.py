@@ -39,3 +39,31 @@ def cleanup_paths(*paths: str) -> None:
                 os.remove(path)
             except OSError:
                 pass
+
+
+def clear_temp_dirs() -> dict:
+    """Vacía las carpetas temporales (uploads, outputs, downloads).
+
+    Borra los archivos que contienen (no las carpetas) y retorna cuántos se
+    eliminaron y cuántos bytes se liberaron. Los archivos en uso (p. ej. un job
+    en curso en Windows) se omiten sin lanzar.
+    """
+    folders = [config.UPLOAD_FOLDER, config.OUTPUT_FOLDER, config.DOWNLOAD_FOLDER]
+    removed = 0
+    freed_bytes = 0
+    for folder in folders:
+        if not os.path.isdir(folder):
+            continue
+        for name in os.listdir(folder):
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                size = os.path.getsize(path)
+                os.remove(path)
+                removed += 1
+                freed_bytes += size
+            except OSError:
+                # Archivo en uso o sin permisos: se omite.
+                pass
+    return {"removed": removed, "freed_bytes": freed_bytes}
