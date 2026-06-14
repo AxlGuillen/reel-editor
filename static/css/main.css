@@ -394,6 +394,61 @@ h2 { font-size: 1rem; margin: 0 0 16px; color: var(--muted); text-transform: upp
 .dl-note { color: var(--muted); font-size: .8rem; margin: 12px 0 0; }
 #dl-result-title { margin: 0 0 12px; font-size: .95rem; color: var(--text); }
 
+/* Lista ordenable (audio_merge) */
+.am-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.am-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.am-pos {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  font-size: .8rem;
+  font-weight: 700;
+}
+.am-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9rem;
+}
+.am-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.am-actions button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: .85rem;
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+.am-actions button:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+.am-actions button:disabled { opacity: .3; cursor: not-allowed; }
+.am-actions .am-del:hover { background: var(--err); border-color: var(--err); }
+
 /* Buttons */
 .btn-primary, .btn-secondary {
   display: inline-block;

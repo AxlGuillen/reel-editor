@@ -25,10 +25,10 @@ def save_upload(file_storage) -> str:
     return path
 
 
-def output_path_for(job_id: str) -> str:
-    """Path de salida (mp4) para un job dado."""
+def output_path_for(job_id: str, ext: str = "mp4") -> str:
+    """Path de salida para un job dado (mp4 por defecto)."""
     ensure_dirs()
-    return os.path.join(config.OUTPUT_FOLDER, f"{job_id}.mp4")
+    return os.path.join(config.OUTPUT_FOLDER, f"{job_id}.{ext}")
 
 
 def cleanup_paths(*paths: str) -> None:

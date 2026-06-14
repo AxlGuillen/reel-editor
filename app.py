@@ -7,6 +7,7 @@ from modules.vertical_convert.routes import bp as vertical_convert_bp
 from modules.sound_drop.routes import bp as sound_drop_bp
 from modules.insert.routes import bp as insert_bp
 from modules.downloader.routes import bp as downloader_bp
+from modules.audio_merge.routes import bp as audio_merge_bp
 
 
 def create_app() -> Flask:
@@ -20,6 +21,7 @@ def create_app() -> Flask:
     app.register_blueprint(sound_drop_bp)
     app.register_blueprint(insert_bp)
     app.register_blueprint(downloader_bp)
+    app.register_blueprint(audio_merge_bp)
 
     @app.route("/")
     def index():

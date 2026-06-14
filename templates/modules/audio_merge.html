@@ -1,0 +1,50 @@
+<div class="module-header">
+  <h1>🎙️ Unir Audio</h1>
+  <p class="subtitle">Junta varias narraciones en un solo audio, en el orden que elijas</p>
+</div>
+
+<!-- 1. Zona de carga (múltiple) -->
+<section id="am-drop-zone" class="card drop-zone">
+  <input type="file" id="am-input" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg" multiple hidden>
+  <div class="drop-inner">
+    <p class="drop-icon">⬆</p>
+    <p>Arrastra tus audios aquí o <span class="link">haz click para seleccionar</span></p>
+    <p class="hint">mp3, wav, m4a, aac, ogg · podés agregar varios</p>
+  </div>
+</section>
+
+<!-- 2. Editor: lista ordenable + opciones -->
+<section id="am-editor" class="hidden">
+  <div class="card">
+    <h2>Orden de unión</h2>
+    <ol id="am-list" class="am-list"></ol>
+    <p class="hint">Usá ▲ ▼ para reordenar, ▶ para escuchar y ✕ para quitar.</p>
+
+    <label class="control" style="margin-top:16px;">
+      <span>Silencio entre clips <em id="am-gap-val">0.0</em> s</span>
+      <input type="range" id="am-gap" min="0" max="3" step="0.1" value="0">
+    </label>
+
+    <button id="am-process-btn" class="btn-primary" disabled>Unir audios</button>
+  </div>
+
+  <!-- Progress + result -->
+  <div id="am-progress-wrap" class="card hidden">
+    <div class="progress-bar"><div id="am-progress-fill"></div></div>
+    <p id="am-progress-label">Procesando… 0%</p>
+  </div>
+
+  <div id="am-result-wrap" class="card hidden">
+    <p class="success">✓ Listo</p>
+    <a id="am-download-btn" class="btn-primary" download>Descargar audio</a>
+    <button id="am-reset-btn" class="btn-secondary">Empezar de nuevo</button>
+  </div>
+
+  <div id="am-error-wrap" class="card error hidden">
+    <p id="am-error-msg"></p>
+    <button id="am-error-reset-btn" class="btn-secondary">Reintentar</button>
+  </div>
+</section>
+
+<!-- Reproductor oculto para escuchar cada clip -->
+<audio id="am-player" class="hidden"></audio>
