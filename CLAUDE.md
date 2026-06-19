@@ -30,6 +30,7 @@ reel-editor/
 │   ├── vertical_convert/       ← 16:9 → 9:16 con fondo blur + realce
 │   ├── sound_drop/             ← Audio de fondo sobre un video vertical
 │   ├── insert/                 ← Insertar un mini-clip en marcadores
+│   ├── audio_merge/            ← Unir varios audios en orden + capar pausas
 │   └── downloader/             ← Descargar assets (YouTube/TikTok/IG) con yt-dlp
 │       ├── __init__.py
 │       ├── routes.py           ← Blueprint Flask con sus endpoints
@@ -132,6 +133,16 @@ Descarga un asset desde un link (YouTube, TikTok, Instagram, …) con yt-dlp. Re
 | `quality` | string | audio: 320/192/128 kbps · video: max/1080/720/480 |
 
 **Sin upload** (es un link). Usa el FFmpeg configurado para extraer audio / hacer merge. Captura el título para nombrar la descarga. YouTube y TikTok públicos son sólidos; Instagram es best-effort.
+
+### 5. audio_merge — `/api/audio-merge`
+
+Une N audios en el orden de subida (concat filter) y luego **capa las pausas** con `silenceremove`: recorta el silencio inicial y limita cada pausa interna/final a `max_pause` segundos, para que la narración (típicamente voz de TTS) fluya. Output mp3.
+
+| Parámetro | Tipo | Default | Rango |
+|---|---|---|---|
+| `max_pause` | float | 0.5 | 0.1–1.5 (s; tope de cada pausa) |
+
+**Input:** `audios` (múltiple, 2–20). El umbral de silencio es una constante interna (`SILENCE_THRESHOLD_DB = -40`), holgado para TTS limpio. **UI:** lista reordenable (▲▼), escuchar cada clip, y slider de pausa máxima.
 
 ### Endpoints (mismo contrato en todos los módulos)
 
