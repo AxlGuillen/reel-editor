@@ -5,7 +5,7 @@ const amDropZone = el("am-drop-zone");
 const amInput = el("am-input");
 const amEditor = el("am-editor");
 const amList = el("am-list");
-const amGap = el("am-gap");
+const amMaxPause = el("am-max-pause");
 const amProcessBtn = el("am-process-btn");
 const amPlayer = el("am-player");
 
@@ -111,9 +111,9 @@ function escapeHtml(s) {
   );
 }
 
-// --- Slider de silencio ---
-amGap.addEventListener("input", () => {
-  el("am-gap-val").textContent = (+amGap.value).toFixed(1);
+// --- Slider de pausa máxima ---
+amMaxPause.addEventListener("input", () => {
+  el("am-max-pause-val").textContent = (+amMaxPause.value).toFixed(2);
 });
 
 // --- Process ---
@@ -123,7 +123,7 @@ amProcessBtn.addEventListener("click", () => {
 
   const form = new FormData();
   amFiles.forEach((item) => form.append("audios", item.file));
-  form.append("gap", amGap.value);
+  form.append("max_pause", amMaxPause.value);
 
   amResetOutputs();
   amProcessBtn.disabled = true;

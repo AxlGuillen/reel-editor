@@ -21,9 +21,10 @@
     <p class="hint">Usá ▲ ▼ para reordenar, ▶ para escuchar y ✕ para quitar.</p>
 
     <label class="control" style="margin-top:16px;">
-      <span>Silencio entre clips <em id="am-gap-val">0.0</em> s</span>
-      <input type="range" id="am-gap" min="0" max="3" step="0.1" value="0">
+      <span>Pausa máxima <em id="am-max-pause-val">0.50</em> s</span>
+      <input type="range" id="am-max-pause" min="0.1" max="1.5" step="0.05" value="0.5">
     </label>
+    <p class="hint">Ninguna pausa de la narración durará más que esto; el silencio inicial se recorta. Ajustá experimentando.</p>
 
     <button id="am-process-btn" class="btn-primary" disabled>Unir audios</button>
   </div>
