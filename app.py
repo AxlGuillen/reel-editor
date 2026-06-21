@@ -1,5 +1,8 @@
 """Entry point Flask de ReelForge. Registra blueprints de cada módulo."""
-from flask import Flask, jsonify, render_template
+import traceback
+
+from flask import Flask, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 import config
 from core import file_utils
@@ -34,6 +37,38 @@ def create_app() -> Flask:
         """Vacía las carpetas temporales (uploads, outputs, downloads)."""
         stats = file_utils.clear_temp_dirs()
         return jsonify(stats)
+
+    # --- Manejadores de error: la API SIEMPRE responde JSON, nunca HTML ---
+    # Sin esto, un 500/413 devuelve la página HTML de error de Flask y el
+    # frontend falla al parsear ("Unexpected token '<'"), ocultando la causa.
+
+    def _is_api() -> bool:
+        return request.path.startswith("/api/")
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def _too_large(exc):
+        limit = config.MAX_UPLOAD_SIZE_MB
+        # En reel_express lo único que se sube es el video (el audio es un link).
+        que = "El video" if "/reel-express" in request.path else "El archivo"
+        msg = (f"{que} que subiste supera el límite de {limit} MB. "
+               f"Probá con un clip más corto (recortá la parte que vas a usar).")
+        if _is_api():
+            return jsonify(error=msg), 413
+        return msg, 413
+
+    @app.errorhandler(HTTPException)
+    def _http_error(exc):
+        if _is_api():
+            return jsonify(error=exc.description or exc.name), exc.code
+        return exc
+
+    @app.errorhandler(Exception)
+    def _unhandled(exc):
+        # Log completo en la consola del server; mensaje claro al cliente.
+        traceback.print_exc()
+        if _is_api():
+            return jsonify(error=f"Error interno del servidor: {exc}"), 500
+        raise exc
 
     return app
 
