@@ -1,0 +1,102 @@
+<div class="module-header">
+  <h1>⚡ Reel Express</h1>
+  <p class="subtitle">De un clip 16:9 + un link de audio al reel final, en un paso</p>
+</div>
+
+<!-- 1. Clip 16:9 -->
+<section id="rx-clip-zone" class="card drop-zone">
+  <input type="file" id="rx-clip-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+  <div class="drop-inner">
+    <p class="drop-icon">⬆</p>
+    <p>Arrastra tu <strong>clip 16:9</strong> o <span class="link">haz click para seleccionar</span></p>
+    <p class="hint">mp4, mov, mkv, avi</p>
+  </div>
+</section>
+
+<!-- 2. Editor -->
+<section id="rx-editor" class="hidden">
+  <div class="card">
+    <p id="rx-clip-name" class="file-name"></p>
+
+    <label class="control">
+      <span>Link del audio</span>
+      <input type="text" id="rx-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
+    </label>
+
+    <label class="control">
+      <span>Calidad del audio</span>
+      <select id="rx-quality">
+        <option value="320">320 kbps</option>
+        <option value="192" selected>192 kbps</option>
+        <option value="128">128 kbps</option>
+      </select>
+    </label>
+
+    <details class="rx-advanced">
+      <summary>Ajustes avanzados</summary>
+
+      <h3 class="rx-group">Video vertical</h3>
+      <label class="control">
+        <span>Blur del fondo <em id="rx-blur-val">50</em></span>
+        <input type="range" id="rx-blur_intensity" min="0" max="50" value="50">
+      </label>
+      <label class="control">
+        <span>Brillo del fondo <em id="rx-brightness-val">0.5</em></span>
+        <input type="range" id="rx-bg_brightness" min="0.3" max="1.0" step="0.05" value="0.5">
+      </label>
+      <label class="control">
+        <span>Zoom clip principal <em id="rx-scale-val">1.55</em></span>
+        <input type="range" id="rx-main_clip_scale" min="0.7" max="5" step="0.05" value="1.55">
+      </label>
+      <label class="control">
+        <span>Realce de imagen <em id="rx-enhance-val">85</em></span>
+        <input type="range" id="rx-enhance_intensity" min="0" max="100" value="85">
+      </label>
+      <label class="control">
+        <span>Posición del clip</span>
+        <select id="rx-main_clip_position">
+          <option value="center" selected>Centro</option>
+          <option value="top">Arriba</option>
+          <option value="bottom">Abajo</option>
+        </select>
+      </label>
+
+      <h3 class="rx-group">Mezcla de audio</h3>
+      <label class="control">
+        <span>Volumen original <em id="rx-vo-val">0</em></span>
+        <input type="range" id="rx-original_volume" min="0" max="100" value="0">
+      </label>
+      <label class="control">
+        <span>Volumen audio nuevo <em id="rx-vn-val">100</em></span>
+        <input type="range" id="rx-new_volume" min="0" max="150" value="100">
+      </label>
+      <label class="control-check">
+        <input type="checkbox" id="rx-fade" checked>
+        <span>Fade in/out suave</span>
+      </label>
+      <label class="control-check">
+        <input type="checkbox" id="rx-speed_match" checked>
+        <span>Ajustar velocidad del video al audio</span>
+      </label>
+    </details>
+
+    <button id="rx-process-btn" class="btn-primary" disabled>Generar reel</button>
+  </div>
+
+  <!-- Progress + result -->
+  <div id="rx-progress-wrap" class="card hidden">
+    <div class="progress-bar"><div id="rx-progress-fill"></div></div>
+    <p id="rx-progress-label">Procesando… 0%</p>
+  </div>
+
+  <div id="rx-result-wrap" class="card hidden">
+    <p class="success">✓ Reel listo</p>
+    <a id="rx-download-btn" class="btn-primary" download>Descargar reel</a>
+    <button id="rx-reset-btn" class="btn-secondary">Hacer otro</button>
+  </div>
+
+  <div id="rx-error-wrap" class="card error hidden">
+    <p id="rx-error-msg"></p>
+    <button id="rx-error-reset-btn" class="btn-secondary">Reintentar</button>
+  </div>
+</section>

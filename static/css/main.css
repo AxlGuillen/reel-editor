@@ -394,6 +394,40 @@ h2 { font-size: 1rem; margin: 0 0 16px; color: var(--muted); text-transform: upp
 .dl-note { color: var(--muted); font-size: .8rem; margin: 12px 0 0; }
 #dl-result-title { margin: 0 0 12px; font-size: .95rem; color: var(--text); }
 
+/* Reel Express: input de texto + ajustes avanzados */
+.text-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: .95rem;
+}
+.text-input:focus { outline: none; border-color: var(--accent); }
+.rx-advanced {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 14px;
+  margin-bottom: 20px;
+}
+.rx-advanced summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+  color: var(--muted);
+  user-select: none;
+}
+.rx-advanced[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.rx-group {
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--accent);
+  margin: 20px 0 12px;
+}
+.rx-group:first-of-type { margin-top: 4px; }
+
 /* Lista ordenable (audio_merge) */
 .am-list {
   list-style: none;

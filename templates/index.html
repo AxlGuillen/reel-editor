@@ -11,6 +11,9 @@
     <aside class="sidebar">
       <div class="brand">⚡ ReelForge</div>
       <nav class="nav">
+        <button class="nav-item" data-target="view-reel-express">
+          <span class="nav-icon">⚡</span> Reel Express
+        </button>
         <button class="nav-item active" data-target="view-vertical">
           <span class="nav-icon">📐</span> Vertical
         </button>
@@ -37,6 +40,9 @@
     </aside>
 
     <main class="content">
+      <section id="view-reel-express" class="module-view hidden">
+        {% include "modules/reel_express.html" %}
+      </section>
       <section id="view-vertical" class="module-view">
         {% include "modules/vertical_convert.html" %}
       </section>
@@ -61,6 +67,7 @@
   <script src="{{ url_for('static', filename='js/insert.js') }}"></script>
   <script src="{{ url_for('static', filename='js/downloader.js') }}"></script>
   <script src="{{ url_for('static', filename='js/audio_merge.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/reel_express.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

@@ -1,0 +1,80 @@
+"""Orquestación del módulo reel_express (pipeline).
+
+Encadena los 3 módulos en el servidor, sin rebotes por el browser:
+
+    clip 16:9 ──vertical_convert──┐
+                                  ├──sound_drop──▶ reel final
+    link audio ──downloader───────┘
+
+Las dos primeras etapas (conversión y descarga) son independientes y corren en
+paralelo; al terminar ambas, se mezcla. No hay lógica de FFmpeg propia: reusa
+los `process()` de cada módulo vía sub-jobs internos. El progreso se agrega en
+la ruta de status leyendo esos sub-jobs.
+"""
+import threading
+
+from core import file_utils, job_manager
+from modules.reel_express.schema import ReelExpressParams
+from modules.vertical_convert import processor as vertical_processor
+from modules.downloader import processor as downloader_processor
+from modules.sound_drop import processor as sound_drop_processor
+
+
+def _check_subjob(sub_id: str, etapa: str) -> dict:
+    """Lee un sub-job terminado; si falló, propaga el error con nombre de etapa."""
+    sub = job_manager.get_job(sub_id)
+    if not sub or sub["status"] == "error":
+        detalle = (sub or {}).get("error") or "error desconocido"
+        raise RuntimeError(f"Falló en {etapa}: {detalle}")
+    return sub
+
+
+def process(job_id: str, clip_path: str, params: ReelExpressParams) -> None:
+    """Ejecuta el pipeline completo (bloqueante). Reporta al job del pipeline."""
+    intermedios: list[str] = [clip_path]
+    try:
+        job_manager.update_job(job_id, status="processing", progress=0)
+
+        # --- Fase 1: vertical + descarga en paralelo ---
+        sub_v = job_manager.create_job(clip_path, output_path="")
+        sub_d = job_manager.create_job(params.downloader.url, output_path="")
+        vertical_out = file_utils.output_path_for(sub_v)
+        job_manager.update_job(job_id, phase="prep", sub_v=sub_v, sub_d=sub_d, sub_m=None)
+
+        t_v = threading.Thread(
+            target=vertical_processor.process,
+            args=(sub_v, clip_path, vertical_out, params.vertical),
+            daemon=True,
+        )
+        t_d = threading.Thread(
+            target=downloader_processor.process,
+            args=(sub_d, params.downloader),
+            daemon=True,
+        )
+        t_v.start()
+        t_d.start()
+        t_v.join()
+        t_d.join()
+
+        _check_subjob(sub_v, "la conversión a vertical")
+        sub_d_job = _check_subjob(sub_d, "la descarga del audio")
+        audio_path = sub_d_job["output_path"]
+        intermedios += [vertical_out, audio_path]
+
+        # --- Fase 2: mezcla ---
+        sub_m = job_manager.create_job(vertical_out, output_path="")
+        final_out = file_utils.output_path_for(job_id)
+        job_manager.update_job(job_id, phase="mix", sub_m=sub_m)
+
+        sound_drop_processor.process(
+            sub_m, vertical_out, audio_path, final_out, params.sound_drop
+        )
+        _check_subjob(sub_m, "la mezcla de audio")
+
+        job_manager.update_job(
+            job_id, status="done", progress=100, output_path=final_out
+        )
+        # Limpieza: borra clip subido + vertical + audio; deja sólo el reel final.
+        file_utils.cleanup_paths(*intermedios)
+    except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
+        job_manager.update_job(job_id, status="error", error=str(exc))

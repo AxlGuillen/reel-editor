@@ -3,7 +3,8 @@
 const el = (id) => document.getElementById(id);
 
 // Envía el form al endpoint /process de un módulo y hace polling de su status.
-// callbacks: { onProgress(pct), onDone(jobId), onError(msg) }
+// callbacks: { onProgress(pct, stage?), onDone(jobId), onError(msg) }
+// `stage` es opcional (lo manda reel_express); el resto de módulos lo ignora.
 function runJob(apiBase, formData, { onProgress, onDone, onError }) {
   fetch(`${apiBase}/process`, { method: "POST", body: formData })
     .then(async (res) => {
@@ -20,7 +21,7 @@ function runJob(apiBase, formData, { onProgress, onDone, onError }) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Error consultando status");
 
-        onProgress(data.progress);
+        onProgress(data.progress, data.stage);
 
         if (data.status === "done") {
           clearInterval(timer);

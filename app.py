@@ -8,6 +8,7 @@ from modules.sound_drop.routes import bp as sound_drop_bp
 from modules.insert.routes import bp as insert_bp
 from modules.downloader.routes import bp as downloader_bp
 from modules.audio_merge.routes import bp as audio_merge_bp
+from modules.reel_express.routes import bp as reel_express_bp
 
 
 def create_app() -> Flask:
@@ -22,6 +23,7 @@ def create_app() -> Flask:
     app.register_blueprint(insert_bp)
     app.register_blueprint(downloader_bp)
     app.register_blueprint(audio_merge_bp)
+    app.register_blueprint(reel_express_bp)
 
     @app.route("/")
     def index():
