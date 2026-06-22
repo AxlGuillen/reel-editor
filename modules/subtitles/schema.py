@@ -21,7 +21,7 @@ class SubtitlesParams:
     position_y:     int = 1560      # px desde arriba en el lienzo 1080×1920
     words_per_line: int = 3
     highlight_color: str = "&H0000FFFB&"  # amarillo #fbff00 (formato ASS BGR)
-    language:       str = "auto"
+    language:       str = "es"
     model:          str = "small"
 
     @classmethod
@@ -32,7 +32,7 @@ class SubtitlesParams:
             value = default if raw in (None, "") else _to_int(name, raw)
             values[name] = _clamp(name, value, lo, hi)
 
-        lang = (form.get("language") or "auto").strip().lower()
+        lang = (form.get("language") or "es").strip().lower()
         if lang not in VALID_LANGUAGES:
             raise ValueError(
                 f"Idioma inválido: {lang!r}. Opciones: {sorted(VALID_LANGUAGES)}"

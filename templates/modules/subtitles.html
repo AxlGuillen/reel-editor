@@ -70,8 +70,8 @@
       <label class="control">
         <span>Idioma del audio</span>
         <select id="sub-language">
-          <option value="auto" selected>Auto-detectar</option>
-          <option value="es">Español</option>
+          <option value="es" selected>Español</option>
+          <option value="auto">Auto-detectar</option>
           <option value="en">Inglés</option>
           <option value="pt">Portugués</option>
           <option value="fr">Francés</option>
@@ -95,7 +95,21 @@
         La primera vez descarga el modelo (~500 MB para Small). Los siguientes usos son instantáneos.
       </p>
 
-      <button id="sub-process-btn" class="btn-primary" disabled>Generar subtítulos</button>
+      <button id="sub-transcribe-btn" class="btn-primary" disabled>Transcribir</button>
+    </div>
+  </div>
+
+  <!-- Editor de subtítulos (aparece tras la transcripción) -->
+  <div id="sub-subs-editor" class="card hidden">
+    <h2>Subtítulos detectados</h2>
+    <p class="hint" style="margin-bottom:16px;">
+      Corregí cualquier palabra que el modelo haya entendido mal. Los cambios de
+      estilo (tamaño, posición, color) se aplican al generar — no hace falta volver a transcribir.
+    </p>
+    <div id="sub-segments"></div>
+    <div class="sub-editor-actions">
+      <button id="sub-render-btn" class="btn-primary">Generar video</button>
+      <button id="sub-retranscribe-btn" class="btn-secondary">Volver a transcribir</button>
     </div>
   </div>
 

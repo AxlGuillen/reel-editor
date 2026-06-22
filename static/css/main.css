@@ -591,6 +591,49 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   font-size: .85rem;
   color: var(--muted);
 }
+.sub-editor-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+.sub-editor-actions .btn-primary { flex: 2; }
+.sub-editor-actions .btn-secondary { flex: 1; }
+#sub-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.sub-seg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.sub-seg-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: .72rem;
+  color: var(--muted);
+}
+.sub-seg-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.sub-seg-input { width: 100%; }
 
 /* Lista ordenable (audio_merge) */
 .am-list {
