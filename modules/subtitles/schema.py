@@ -6,7 +6,8 @@ karaoke (palabra activa coloreada) usando libass vía FFmpeg.
 from dataclasses import dataclass
 
 VALID_LANGUAGES = {"auto", "es", "en", "pt", "fr", "de", "it", "ja", "ko", "zh"}
-VALID_MODELS    = {"tiny", "base", "small", "medium"}
+VALID_MODELS    = {"tiny", "base", "small", "medium",
+                   "large-v2", "large-v3", "large-v3-turbo"}
 
 _INT_PARAMS = {
     "font_size":    (64,   30, 140),
@@ -22,7 +23,7 @@ class SubtitlesParams:
     words_per_line: int = 3
     highlight_color: str = "&H0000FFFB&"  # amarillo #fbff00 (formato ASS BGR)
     language:       str = "es"
-    model:          str = "small"
+    model:          str = "large-v3-turbo"
 
     @classmethod
     def from_form(cls, form) -> "SubtitlesParams":
@@ -39,7 +40,7 @@ class SubtitlesParams:
             )
         values["language"] = lang
 
-        model = (form.get("model") or "small").strip().lower()
+        model = (form.get("model") or "large-v3-turbo").strip().lower()
         if model not in VALID_MODELS:
             raise ValueError(
                 f"Modelo inválido: {model!r}. Opciones: {sorted(VALID_MODELS)}"
