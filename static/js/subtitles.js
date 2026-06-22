@@ -131,7 +131,7 @@ subTranscribeBtn.addEventListener("click", () => {
           subProgressWrap.classList.add("hidden");
           subSegments = data.segments || [];
           subSubsEditor.classList.remove("hidden");  // visible antes de medir altura
-          renderSegments();
+          SubtitleEditor.render(subSegmentsBox, subSegments);
           subTranscribeBtn.disabled = false;
           subRetranscribeBtn.disabled = false;
           subSubsEditor.scrollIntoView({ behavior: "smooth" });
@@ -155,56 +155,14 @@ subRetranscribeBtn.addEventListener("click", () => {
   subTranscribeBtn.click();
 });
 
-// --- Render del listado editable de segmentos ---
-function renderSegments() {
-  subSegmentsBox.innerHTML = "";
-  subSegments.forEach((seg, i) => {
-    const row = document.createElement("div");
-    row.className = "sub-seg";
-    const ts = `${fmtTime(seg.start)} → ${fmtTime(seg.end)}`;
-    row.innerHTML = `
-      <div class="sub-seg-meta"><span class="sub-seg-num">${i + 1}</span>
-        <span class="sub-seg-time">${ts}</span></div>
-      <textarea class="sub-seg-input text-input" rows="1"></textarea>`;
-    const input = row.querySelector("textarea");
-    input.value = seg.text;
-    input.addEventListener("input", () => {
-      seg.text = input.value;
-      autoGrow(input);
-    });
-    subSegmentsBox.appendChild(row);
-    autoGrow(input);   // ajustar al alto del contenido al renderizar
-  });
-}
-
-function fmtTime(s) {
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${String(sec).padStart(2, "0")}`;
-}
-
-// Ajusta el alto del textarea a su contenido, así el texto largo se ve completo
-// (con wrap) sin scroll horizontal.
-function autoGrow(ta) {
-  ta.style.height = "auto";
-  ta.style.height = `${ta.scrollHeight}px`;
-}
+// El listado editable de segmentos lo maneja SubtitleEditor (compartido).
 
 // --- Fase 2: Generar video (render) ---
 subRenderBtn.addEventListener("click", () => {
   if (!subTranscribeJobId || !subSegments.length) return;
 
-  // Para cada segmento: si el texto cambió, NO mandamos words (el backend
-  // redistribuye); si quedó igual, mandamos words originales (timing exacto).
-  const segments = subSegments.map((seg) => {
-    const edited = seg.text.trim() !== originalText(seg);
-    return {
-      start: seg.start,
-      end: seg.end,
-      text: seg.text,
-      words: edited ? null : seg.words,
-    };
-  });
+  // Si el texto cambió, el backend redistribuye los tiempos (ver SubtitleEditor).
+  const segments = SubtitleEditor.collect(subSegments);
 
   const payload = {
     job_id: subTranscribeJobId,
@@ -241,10 +199,6 @@ subRenderBtn.addEventListener("click", () => {
     })
     .catch((err) => { subShowError(err.message); subRenderBtn.disabled = false; });
 });
-
-function originalText(seg) {
-  return (seg.words || []).map((w) => w.word).join(" ").trim();
-}
 
 // --- Preview en canvas ---
 function startPreview() {
