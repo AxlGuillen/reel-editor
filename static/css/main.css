@@ -633,7 +633,14 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   border-radius: 10px;
   font-weight: 600;
 }
-.sub-seg-input { width: 100%; }
+.sub-seg-input {
+  width: 100%;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* Lista ordenable (audio_merge) */
 .am-list {

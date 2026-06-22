@@ -130,8 +130,8 @@ subTranscribeBtn.addEventListener("click", () => {
         onDone: (jobId, data) => {
           subProgressWrap.classList.add("hidden");
           subSegments = data.segments || [];
+          subSubsEditor.classList.remove("hidden");  // visible antes de medir altura
           renderSegments();
-          subSubsEditor.classList.remove("hidden");
           subTranscribeBtn.disabled = false;
           subRetranscribeBtn.disabled = false;
           subSubsEditor.scrollIntoView({ behavior: "smooth" });
@@ -165,11 +165,15 @@ function renderSegments() {
     row.innerHTML = `
       <div class="sub-seg-meta"><span class="sub-seg-num">${i + 1}</span>
         <span class="sub-seg-time">${ts}</span></div>
-      <input type="text" class="sub-seg-input text-input" value="">`;
-    const input = row.querySelector("input");
+      <textarea class="sub-seg-input text-input" rows="1"></textarea>`;
+    const input = row.querySelector("textarea");
     input.value = seg.text;
-    input.addEventListener("input", () => { seg.text = input.value; });
+    input.addEventListener("input", () => {
+      seg.text = input.value;
+      autoGrow(input);
+    });
     subSegmentsBox.appendChild(row);
+    autoGrow(input);   // ajustar al alto del contenido al renderizar
   });
 }
 
@@ -177,6 +181,13 @@ function fmtTime(s) {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+// Ajusta el alto del textarea a su contenido, así el texto largo se ve completo
+// (con wrap) sin scroll horizontal.
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  ta.style.height = `${ta.scrollHeight}px`;
 }
 
 // --- Fase 2: Generar video (render) ---
