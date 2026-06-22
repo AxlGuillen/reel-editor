@@ -109,15 +109,20 @@ def _parse_duration_seconds(line: str) -> float | None:
 
 
 def run(command: list[str], job_id: str, total_duration: float | None = None,
-        cwd: str | None = None) -> None:
+        cwd: str | None = None,
+        progress_range: tuple[int, int] = (0, 100)) -> None:
     """Ejecuta FFmpeg como subprocess.
 
     - Parsea stderr para extraer progreso (time=) y lo reporta a job_manager.
     - Lanza RuntimeError si FFmpeg retorna un código de error.
     - `cwd`: directorio de trabajo. Algunos filtros (drawtext) necesitan rutas
       relativas, que se resuelven contra este directorio.
+    - `progress_range`: banda (lo, hi) dentro de la cual se reporta el progreso
+      de este comando. Útil cuando FFmpeg es una fase de un pipeline mayor
+      (p. ej. subtítulos: transcripción ocupa 0-52, quemado 52-100).
     """
-    job_manager.update_job(job_id, status="processing", progress=0)
+    lo, hi = progress_range
+    job_manager.update_job(job_id, status="processing", progress=lo)
 
     process = subprocess.Popen(
         command,
@@ -142,9 +147,9 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
         if total_duration and total_duration > 0:
             current = _parse_time_seconds(line)
             if current is not None:
-                pct = int((current / total_duration) * 100)
-                # Reservamos el 100 para cuando el proceso termine con éxito
-                job_manager.set_progress(job_id, min(pct, 99))
+                frac = current / total_duration
+                pct = int(lo + frac * (hi - lo))
+                job_manager.set_progress(job_id, min(pct, hi - 1))
 
     process.wait()
 
@@ -152,4 +157,4 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
         detail = "".join(stderr_tail).strip()
         raise RuntimeError(f"FFmpeg falló (code {process.returncode}):\n{detail}")
 
-    job_manager.set_progress(job_id, 100)
+    job_manager.set_progress(job_id, hi)
