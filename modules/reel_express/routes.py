@@ -28,12 +28,27 @@ def process():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
+    # Fuente de audio por archivo: validar y guardar el upload (narración).
+    audio_path = None
+    if params.audio_source == "file":
+        audio = request.files.get("audio")
+        if not audio or not audio.filename:
+            return jsonify(error="Falta el archivo de audio (narración)."), 400
+        if not config.allowed_audio_file(audio.filename):
+            return jsonify(
+                error=f"Audio: extensión no permitida. Usar: {sorted(config.ALLOWED_AUDIO_EXTENSIONS)}"
+            ), 400
+        audio_path = file_utils.save_upload(audio)
+
     clip_path = file_utils.save_upload(clip)
     job_id = job_manager.create_job(clip_path, output_path="")
+    # has_wm define las bandas de progreso (ver _aggregate_progress).
+    job_manager.update_job(job_id, has_wm=params.has_watermark)
 
     thread = threading.Thread(
         target=processor.process,
         args=(job_id, clip_path, params),
+        kwargs={"audio_path": audio_path},
         daemon=True,
     )
     thread.start()
@@ -44,19 +59,29 @@ def process():
 def _aggregate_progress(job: dict) -> tuple[int, str]:
     """Combina el progreso de los sub-jobs en un % global + label de etapa.
 
-    Fase prep (0-70%): promedio de la conversión y la descarga (en paralelo).
-    Fase mix (70-100%): la mezcla.
+    Las bandas dependen de si hay paso de watermark:
+      sin watermark → prep 0-70, mix 70-100.
+      con watermark → prep 0-55, mix 55-80, watermark 80-100.
+    En la fase prep, si la fuente de audio es un archivo (sin descarga), el
+    progreso es solo el de la conversión a vertical.
     """
+    prep_end, mix_end = (55, 80) if job.get("has_wm") else (70, 100)
+
     phase = job.get("phase")
     if phase == "prep":
         v = (job_manager.get_job(job.get("sub_v")) or {}).get("progress", 0)
-        d = (job_manager.get_job(job.get("sub_d")) or {}).get("progress", 0)
-        pct = int(((v + d) / 2) * 0.70)
-        return pct, "Preparando video y audio…"
+        if job.get("sub_d"):
+            d = (job_manager.get_job(job.get("sub_d")) or {}).get("progress", 0)
+            base = (v + d) / 2
+        else:
+            base = v
+        return int(base / 100 * prep_end), "Preparando video y audio…"
     if phase == "mix":
         m = (job_manager.get_job(job.get("sub_m")) or {}).get("progress", 0)
-        pct = int(70 + (m / 100) * 30)
-        return pct, "Mezclando…"
+        return int(prep_end + (m / 100) * (mix_end - prep_end)), "Mezclando…"
+    if phase == "watermark":
+        w = (job_manager.get_job(job.get("sub_w")) or {}).get("progress", 0)
+        return int(mix_end + (w / 100) * (100 - mix_end)), "Aplicando texto y marca…"
     return job.get("progress", 0), "Procesando…"
 
 

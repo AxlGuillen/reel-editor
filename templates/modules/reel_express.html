@@ -1,6 +1,6 @@
 <div class="module-header">
   <h1>⚡ Reel Express</h1>
-  <p class="subtitle">De un clip 16:9 + un link de audio al reel final, en un paso</p>
+  <p class="subtitle">De un clip 16:9 + audio (link o archivo) al reel final, en un paso</p>
 </div>
 
 <!-- 1. Clip 16:9 -->
@@ -15,72 +15,148 @@
 
 <!-- 2. Editor -->
 <section id="rx-editor" class="hidden">
-  <div class="card">
-    <p id="rx-clip-name" class="file-name"></p>
+  <div class="editor-grid">
+    <div class="card preview-panel">
+      <h2>Preview</h2>
+      <div class="preview-row">
+        <div class="preview-col">
+          <span class="preview-tag">Clip 16:9</span>
+          <video id="rx-video" controls muted></video>
+        </div>
+        <div class="preview-col">
+          <span class="preview-tag">Resultado</span>
+          <canvas id="rx-canvas"></canvas>
+        </div>
+      </div>
+      <p id="rx-clip-name" class="file-name"></p>
+    </div>
 
-    <label class="control">
-      <span>Link del audio</span>
-      <input type="text" id="rx-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
-    </label>
+    <div class="card controls-panel">
+      <h2>Ajustes</h2>
 
-    <label class="control">
-      <span>Calidad del audio</span>
-      <select id="rx-quality">
-        <option value="320">320 kbps</option>
-        <option value="192" selected>192 kbps</option>
-        <option value="128">128 kbps</option>
-      </select>
-    </label>
+      <!-- Fuente de audio -->
+      <h3 class="rx-group">Audio</h3>
+      <div class="rx-source-tabs">
+        <button type="button" id="rx-tab-url" class="rx-tab active" data-source="url">🔗 Link</button>
+        <button type="button" id="rx-tab-file" class="rx-tab" data-source="file">📁 Archivo</button>
+      </div>
 
-    <details class="rx-advanced">
-      <summary>Ajustes avanzados</summary>
+      <div id="rx-source-url">
+        <label class="control">
+          <span>Link del audio</span>
+          <input type="text" id="rx-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
+        </label>
+        <label class="control">
+          <span>Calidad del audio</span>
+          <select id="rx-quality">
+            <option value="320">320 kbps</option>
+            <option value="192" selected>192 kbps</option>
+            <option value="128">128 kbps</option>
+          </select>
+        </label>
+      </div>
 
-      <h3 class="rx-group">Video vertical</h3>
+      <div id="rx-source-file" class="hidden">
+        <section id="rx-audio-zone" class="card drop-zone rx-audio-zone">
+          <input type="file" id="rx-audio-input" accept="audio/*,video/*" hidden>
+          <div class="drop-inner">
+            <p class="drop-icon">🎙️</p>
+            <p>Arrastra tu <strong>narración</strong> o <span class="link">haz click</span></p>
+            <p class="hint">mp3, wav, m4a, aac, ogg, mp4…</p>
+          </div>
+        </section>
+        <p id="rx-audio-name" class="file-name"></p>
+      </div>
+
+      <!-- Texto y marca (opcional) -->
+      <h3 class="rx-group">Texto y marca <span class="rx-optional">opcional</span></h3>
       <label class="control">
-        <span>Blur del fondo <em id="rx-blur-val">50</em></span>
-        <input type="range" id="rx-blur_intensity" min="0" max="50" value="50">
+        <span>Texto principal (blanco)</span>
+        <textarea id="rx-primary-text" class="text-input" rows="2" placeholder="opcional"></textarea>
       </label>
       <label class="control">
-        <span>Brillo del fondo <em id="rx-brightness-val">0.5</em></span>
-        <input type="range" id="rx-bg_brightness" min="0.3" max="1.0" step="0.05" value="0.5">
+        <span>Texto secundario (rojo)</span>
+        <textarea id="rx-secondary-text" class="text-input" rows="1" placeholder="opcional"></textarea>
       </label>
       <label class="control">
-        <span>Zoom clip principal <em id="rx-scale-val">1.55</em></span>
-        <input type="range" id="rx-main_clip_scale" min="0.7" max="5" step="0.05" value="1.55">
+        <span>Tamaño del texto <em id="rx-text-size-val">55</em></span>
+        <input type="range" id="rx-text-size" min="24" max="140" value="55">
       </label>
       <label class="control">
-        <span>Realce de imagen <em id="rx-enhance-val">85</em></span>
-        <input type="range" id="rx-enhance_intensity" min="0" max="100" value="85">
+        <span>Posición vertical del texto <em id="rx-text-y-val">20</em>%</span>
+        <input type="range" id="rx-text-y" min="0" max="100" value="20">
       </label>
-      <label class="control">
-        <span>Posición del clip</span>
-        <select id="rx-main_clip_position">
+
+      <div id="rx-gallery"></div>
+      <input type="file" id="rx-wm-upload-input" accept="image/png" hidden>
+      <button type="button" id="rx-wm-upload-btn" class="btn-secondary">＋ Subir watermark (PNG)</button>
+      <label class="control" style="margin-top:16px;">
+        <span>Posición horizontal del watermark</span>
+        <select id="rx-wm-x">
+          <option value="left">Izquierda</option>
           <option value="center" selected>Centro</option>
-          <option value="top">Arriba</option>
-          <option value="bottom">Abajo</option>
+          <option value="right">Derecha</option>
         </select>
       </label>
-
-      <h3 class="rx-group">Mezcla de audio</h3>
       <label class="control">
-        <span>Volumen original <em id="rx-vo-val">0</em></span>
-        <input type="range" id="rx-original_volume" min="0" max="100" value="0">
+        <span>Tamaño del watermark <em id="rx-wm-size-val">50</em>%</span>
+        <input type="range" id="rx-wm-size" min="10" max="70" value="50">
       </label>
       <label class="control">
-        <span>Volumen audio nuevo <em id="rx-vn-val">100</em></span>
-        <input type="range" id="rx-new_volume" min="0" max="150" value="100">
+        <span>Posición vertical del watermark <em id="rx-wm-y-val">100</em>%</span>
+        <input type="range" id="rx-wm-y" min="0" max="100" value="100">
       </label>
-      <label class="control-check">
-        <input type="checkbox" id="rx-fade" checked>
-        <span>Fade in/out suave</span>
-      </label>
-      <label class="control-check">
-        <input type="checkbox" id="rx-speed_match" checked>
-        <span>Ajustar velocidad del video al audio</span>
-      </label>
-    </details>
 
-    <button id="rx-process-btn" class="btn-primary" disabled>Generar reel</button>
+      <details class="rx-advanced">
+        <summary>Ajustes avanzados de video y mezcla</summary>
+
+        <h3 class="rx-group">Video vertical</h3>
+        <label class="control">
+          <span>Blur del fondo <em id="rx-blur-val">50</em></span>
+          <input type="range" id="rx-blur_intensity" min="0" max="50" value="50">
+        </label>
+        <label class="control">
+          <span>Brillo del fondo <em id="rx-brightness-val">0.5</em></span>
+          <input type="range" id="rx-bg_brightness" min="0.3" max="1.0" step="0.05" value="0.5">
+        </label>
+        <label class="control">
+          <span>Zoom clip principal <em id="rx-scale-val">1.55</em></span>
+          <input type="range" id="rx-main_clip_scale" min="0.7" max="5" step="0.05" value="1.55">
+        </label>
+        <label class="control">
+          <span>Realce de imagen <em id="rx-enhance-val">85</em></span>
+          <input type="range" id="rx-enhance_intensity" min="0" max="100" value="85">
+        </label>
+        <label class="control">
+          <span>Posición del clip</span>
+          <select id="rx-main_clip_position">
+            <option value="center" selected>Centro</option>
+            <option value="top">Arriba</option>
+            <option value="bottom">Abajo</option>
+          </select>
+        </label>
+
+        <h3 class="rx-group">Mezcla de audio</h3>
+        <label class="control">
+          <span>Volumen original <em id="rx-vo-val">0</em></span>
+          <input type="range" id="rx-original_volume" min="0" max="100" value="0">
+        </label>
+        <label class="control">
+          <span>Volumen audio nuevo <em id="rx-vn-val">100</em></span>
+          <input type="range" id="rx-new_volume" min="0" max="150" value="100">
+        </label>
+        <label class="control-check">
+          <input type="checkbox" id="rx-fade" checked>
+          <span>Fade in/out suave</span>
+        </label>
+        <label class="control-check">
+          <input type="checkbox" id="rx-speed_match" checked>
+          <span>Ajustar velocidad del video al audio</span>
+        </label>
+      </details>
+
+      <button id="rx-process-btn" class="btn-primary" disabled>Generar reel</button>
+    </div>
   </div>
 
   <!-- Progress + result -->
