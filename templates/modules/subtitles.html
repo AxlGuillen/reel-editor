@@ -87,12 +87,16 @@
         <select id="sub-model">
           <option value="tiny">Tiny — más rápido, menos preciso</option>
           <option value="base">Base</option>
-          <option value="small" selected>Small — recomendado</option>
+          <option value="small">Small</option>
           <option value="medium">Medium — más preciso, más lento</option>
+          <option value="large-v3-turbo" selected>Large v3 Turbo — recomendado (gran precisión, rápido)</option>
+          <option value="large-v2">Large v2 — muy preciso, lento</option>
+          <option value="large-v3">Large v3 — máxima precisión, el más lento</option>
         </select>
       </label>
       <p class="hint" style="margin-bottom:16px;">
-        La primera vez descarga el modelo (~500 MB para Small). Los siguientes usos son instantáneos.
+        La primera vez descarga el modelo (~1.6 GB para Large v3 Turbo, ~3 GB para Large).
+        Los siguientes usos son instantáneos. En CPU los modelos Large tardan más por clip.
       </p>
 
       <button id="sub-transcribe-btn" class="btn-primary" disabled>Transcribir</button>
