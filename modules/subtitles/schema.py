@@ -20,7 +20,7 @@ class SubtitlesParams:
     font_size:      int = 64
     position_y:     int = 1560      # px desde arriba en el lienzo 1080×1920
     words_per_line: int = 3
-    highlight_color: str = "&H00FFFF&"   # cian estilo TikTok (formato ASS BGR)
+    highlight_color: str = "&H0000FFFB&"  # amarillo #fbff00 (formato ASS BGR)
     language:       str = "auto"
     model:          str = "small"
 
@@ -52,7 +52,7 @@ class SubtitlesParams:
         if raw_color:
             values["highlight_color"] = _css_to_ass(raw_color)
         else:
-            values["highlight_color"] = "&H00FFFF&"   # cian
+            values["highlight_color"] = "&H0000FFFB&"  # amarillo #fbff00
 
         return cls(**values)
 

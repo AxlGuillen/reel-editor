@@ -252,7 +252,8 @@ def process(job_id: str, video_path: str, output_path: str,
             progress_range=(52, 100),
         )
 
-        job_manager.update_job(job_id, status="done", progress=100, stage=None)
+        job_manager.update_job(job_id, status="done", progress=100, stage=None,
+                               output_path=output_path)
 
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
