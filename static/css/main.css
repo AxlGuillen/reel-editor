@@ -57,6 +57,25 @@ body {
 .nav-item.active { background: var(--accent); color: #fff; }
 .nav-icon { font-size: 1.1rem; }
 
+/* Encabezados de sección de la sidebar (división sutil) */
+.nav-section {
+  width: 100%;
+  flex-basis: 100%;
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 6px 12px 4px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.nav-section:first-child {
+  margin-top: 0;
+  padding-top: 2px;
+  border-top: none;
+}
+
 /* Footer de la sidebar: botón de limpieza */
 .sidebar-footer { margin-top: auto; padding-top: 16px; }
 .cleanup-btn {

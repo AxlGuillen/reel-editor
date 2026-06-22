@@ -11,11 +11,17 @@
     <aside class="sidebar">
       <div class="brand">⚡ ReelForge</div>
       <nav class="nav">
-        <button class="nav-item" data-target="view-reel-express">
+        <div class="nav-section">Automático</div>
+        <button class="nav-item active" data-target="view-reel-express">
           <span class="nav-icon">⚡</span> Reel Express
         </button>
-        <button class="nav-item active" data-target="view-vertical">
+
+        <div class="nav-section">Módulos</div>
+        <button class="nav-item" data-target="view-vertical">
           <span class="nav-icon">📐</span> Vertical
+        </button>
+        <button class="nav-item" data-target="view-downloader">
+          <span class="nav-icon">⬇️</span> Downloader
         </button>
         <button class="nav-item" data-target="view-sound">
           <span class="nav-icon">🔊</span> SoundDrop
@@ -23,17 +29,18 @@
         <button class="nav-item" data-target="view-watermark">
           <span class="nav-icon">🖋️</span> Watermark
         </button>
+        <button class="nav-item" data-target="view-subtitles">
+          <span class="nav-icon">🗣️</span> Subtítulos
+        </button>
+
+        <div class="nav-section">Tools Specific videos</div>
         <button class="nav-item" data-target="view-insert">
           <span class="nav-icon">✂️</span> Insert
         </button>
-        <button class="nav-item" data-target="view-downloader">
-          <span class="nav-icon">⬇️</span> Downloader
-        </button>
+
+        <div class="nav-section">Tools</div>
         <button class="nav-item" data-target="view-audio-merge">
           <span class="nav-icon">🎙️</span> Unir Audio
-        </button>
-        <button class="nav-item" data-target="view-subtitles">
-          <span class="nav-icon">🗣️</span> Subtítulos
         </button>
       </nav>
 
@@ -46,10 +53,10 @@
     </aside>
 
     <main class="content">
-      <section id="view-reel-express" class="module-view hidden">
+      <section id="view-reel-express" class="module-view">
         {% include "modules/reel_express.html" %}
       </section>
-      <section id="view-vertical" class="module-view">
+      <section id="view-vertical" class="module-view hidden">
         {% include "modules/vertical_convert.html" %}
       </section>
       <section id="view-sound" class="module-view hidden">
