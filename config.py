@@ -9,6 +9,12 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 OUTPUT_FOLDER = os.path.join(BASE_DIR, "outputs")
 DOWNLOAD_FOLDER = os.path.join(BASE_DIR, "downloads")
 
+# Assets persistentes (versionados, NO temporales): librería de watermarks y
+# la fuente para los textos. El botón "Limpiar archivos" no los toca.
+ASSETS_FOLDER = os.path.join(BASE_DIR, "assets")
+WATERMARKS_FOLDER = os.path.join(ASSETS_FOLDER, "watermarks")
+FONTS_FOLDER = os.path.join(ASSETS_FOLDER, "fonts")
+
 MAX_UPLOAD_SIZE_MB = 2000
 MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
@@ -65,6 +71,9 @@ FFPROBE_PATH = os.environ.get("FFPROBE_PATH") or _resolve_ffprobe()
 ALLOWED_EXTENSIONS = {"mp4", "mov", "mkv", "avi"}
 # Fuentes de audio para sound_drop: archivos de audio o videos (se extrae su pista).
 ALLOWED_AUDIO_EXTENSIONS = {"mp3", "wav", "m4a", "aac", "ogg"} | ALLOWED_EXTENSIONS
+# Watermarks: PNG con transparencia. Fuentes: solo las que soporta freetype.
+ALLOWED_WATERMARK_EXTENSIONS = {"png"}
+ALLOWED_FONT_EXTENSIONS = {"ttf", "otf"}
 
 # Lienzo vertical de salida (9:16)
 OUTPUT_WIDTH = 1080
@@ -81,3 +90,22 @@ def allowed_file(filename: str) -> bool:
 
 def allowed_audio_file(filename: str) -> bool:
     return _has_allowed_ext(filename, ALLOWED_AUDIO_EXTENSIONS)
+
+
+def allowed_watermark_file(filename: str) -> bool:
+    return _has_allowed_ext(filename, ALLOWED_WATERMARK_EXTENSIONS)
+
+
+def allowed_font_file(filename: str) -> bool:
+    return _has_allowed_ext(filename, ALLOWED_FONT_EXTENSIONS)
+
+
+def resolve_font_path() -> str | None:
+    """Devuelve el path de la fuente fija del proyecto (el primer .ttf/.otf en
+    assets/fonts/), o None si no hay ninguna."""
+    if not os.path.isdir(FONTS_FOLDER):
+        return None
+    for name in sorted(os.listdir(FONTS_FOLDER)):
+        if allowed_font_file(name):
+            return os.path.join(FONTS_FOLDER, name)
+    return None
