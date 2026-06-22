@@ -1,0 +1,120 @@
+<div class="module-header">
+  <h1>🗣️ Subtítulos</h1>
+  <p class="subtitle">Transcripción automática con efecto karaoke (palabra activa coloreada)</p>
+</div>
+
+<!-- 1. Upload del video -->
+<section id="sub-video-zone" class="card drop-zone">
+  <input type="file" id="sub-video-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+  <div class="drop-inner">
+    <p class="drop-icon">⬆</p>
+    <p>Arrastra tu <strong>video vertical con audio</strong> o <span class="link">haz click</span></p>
+    <p class="hint">mp4, mov, mkv, avi — debe tener narración o voz</p>
+  </div>
+</section>
+
+<!-- 2. Editor -->
+<section id="sub-editor" class="hidden">
+  <div class="editor-grid">
+
+    <!-- Preview -->
+    <div class="card preview-panel">
+      <h2>Preview</h2>
+      <div class="preview-row">
+        <div class="preview-col">
+          <span class="preview-tag">Video</span>
+          <video id="sub-video" controls muted></video>
+        </div>
+        <div class="preview-col">
+          <span class="preview-tag">Resultado estimado</span>
+          <canvas id="sub-canvas"></canvas>
+        </div>
+      </div>
+      <p id="sub-video-name" class="file-name"></p>
+    </div>
+
+    <!-- Controles -->
+    <div class="card controls-panel">
+      <h2>Ajustes</h2>
+
+      <h3 class="rx-group">Texto</h3>
+      <label class="control">
+        <span>Tamaño de fuente <em id="sub-font-size-val">64</em> px</span>
+        <input type="range" id="sub-font-size" min="30" max="140" value="64">
+      </label>
+
+      <label class="control">
+        <span>Posición vertical <em id="sub-position-y-val">1560</em> px</span>
+        <input type="range" id="sub-position-y" min="0" max="1920" value="1560">
+      </label>
+      <div class="sub-presets">
+        <button type="button" id="sub-preset-top" class="btn-secondary sub-preset-btn">↑ Arriba</button>
+        <button type="button" id="sub-preset-bottom" class="btn-secondary sub-preset-btn">↓ Abajo</button>
+      </div>
+
+      <label class="control" style="margin-top:16px;">
+        <span>Palabras por grupo <em id="sub-words-val">3</em></span>
+        <input type="range" id="sub-words" min="1" max="6" value="3">
+      </label>
+
+      <label class="control">
+        <span>Color de resalte</span>
+        <div class="sub-color-row">
+          <input type="color" id="sub-highlight-color" value="#00ffff" class="sub-color-picker">
+          <span id="sub-color-preview" class="sub-color-chip" style="background:#00ffff"></span>
+          <span class="sub-color-label">Palabra activa</span>
+        </div>
+      </label>
+
+      <h3 class="rx-group">Transcripción</h3>
+      <label class="control">
+        <span>Idioma del audio</span>
+        <select id="sub-language">
+          <option value="auto" selected>Auto-detectar</option>
+          <option value="es">Español</option>
+          <option value="en">Inglés</option>
+          <option value="pt">Portugués</option>
+          <option value="fr">Francés</option>
+          <option value="de">Alemán</option>
+          <option value="it">Italiano</option>
+          <option value="ja">Japonés</option>
+          <option value="ko">Coreano</option>
+          <option value="zh">Chino</option>
+        </select>
+      </label>
+      <label class="control">
+        <span>Modelo de Whisper</span>
+        <select id="sub-model">
+          <option value="tiny">Tiny — más rápido, menos preciso</option>
+          <option value="base">Base</option>
+          <option value="small" selected>Small — recomendado</option>
+          <option value="medium">Medium — más preciso, más lento</option>
+        </select>
+      </label>
+      <p class="hint" style="margin-bottom:16px;">
+        La primera vez descarga el modelo (~500 MB para Small). Los siguientes usos son instantáneos.
+      </p>
+
+      <button id="sub-process-btn" class="btn-primary" disabled>Generar subtítulos</button>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div id="sub-progress-wrap" class="card hidden">
+    <div class="progress-bar"><div id="sub-progress-fill"></div></div>
+    <p id="sub-progress-label">Iniciando…</p>
+  </div>
+
+  <!-- Result -->
+  <div id="sub-result-wrap" class="card hidden">
+    <p class="success">✓ Video subtitulado listo</p>
+    <a id="sub-download-btn" class="btn-primary" download>Descargar video</a>
+    <button id="sub-reset-btn" class="btn-secondary">Hacer otro</button>
+  </div>
+
+  <!-- Error -->
+  <div id="sub-error-wrap" class="card error hidden">
+    <p id="sub-error-msg"></p>
+    <button id="sub-error-reset-btn" class="btn-secondary">Reintentar</button>
+  </div>
+</section>

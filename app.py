@@ -14,6 +14,7 @@ from modules.audio_merge.routes import bp as audio_merge_bp
 from modules.reel_express.routes import bp as reel_express_bp
 from modules.assets.routes import bp as assets_bp
 from modules.watermark.routes import bp as watermark_bp
+from modules.subtitles.routes import bp as subtitles_bp
 
 
 def create_app() -> Flask:
@@ -34,6 +35,7 @@ def create_app() -> Flask:
     app.register_blueprint(reel_express_bp)
     app.register_blueprint(assets_bp)
     app.register_blueprint(watermark_bp)
+    app.register_blueprint(subtitles_bp)
 
     @app.route("/")
     def index():

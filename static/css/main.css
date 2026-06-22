@@ -546,6 +546,52 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   margin-bottom: 12px;
 }
 
+/* Subtítulos */
+.preview-panel #sub-canvas {
+  height: 360px;
+  width: auto;
+  aspect-ratio: 9 / 16;
+  border-radius: 8px;
+  background: #000;
+  display: block;
+}
+.sub-presets {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sub-preset-btn {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: .82rem;
+}
+.sub-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.sub-color-picker {
+  width: 40px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-2);
+  cursor: pointer;
+}
+.sub-color-chip {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+}
+.sub-color-label {
+  font-size: .85rem;
+  color: var(--muted);
+}
+
 /* Lista ordenable (audio_merge) */
 .am-list {
   list-style: none;

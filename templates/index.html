@@ -32,6 +32,9 @@
         <button class="nav-item" data-target="view-audio-merge">
           <span class="nav-icon">🎙️</span> Unir Audio
         </button>
+        <button class="nav-item" data-target="view-subtitles">
+          <span class="nav-icon">🗣️</span> Subtítulos
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -64,6 +67,9 @@
       <section id="view-audio-merge" class="module-view hidden">
         {% include "modules/audio_merge.html" %}
       </section>
+      <section id="view-subtitles" class="module-view hidden">
+        {% include "modules/subtitles.html" %}
+      </section>
     </main>
   </div>
 
@@ -74,6 +80,7 @@
   <script src="{{ url_for('static', filename='js/insert.js') }}"></script>
   <script src="{{ url_for('static', filename='js/downloader.js') }}"></script>
   <script src="{{ url_for('static', filename='js/audio_merge.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/subtitles.js') }}"></script>
   <script src="{{ url_for('static', filename='js/reel_express.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
