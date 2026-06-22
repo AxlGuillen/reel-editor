@@ -1,3 +1,4 @@
+(function () {
 // ReelForge — módulo vertical_convert (conversión 16:9 → 9:16).
 const API = "/api/vertical-convert";
 
@@ -195,3 +196,4 @@ function fullReset() {
   processBtn.disabled = false;
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
+})();

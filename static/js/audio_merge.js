@@ -1,3 +1,4 @@
+(function () {
 // ReelForge — módulo audio_merge (unir varios audios en orden).
 const AM_API = "/api/audio-merge";
 
@@ -175,3 +176,4 @@ el("am-reset-btn").addEventListener("click", () => {
 el("am-error-reset-btn").addEventListener("click", () => {
   amErrorWrap.classList.add("hidden");
 });
+})();

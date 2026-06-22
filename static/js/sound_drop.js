@@ -1,3 +1,4 @@
+(function () {
 // ReelForge — módulo sound_drop (audio de fondo sobre video vertical).
 const SD_API = "/api/sound-drop";
 
@@ -206,3 +207,4 @@ el("sd-reset-btn").addEventListener("click", () => {
 el("sd-error-reset-btn").addEventListener("click", () => {
   sdErrorWrap.classList.add("hidden");
 });
+})();

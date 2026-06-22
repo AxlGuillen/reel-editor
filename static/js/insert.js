@@ -1,3 +1,4 @@
+(function () {
 // ReelForge — módulo insert (insertar un mini-clip en marcadores del original).
 const INS_API = "/api/insert";
 
@@ -258,3 +259,4 @@ el("ins-reset-btn").addEventListener("click", () => {
 el("ins-error-reset-btn").addEventListener("click", () => {
   insErrorWrap.classList.add("hidden");
 });
+})();

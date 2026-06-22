@@ -1,3 +1,4 @@
+(function () {
 // ReelForge — módulo downloader (descarga de assets con yt-dlp).
 const DL_API = "/api/downloader";
 
@@ -116,3 +117,4 @@ el("dl-reset-btn").addEventListener("click", () => {
 el("dl-error-reset-btn").addEventListener("click", () => {
   dlErrorWrap.classList.add("hidden");
 });
+})();
