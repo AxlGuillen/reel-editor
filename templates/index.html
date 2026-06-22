@@ -20,6 +20,9 @@
         <button class="nav-item" data-target="view-sound">
           <span class="nav-icon">🔊</span> SoundDrop
         </button>
+        <button class="nav-item" data-target="view-watermark">
+          <span class="nav-icon">🖋️</span> Watermark
+        </button>
         <button class="nav-item" data-target="view-insert">
           <span class="nav-icon">✂️</span> Insert
         </button>
@@ -49,6 +52,9 @@
       <section id="view-sound" class="module-view hidden">
         {% include "modules/sound_drop.html" %}
       </section>
+      <section id="view-watermark" class="module-view hidden">
+        {% include "modules/watermark.html" %}
+      </section>
       <section id="view-insert" class="module-view hidden">
         {% include "modules/insert.html" %}
       </section>
@@ -64,6 +70,7 @@
   <script src="{{ url_for('static', filename='js/shared.js') }}"></script>
   <script src="{{ url_for('static', filename='js/vertical_convert.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sound_drop.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/watermark.js') }}"></script>
   <script src="{{ url_for('static', filename='js/insert.js') }}"></script>
   <script src="{{ url_for('static', filename='js/downloader.js') }}"></script>
   <script src="{{ url_for('static', filename='js/audio_merge.js') }}"></script>

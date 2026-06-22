@@ -1,0 +1,96 @@
+<div class="module-header">
+  <h1>🖋️ Watermark &amp; Texto</h1>
+  <p class="subtitle">Título, subtítulo y tu marca (Jhin) sobre el video vertical</p>
+</div>
+
+<!-- 1. Upload del video -->
+<section id="wm-video-zone" class="card drop-zone">
+  <input type="file" id="wm-video-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+  <div class="drop-inner">
+    <p class="drop-icon">⬆</p>
+    <p>Arrastra tu <strong>video vertical</strong> o <span class="link">haz click para seleccionar</span></p>
+    <p class="hint">mp4, mov, mkv, avi</p>
+  </div>
+</section>
+
+<!-- 2. Editor -->
+<section id="wm-editor" class="hidden">
+  <div class="editor-grid">
+    <div class="card preview-panel">
+      <h2>Preview</h2>
+      <div class="preview-row">
+        <div class="preview-col">
+          <span class="preview-tag">Video</span>
+          <video id="wm-video" controls></video>
+        </div>
+        <div class="preview-col">
+          <span class="preview-tag">Resultado</span>
+          <canvas id="wm-canvas"></canvas>
+        </div>
+      </div>
+      <p id="wm-video-name" class="file-name"></p>
+    </div>
+
+    <div class="card controls-panel">
+      <h2>Ajustes</h2>
+
+      <h3 class="rx-group">Texto</h3>
+      <label class="control">
+        <span>Texto principal (blanco)</span>
+        <textarea id="wm-primary-text" class="text-input" rows="2" placeholder="Ej: Top musicas para subir de rango:"></textarea>
+      </label>
+      <label class="control">
+        <span>Texto secundario (rojo)</span>
+        <textarea id="wm-secondary-text" class="text-input" rows="1" placeholder="opcional"></textarea>
+      </label>
+      <label class="control">
+        <span>Tamaño del texto <em id="wm-text-size-val">55</em></span>
+        <input type="range" id="wm-text-size" min="24" max="140" value="55">
+      </label>
+      <label class="control">
+        <span>Posición vertical del texto <em id="wm-text-y-val">20</em>%</span>
+        <input type="range" id="wm-text-y" min="0" max="100" value="20">
+      </label>
+
+      <h3 class="rx-group">Watermark</h3>
+      <div id="wm-gallery"></div>
+      <input type="file" id="wm-upload-input" accept="image/png" hidden>
+      <button id="wm-upload-btn" class="btn-secondary">＋ Subir watermark (PNG)</button>
+      <label class="control" style="margin-top:16px;">
+        <span>Posición horizontal del watermark</span>
+        <select id="wm-x">
+          <option value="left">Izquierda</option>
+          <option value="center" selected>Centro</option>
+          <option value="right">Derecha</option>
+        </select>
+      </label>
+      <label class="control">
+        <span>Tamaño del watermark <em id="wm-size-val">50</em>%</span>
+        <input type="range" id="wm-size" min="10" max="70" value="50">
+      </label>
+      <label class="control">
+        <span>Posición vertical del watermark <em id="wm-y-val">100</em>%</span>
+        <input type="range" id="wm-y" min="0" max="100" value="100">
+      </label>
+
+      <button id="wm-process-btn" class="btn-primary" disabled>Generar video</button>
+    </div>
+  </div>
+
+  <!-- Progress + result -->
+  <div id="wm-progress-wrap" class="card hidden">
+    <div class="progress-bar"><div id="wm-progress-fill"></div></div>
+    <p id="wm-progress-label">Procesando… 0%</p>
+  </div>
+
+  <div id="wm-result-wrap" class="card hidden">
+    <p class="success">✓ Listo</p>
+    <a id="wm-download-btn" class="btn-primary" download>Descargar video</a>
+    <button id="wm-reset-btn" class="btn-secondary">Hacer otro</button>
+  </div>
+
+  <div id="wm-error-wrap" class="card error hidden">
+    <p id="wm-error-msg"></p>
+    <button id="wm-error-reset-btn" class="btn-secondary">Reintentar</button>
+  </div>
+</section>

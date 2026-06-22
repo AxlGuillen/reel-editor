@@ -12,11 +12,16 @@ from modules.insert.routes import bp as insert_bp
 from modules.downloader.routes import bp as downloader_bp
 from modules.audio_merge.routes import bp as audio_merge_bp
 from modules.reel_express.routes import bp as reel_express_bp
+from modules.assets.routes import bp as assets_bp
+from modules.watermark.routes import bp as watermark_bp
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_CONTENT_LENGTH
+    # Herramienta local en desarrollo: no cachear estáticos, así el navegador
+    # siempre toma el JS/CSS recién editado (evita ver versiones viejas).
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
     file_utils.ensure_dirs()
 
@@ -27,6 +32,8 @@ def create_app() -> Flask:
     app.register_blueprint(downloader_bp)
     app.register_blueprint(audio_merge_bp)
     app.register_blueprint(reel_express_bp)
+    app.register_blueprint(assets_bp)
+    app.register_blueprint(watermark_bp)
 
     @app.route("/")
     def index():

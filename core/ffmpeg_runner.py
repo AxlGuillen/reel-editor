@@ -108,11 +108,14 @@ def _parse_duration_seconds(line: str) -> float | None:
     return _hms_to_seconds(m) if m else None
 
 
-def run(command: list[str], job_id: str, total_duration: float | None = None) -> None:
+def run(command: list[str], job_id: str, total_duration: float | None = None,
+        cwd: str | None = None) -> None:
     """Ejecuta FFmpeg como subprocess.
 
     - Parsea stderr para extraer progreso (time=) y lo reporta a job_manager.
     - Lanza RuntimeError si FFmpeg retorna un código de error.
+    - `cwd`: directorio de trabajo. Algunos filtros (drawtext) necesitan rutas
+      relativas, que se resuelven contra este directorio.
     """
     job_manager.update_job(job_id, status="processing", progress=0)
 
@@ -122,6 +125,7 @@ def run(command: list[str], job_id: str, total_duration: float | None = None) ->
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        cwd=cwd,
     )
 
     stderr_tail: list[str] = []
