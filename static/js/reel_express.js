@@ -33,6 +33,13 @@ const rxDownloadBtn = el("rx-download-btn");
 const rxErrorWrap = el("rx-error-wrap");
 const rxErrorMsg = el("rx-error-msg");
 
+// Subtítulos
+const rxAddSubs = el("rx-add-subs");
+const rxSubsControls = el("rx-subs-controls");
+const rxSubsEditor = el("rx-subs-editor");
+const rxSegmentsBox = el("rx-segments");
+const rxFinishBtn = el("rx-finish-btn");
+
 let rxClipFile = null;
 let rxAudioFile = null;
 let rxSource = "url";                  // "url" | "file"
@@ -40,6 +47,8 @@ let rxRafId = null;
 let rxFontFamily = "sans-serif";
 let rxSelectedWm = "";                 // nombre del watermark o "" (ninguno)
 let rxWmImg = null;                    // Image del watermark seleccionado
+let rxPrepJobId = null;                // job de la fase 1 (tiene el video base)
+let rxSegments = [];                   // segmentos transcritos (editables)
 
 // --- Cargar la fuente custom para el preview (si hay una en assets/fonts/) ---
 fetch("/api/font").then((r) => r.json()).then((info) => {
@@ -128,6 +137,43 @@ function drawCanvas() {
   drawVertical();
   drawTextBlock();
   drawWatermark();
+  drawSampleSubtitle();
+}
+
+// Subtítulo de muestra (espeja el preview del módulo subtitles), solo si los
+// subtítulos están activos. Sirve para ver la posición/estilo en vivo.
+function drawSampleSubtitle() {
+  if (!rxAddSubs.checked) return;
+  const fs = +el("rx-sub-font-size").value;
+  const posY = +el("rx-sub-position-y").value;
+  const color = el("rx-sub-highlight-color").value;
+  const words = +el("rx-sub-words").value;
+
+  const y = (posY / 1920) * RX_H;
+  rxCtx.font = `bold ${fs * RX_SCALE}px ${rxFontFamily}`;
+  rxCtx.textAlign = "center";
+  rxCtx.textBaseline = "bottom";
+  rxCtx.lineJoin = "round";
+
+  const samples = ["Ejemplo", "de", "subtítulo", "en", "vivo", "aquí"];
+  const group = samples.slice(0, words);
+  const activeIdx = Math.min(1, group.length - 1);
+
+  const border = Math.max(2, fs * 0.07) * RX_SCALE;
+  rxCtx.lineWidth = border * 2;
+  rxCtx.strokeStyle = "black";
+
+  const totalW = rxCtx.measureText(group.join(" ")).width;
+  let curX = (RX_W - totalW) / 2;
+  group.forEach((word, i) => {
+    const wordW = rxCtx.measureText(word).width;
+    const spaceW = i < group.length - 1 ? rxCtx.measureText(" ").width : 0;
+    const cx = curX + wordW / 2;
+    rxCtx.fillStyle = i === activeIdx ? color : "white";
+    rxCtx.strokeText(word, cx, y);
+    rxCtx.fillText(word, cx, y);
+    curX += wordW + spaceW;
+  });
 }
 
 // Espeja vertical_convert.js: fondo "cover" con blur + brillo, y el clip
@@ -318,6 +364,23 @@ Object.entries(rxLabels).forEach(([inputId, labelId]) => {
   input.addEventListener("input", () => (el(labelId).textContent = input.value));
 });
 
+// --- Subtítulos: toggle + labels en vivo ---
+rxAddSubs.addEventListener("change", () => {
+  rxSubsControls.classList.toggle("hidden", !rxAddSubs.checked);
+});
+el("rx-sub-font-size").addEventListener("input", () => {
+  el("rx-sub-font-size-val").textContent = el("rx-sub-font-size").value;
+});
+el("rx-sub-position-y").addEventListener("input", () => {
+  el("rx-sub-position-y-val").textContent = el("rx-sub-position-y").value;
+});
+el("rx-sub-words").addEventListener("input", () => {
+  el("rx-sub-words-val").textContent = el("rx-sub-words").value;
+});
+el("rx-sub-highlight-color").addEventListener("input", () => {
+  el("rx-sub-color-preview").style.background = el("rx-sub-highlight-color").value;
+});
+
 // --- Process ---
 rxProcessBtn.addEventListener("click", () => {
   const audioReady = rxSource === "url" ? !!rxUrl.value.trim() : !!rxAudioFile;
@@ -352,21 +415,108 @@ rxProcessBtn.addEventListener("click", () => {
   form.append("watermark_x", el("rx-wm-x").value);
   form.append("watermark_size", el("rx-wm-size").value);
   form.append("watermark_y", el("rx-wm-y").value);
+  // Subtítulos
+  form.append("add_subtitles", rxAddSubs.checked ? "1" : "0");
+  if (rxAddSubs.checked) {
+    form.append("language", el("rx-sub-language").value);
+    form.append("model", el("rx-sub-model").value);
+    form.append("font_size", el("rx-sub-font-size").value);
+    form.append("position_y", el("rx-sub-position-y").value);
+    form.append("words_per_line", el("rx-sub-words").value);
+    form.append("highlight_color", el("rx-sub-highlight-color").value);
+  }
 
   rxResetOutputs();
+  rxSubsEditor.classList.add("hidden");
   rxProcessBtn.disabled = true;
   rxProgressWrap.classList.remove("hidden");
   rxSetProgress(0, "Iniciando…");
 
-  runJob(RX_API, form, {
-    onProgress: rxSetProgress,
-    onDone: rxShowResult,
-    onError: rxShowError,
-  });
+  fetch(`${RX_API}/process`, { method: "POST", body: form })
+    .then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      rxPrepJobId = data.job_id;
+      rxPollJob(data.job_id, {
+        onProgress: rxSetProgress,
+        onDone: (jobId, d) => {
+          if (rxAddSubs.checked) {
+            // Fase 1 lista: mostrar el editor de subtítulos para revisar/corregir.
+            rxProgressWrap.classList.add("hidden");
+            rxSegments = d.segments || [];
+            rxSubsEditor.classList.remove("hidden");
+            SubtitleEditor.render(rxSegmentsBox, rxSegments);
+            rxProcessBtn.disabled = false;
+            rxSubsEditor.scrollIntoView({ behavior: "smooth" });
+          } else {
+            rxShowResult(jobId);
+          }
+        },
+        onError: rxShowError,
+      });
+    })
+    .catch((err) => rxShowError(err.message));
 });
 
-// runJob llama onProgress(progress, stage?) — el status de reel_express manda
-// también la etapa actual para mostrarla.
+// Poller propio (status/<id> trae segments + stage, que runJob no expone).
+function rxPollJob(jobId, { onProgress, onDone, onError }) {
+  const timer = setInterval(async () => {
+    try {
+      const res = await fetch(`${RX_API}/status/${jobId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      onProgress(data.progress, data.stage);
+      if (data.status === "done") {
+        clearInterval(timer);
+        onDone(jobId, data);
+      } else if (data.status === "error") {
+        clearInterval(timer);
+        onError(data.error || "Falló el procesamiento");
+      }
+    } catch (err) {
+      clearInterval(timer);
+      onError(err.message);
+    }
+  }, 1000);
+}
+
+// --- Fase 2: con los subtítulos editados, generar el reel final ---
+rxFinishBtn.addEventListener("click", () => {
+  if (!rxPrepJobId || !rxSegments.length) return;
+
+  const payload = {
+    job_id: rxPrepJobId,
+    segments: SubtitleEditor.collect(rxSegments),
+    font_size: el("rx-sub-font-size").value,
+    position_y: el("rx-sub-position-y").value,
+    words_per_line: el("rx-sub-words").value,
+    highlight_color: el("rx-sub-highlight-color").value,
+  };
+
+  rxResetOutputs();
+  rxFinishBtn.disabled = true;
+  rxProgressWrap.classList.remove("hidden");
+  rxSetProgress(0, "Generando…");
+
+  fetch(`${RX_API}/finish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+    .then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      rxPollJob(data.job_id, {
+        onProgress: rxSetProgress,
+        onDone: (jobId) => { rxShowResult(jobId); rxFinishBtn.disabled = false; },
+        onError: (msg) => { rxShowError(msg); rxFinishBtn.disabled = false; },
+      });
+    })
+    .catch((err) => { rxShowError(err.message); rxFinishBtn.disabled = false; });
+});
+
+// rxPollJob llama onProgress(progress, stage?) — el status de reel_express
+// manda también la etapa actual para mostrarla.
 function rxSetProgress(pct, stage) {
   rxProgressFill.style.width = `${pct}%`;
   const label = stage || "Procesando…";
@@ -375,6 +525,7 @@ function rxSetProgress(pct, stage) {
 
 function rxShowResult(jobId) {
   rxProgressWrap.classList.add("hidden");
+  rxSubsEditor.classList.add("hidden");
   rxDownloadBtn.href = `${RX_API}/download/${jobId}`;
   rxResultWrap.classList.remove("hidden");
   rxProcessBtn.disabled = false;
@@ -405,6 +556,9 @@ el("rx-reset-btn").addEventListener("click", () => {
   rxClipName.textContent = "";
   rxAudioName.textContent = "";
   rxUrl.value = "";
+  rxSubsEditor.classList.add("hidden");
+  rxPrepJobId = null;
+  rxSegments = [];
   rxEditor.classList.add("hidden");
   rxResetOutputs();
   updateReady();
