@@ -1,4 +1,5 @@
 """Blueprint Flask del módulo reel_express."""
+import os
 import threading
 
 from flask import Blueprint, jsonify, request, send_file
@@ -7,6 +8,7 @@ import config
 from core import file_utils, job_manager
 from modules.reel_express import processor
 from modules.reel_express.schema import ReelExpressParams
+from modules.subtitles.schema import SubtitlesParams
 
 bp = Blueprint("reel_express", __name__, url_prefix="/api/reel-express")
 
@@ -42,8 +44,9 @@ def process():
 
     clip_path = file_utils.save_upload(clip)
     job_id = job_manager.create_job(clip_path, output_path="")
-    # has_wm define las bandas de progreso (ver _aggregate_progress).
-    job_manager.update_job(job_id, has_wm=params.has_watermark)
+    # has_wm / has_subs definen las bandas de progreso (ver _aggregate_progress).
+    job_manager.update_job(job_id, has_wm=params.has_watermark,
+                           has_subs=params.has_subtitles)
 
     thread = threading.Thread(
         target=processor.process,
@@ -56,33 +59,84 @@ def process():
     return jsonify(job_id=job_id), 202
 
 
-def _aggregate_progress(job: dict) -> tuple[int, str]:
-    """Combina el progreso de los sub-jobs en un % global + label de etapa.
+@bp.post("/finish")
+def finish():
+    """Fase 2: con los subtítulos editados, quema sobre el video base."""
+    data = request.get_json(silent=True) or {}
 
-    Las bandas dependen de si hay paso de watermark:
-      sin watermark → prep 0-70, mix 70-100.
-      con watermark → prep 0-55, mix 55-80, watermark 80-100.
-    En la fase prep, si la fuente de audio es un archivo (sin descarga), el
-    progreso es solo el de la conversión a vertical.
+    src = job_manager.get_job(data.get("job_id"))
+    if not src:
+        return jsonify(error="Sesión no encontrada. Volvé a generar el reel."), 400
+    base_path = src.get("base_path")
+    if not base_path or not os.path.exists(base_path):
+        return jsonify(error="El video base ya no está disponible. Volvé a generar."), 400
+
+    segments = data.get("segments")
+    if not isinstance(segments, list) or not segments:
+        return jsonify(error="No hay subtítulos para generar."), 400
+
+    try:
+        sub_params = SubtitlesParams.from_form(data)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+    job_id = job_manager.create_job(base_path, output_path="")
+    output_path = file_utils.output_path_for(job_id)
+
+    thread = threading.Thread(
+        target=processor.finish,
+        args=(job_id, base_path, segments, sub_params, output_path),
+        daemon=True,
+    )
+    thread.start()
+    return jsonify(job_id=job_id), 202
+
+
+def _bands(job: dict) -> dict:
+    """Bandas (lo, hi) de progreso por fase, según haya watermark y/o subs.
+
+    Con subtítulos, la transcripción es el palo más largo y se lleva la cola.
     """
-    prep_end, mix_end = (55, 80) if job.get("has_wm") else (70, 100)
+    has_wm = job.get("has_wm")
+    has_subs = job.get("has_subs")
+    if has_subs and has_wm:
+        return {"prep": (0, 25), "mix": (25, 38), "watermark": (38, 48), "transcribe": (48, 100)}
+    if has_subs:
+        return {"prep": (0, 30), "mix": (30, 45), "transcribe": (45, 100)}
+    if has_wm:
+        return {"prep": (0, 55), "mix": (55, 80), "watermark": (80, 100)}
+    return {"prep": (0, 70), "mix": (70, 100)}
 
+
+def _aggregate_progress(job: dict) -> tuple[int, str]:
+    """Combina el progreso de los sub-jobs en un % global + label de etapa."""
+    bands = _bands(job)
     phase = job.get("phase")
+
     if phase == "prep":
+        lo, hi = bands["prep"]
         v = (job_manager.get_job(job.get("sub_v")) or {}).get("progress", 0)
         if job.get("sub_d"):
             d = (job_manager.get_job(job.get("sub_d")) or {}).get("progress", 0)
             base = (v + d) / 2
         else:
             base = v
-        return int(base / 100 * prep_end), "Preparando video y audio…"
+        return int(lo + base / 100 * (hi - lo)), "Preparando video y audio…"
     if phase == "mix":
+        lo, hi = bands["mix"]
         m = (job_manager.get_job(job.get("sub_m")) or {}).get("progress", 0)
-        return int(prep_end + (m / 100) * (mix_end - prep_end)), "Mezclando…"
+        return int(lo + (m / 100) * (hi - lo)), "Mezclando…"
     if phase == "watermark":
+        lo, hi = bands["watermark"]
         w = (job_manager.get_job(job.get("sub_w")) or {}).get("progress", 0)
-        return int(mix_end + (w / 100) * (100 - mix_end)), "Aplicando texto y marca…"
-    return job.get("progress", 0), "Procesando…"
+        return int(lo + (w / 100) * (hi - lo)), "Aplicando texto y marca…"
+    if phase == "transcribe":
+        lo, hi = bands["transcribe"]
+        t = (job_manager.get_job(job.get("sub_t")) or {}).get("progress", 0)
+        return int(lo + (t / 100) * (hi - lo)), "Transcribiendo subtítulos…"
+
+    # Sin fase (p. ej. la fase 2 de quemado usa el progreso directo del job).
+    return job.get("progress", 0), job.get("stage") or "Procesando…"
 
 
 @bp.get("/status/<job_id>")
@@ -101,6 +155,7 @@ def status(job_id):
         progress=progress,
         stage=stage,
         error=job["error"],
+        segments=job.get("segments"),
     )
 
 
