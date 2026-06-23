@@ -15,6 +15,9 @@
         <button class="nav-item active" data-target="view-reel-express">
           <span class="nav-icon">⚡</span> Reel Express
         </button>
+        <button class="nav-item" data-target="view-hook-reel">
+          <span class="nav-icon">🎬</span> Reel Frase
+        </button>
 
         <div class="nav-section">Módulos</div>
         <button class="nav-item" data-target="view-vertical">
@@ -56,6 +59,9 @@
       <section id="view-reel-express" class="module-view">
         {% include "modules/reel_express.html" %}
       </section>
+      <section id="view-hook-reel" class="module-view hidden">
+        {% include "modules/hook_reel.html" %}
+      </section>
       <section id="view-vertical" class="module-view hidden">
         {% include "modules/vertical_convert.html" %}
       </section>
@@ -90,6 +96,7 @@
   <script src="{{ url_for('static', filename='js/audio_merge.js') }}"></script>
   <script src="{{ url_for('static', filename='js/subtitles.js') }}"></script>
   <script src="{{ url_for('static', filename='js/reel_express.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/hook_reel.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

@@ -1,0 +1,203 @@
+<div class="module-header">
+  <h1>🎬 Reel Frase</h1>
+  <p class="subtitle">Frase narrada sobre un fondo + clip de cierre, con música que sube en el corte</p>
+</div>
+
+<!-- 1. Las 4 entradas -->
+<section class="hk-uploads">
+  <div>
+    <div id="hk-voice-zone" class="card drop-zone hk-zone">
+      <input type="file" id="hk-voice-input" accept="audio/*" hidden>
+      <div class="drop-inner">
+        <p class="drop-icon">🎙️</p>
+        <p><strong>Voz</strong> (tu narración) <span class="link">subir</span></p>
+        <p class="hint">define la duración del segmento 1</p>
+      </div>
+    </div>
+    <p id="hk-voice-name" class="file-name"></p>
+  </div>
+
+  <div>
+    <div id="hk-bg-zone" class="card drop-zone hk-zone">
+      <input type="file" id="hk-bg-input" accept="image/*,video/*" hidden>
+      <div class="drop-inner">
+        <p class="drop-icon">🖼️</p>
+        <p><strong>Fondo seg. 1</strong> (imagen o video) <span class="link">subir</span></p>
+        <p class="hint">se calza a la duración de la voz</p>
+      </div>
+    </div>
+    <p id="hk-bg-name" class="file-name"></p>
+  </div>
+
+  <div>
+    <div id="hk-clip2-zone" class="card drop-zone hk-zone">
+      <input type="file" id="hk-clip2-input" accept="video/*" hidden>
+      <div class="drop-inner">
+        <p class="drop-icon">🎬</p>
+        <p><strong>Clip 2</strong> (el del beat drop) <span class="link">subir</span></p>
+        <p class="hint">se acelera para calzar con la música</p>
+      </div>
+    </div>
+    <p id="hk-clip2-name" class="file-name"></p>
+  </div>
+
+  <div>
+    <div id="hk-music-zone" class="card drop-zone hk-zone">
+      <input type="file" id="hk-music-input" accept="audio/*" hidden>
+      <div class="drop-inner">
+        <p class="drop-icon">🎵</p>
+        <p><strong>Música</strong> de fondo <span class="link">subir</span></p>
+        <p class="hint">su duración manda el total del reel</p>
+      </div>
+    </div>
+    <p id="hk-music-name" class="file-name"></p>
+  </div>
+</section>
+
+<!-- 2. Ajustes -->
+<section class="card hk-controls">
+  <h2>Ajustes</h2>
+
+  <h3 class="rx-group">Música (ducking)</h3>
+  <label class="control">
+    <span>Volumen durante la frase <em id="hk-music-low-val">25</em>%</span>
+    <input type="range" id="hk-music-low" min="0" max="100" value="25">
+  </label>
+  <label class="control">
+    <span>Volumen tras la frase (beat drop) <em id="hk-music-full-val">100</em>%</span>
+    <input type="range" id="hk-music-full" min="0" max="150" value="100">
+  </label>
+  <label class="control">
+    <span>Suavidad del cambio <em id="hk-ramp-val">0.4</em> s</span>
+    <input type="range" id="hk-ramp" min="0" max="2" step="0.1" value="0.4">
+  </label>
+
+  <h3 class="rx-group">Formato</h3>
+  <label class="control-check">
+    <input type="checkbox" id="hk-seg1-vertical">
+    <span>Convertir el fondo a vertical (si es un video 16:9)</span>
+  </label>
+  <label class="control-check">
+    <input type="checkbox" id="hk-seg2-vertical" checked>
+    <span>Convertir el clip 2 a vertical (si viene 16:9)</span>
+  </label>
+
+  <h3 class="rx-group">Subtítulos</h3>
+  <label class="control-check">
+    <input type="checkbox" id="hk-add-subs" checked>
+    <span>Agregar subtítulos automáticos sobre la frase (karaoke)</span>
+  </label>
+  <div id="hk-subs-controls">
+    <label class="control">
+      <span>Tamaño de fuente <em id="hk-sub-font-size-val">64</em> px</span>
+      <input type="range" id="hk-sub-font-size" min="30" max="140" value="64">
+    </label>
+    <label class="control">
+      <span>Posición vertical <em id="hk-sub-position-y-val">1601</em> px</span>
+      <input type="range" id="hk-sub-position-y" min="0" max="1920" value="1601">
+    </label>
+    <label class="control">
+      <span>Palabras por grupo <em id="hk-sub-words-val">3</em></span>
+      <input type="range" id="hk-sub-words" min="1" max="6" value="3">
+    </label>
+    <label class="control">
+      <span>Color de resalte</span>
+      <div class="sub-color-row">
+        <input type="color" id="hk-sub-highlight-color" value="#fbff00" class="sub-color-picker">
+        <span id="hk-sub-color-preview" class="sub-color-chip" style="background:#fbff00"></span>
+        <span class="sub-color-label">Palabra activa</span>
+      </div>
+    </label>
+    <label class="control">
+      <span>Idioma del audio</span>
+      <select id="hk-sub-language">
+        <option value="es" selected>Español</option>
+        <option value="auto">Auto-detectar</option>
+        <option value="en">Inglés</option>
+        <option value="pt">Portugués</option>
+        <option value="fr">Francés</option>
+        <option value="de">Alemán</option>
+        <option value="it">Italiano</option>
+        <option value="ja">Japonés</option>
+        <option value="ko">Coreano</option>
+        <option value="zh">Chino</option>
+      </select>
+    </label>
+    <label class="control">
+      <span>Modelo de Whisper</span>
+      <select id="hk-sub-model">
+        <option value="tiny">Tiny — más rápido</option>
+        <option value="base">Base</option>
+        <option value="small">Small</option>
+        <option value="medium">Medium</option>
+        <option value="large-v3-turbo" selected>Large v3 Turbo — recomendado</option>
+        <option value="large-v2">Large v2</option>
+        <option value="large-v3">Large v3 — máxima precisión</option>
+      </select>
+    </label>
+    <p class="hint" style="margin-bottom:16px;">
+      Tras generar vas a poder revisar y corregir el texto antes del render final.
+    </p>
+  </div>
+
+  <details class="rx-advanced">
+    <summary>Ajustes avanzados del fondo/clip vertical</summary>
+    <p class="hint">Solo se aplican a los clips que convertís a vertical arriba.</p>
+    <label class="control">
+      <span>Blur del fondo <em id="hk-blur-val">50</em></span>
+      <input type="range" id="hk-blur_intensity" min="0" max="50" value="50">
+    </label>
+    <label class="control">
+      <span>Brillo del fondo <em id="hk-brightness-val">0.5</em></span>
+      <input type="range" id="hk-bg_brightness" min="0.3" max="1.0" step="0.05" value="0.5">
+    </label>
+    <label class="control">
+      <span>Zoom clip principal <em id="hk-scale-val">1.55</em></span>
+      <input type="range" id="hk-main_clip_scale" min="0.7" max="5" step="0.05" value="1.55">
+    </label>
+    <label class="control">
+      <span>Realce de imagen <em id="hk-enhance-val">85</em></span>
+      <input type="range" id="hk-enhance_intensity" min="0" max="100" value="85">
+    </label>
+    <label class="control">
+      <span>Posición del clip</span>
+      <select id="hk-main_clip_position">
+        <option value="center" selected>Centro</option>
+        <option value="top">Arriba</option>
+        <option value="bottom">Abajo</option>
+      </select>
+    </label>
+  </details>
+
+  <button id="hk-process-btn" class="btn-primary" disabled>Generar reel</button>
+</section>
+
+<!-- Editor de subtítulos (aparece tras la transcripción, si hay subs) -->
+<div id="hk-subs-editor" class="card hidden">
+  <h2>Subtítulos detectados</h2>
+  <p class="hint" style="margin-bottom:16px;">
+    Corregí cualquier palabra que el modelo haya entendido mal, luego generá el
+    reel final. El estilo (tamaño, posición, color) se aplica al generar.
+  </p>
+  <div id="hk-segments"></div>
+  <div class="sub-editor-actions">
+    <button id="hk-finish-btn" class="btn-primary">Generar reel final</button>
+  </div>
+</div>
+
+<!-- Progress + result -->
+<div id="hk-progress-wrap" class="card hidden">
+  <div class="progress-bar"><div id="hk-progress-fill"></div></div>
+  <p id="hk-progress-label">Procesando… 0%</p>
+</div>
+
+<div id="hk-result-wrap" class="card hidden">
+  <p class="success">✓ Reel listo</p>
+  <a id="hk-download-btn" class="btn-primary" download>Descargar reel</a>
+  <button id="hk-reset-btn" class="btn-secondary">Hacer otro</button>
+</div>
+
+<div id="hk-error-wrap" class="card error hidden">
+  <p id="hk-error-msg"></p>
+  <button id="hk-error-reset-btn" class="btn-secondary">Reintentar</button>
+</div>

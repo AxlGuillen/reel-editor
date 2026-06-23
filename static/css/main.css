@@ -746,13 +746,26 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   border-radius: 6px;
   overflow: hidden;
 }
-#progress-fill {
+.progress-bar > div {
   height: 100%;
   width: 0%;
   background: var(--accent);
   transition: width .3s ease;
 }
 #progress-label { color: var(--muted); margin: 10px 0 0; text-align: center; }
+
+/* Reel Frase (hook_reel): grid de las 4 entradas */
+.hk-uploads {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.hk-zone { margin-bottom: 0; }
+.hk-controls { margin-bottom: 16px; }
+@media (max-width: 900px) {
+  .hk-uploads { grid-template-columns: 1fr; }
+}
 
 .success { color: var(--ok); font-weight: 600; margin: 0 0 12px; }
 .card.error { border-color: var(--err); }
