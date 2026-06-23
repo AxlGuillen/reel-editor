@@ -74,6 +74,8 @@ ALLOWED_AUDIO_EXTENSIONS = {"mp3", "wav", "m4a", "aac", "ogg"} | ALLOWED_EXTENSI
 # Watermarks: PNG con transparencia. Fuentes: solo las que soporta freetype.
 ALLOWED_WATERMARK_EXTENSIONS = {"png"}
 ALLOWED_FONT_EXTENSIONS = {"ttf", "otf"}
+# Imágenes usables como fondo (p. ej. el fondo del segmento 1 en hook_reel).
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
 
 # Lienzo vertical de salida (9:16)
 OUTPUT_WIDTH = 1080
@@ -94,6 +96,10 @@ def allowed_audio_file(filename: str) -> bool:
 
 def allowed_watermark_file(filename: str) -> bool:
     return _has_allowed_ext(filename, ALLOWED_WATERMARK_EXTENSIONS)
+
+
+def allowed_image_file(filename: str) -> bool:
+    return _has_allowed_ext(filename, ALLOWED_IMAGE_EXTENSIONS)
 
 
 def allowed_font_file(filename: str) -> bool:
