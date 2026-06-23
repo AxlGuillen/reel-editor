@@ -212,32 +212,47 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     pos_y = params.position_y
     pos_tag = f"{{\\an2\\pos({pos_x},{pos_y})}}"
 
-    events = []
+    # Aplanamos todos los grupos (chunks de n palabras) en una sola lista, así
+    # cada grupo sabe cuándo arranca el siguiente y podemos evitar que su última
+    # palabra invada ese inicio (la superposición entre grupos).
+    groups: list[list[dict]] = []
     for seg_words in segments:
         for gi in range(0, len(seg_words), n):
-            group = seg_words[gi:gi + n]
-            for idx, word in enumerate(group):
-                t_start = word["start"]
-                if idx + 1 < len(group):
-                    t_end = group[idx + 1]["start"]
+            groups.append(seg_words[gi:gi + n])
+
+    events = []
+    for g_idx, group in enumerate(groups):
+        # Inicio del próximo grupo (None si es el último): tope duro para que
+        # nada de este grupo siga vivo cuando el siguiente ya empezó.
+        next_start = groups[g_idx + 1][0]["start"] if g_idx + 1 < len(groups) else None
+
+        for idx, word in enumerate(group):
+            t_start = word["start"]
+            if idx + 1 < len(group):
+                t_end = group[idx + 1]["start"]
+            else:
+                # Última palabra del grupo: dura hasta su fin (+ un respiro), pero
+                # sin pisar el arranque del siguiente grupo. Si hay silencio real,
+                # limpia pantalla; si el siguiente arranca pegado, calza exacto.
+                t_end = word["end"] + 0.15
+                if next_start is not None:
+                    t_end = min(t_end, next_start)
+            if t_end <= t_start:
+                t_end = t_start + 0.1
+
+            parts = []
+            for j, w in enumerate(group):
+                wt = _esc_text(w["word"])
+                if j == idx:
+                    parts.append(f"{{\\c{params.highlight_color}}}{wt}{{\\c{COLOR_BASE}}}")
                 else:
-                    t_end = word["end"] + 0.05
-                if t_end <= t_start:
-                    t_end = t_start + 0.1
+                    parts.append(wt)
+            text = " ".join(parts)
 
-                parts = []
-                for j, w in enumerate(group):
-                    wt = _esc_text(w["word"])
-                    if j == idx:
-                        parts.append(f"{{\\c{params.highlight_color}}}{wt}{{\\c{COLOR_BASE}}}")
-                    else:
-                        parts.append(wt)
-                text = " ".join(parts)
-
-                events.append(
-                    f"Dialogue: 0,{_seconds_to_ass(t_start)},{_seconds_to_ass(t_end)},"
-                    f"Sub,,0,0,0,,{pos_tag}{text}"
-                )
+            events.append(
+                f"Dialogue: 0,{_seconds_to_ass(t_start)},{_seconds_to_ass(t_end)},"
+                f"Sub,,0,0,0,,{pos_tag}{text}"
+            )
 
     return header + "\n".join(events) + "\n"
 
