@@ -3,9 +3,11 @@
 // con música que sube en el corte. Dos fases cuando hay subtítulos.
 const HK_API = "/api/hook-reel";
 
-// Archivos seleccionados (la música es un link, no un archivo)
+// Archivos seleccionados (la música puede ser link o archivo)
 let hkVideo1 = null;
 let hkVideo2 = null;
+let hkMusic = null;
+let hkSource = "url";                 // "url" | "file"
 const hkMusicUrl = el("hk-music-url");
 
 let hkPrepJobId = null;   // job de la fase 1 (tiene el reel base + ctx)
@@ -51,9 +53,25 @@ wireDropZone(el("hk-video2-zone"), el("hk-video2-input"), (f) => {
   hkVideo2 = f; el("hk-video2-name").textContent = f.name; hkResetOutputs(); updateReady();
 });
 hkMusicUrl.addEventListener("input", () => { hkResetOutputs(); updateReady(); });
+wireDropZone(el("hk-music-zone"), el("hk-music-input"), (f) => {
+  hkMusic = f; el("hk-music-name").textContent = f.name; hkResetOutputs(); updateReady();
+});
+
+// --- Toggle de fuente de música (link | archivo) ---
+el("hk-tab-url").addEventListener("click", () => setSource("url"));
+el("hk-tab-file").addEventListener("click", () => setSource("file"));
+function setSource(src) {
+  hkSource = src;
+  el("hk-tab-url").classList.toggle("active", src === "url");
+  el("hk-tab-file").classList.toggle("active", src === "file");
+  el("hk-source-url").classList.toggle("hidden", src !== "url");
+  el("hk-source-file").classList.toggle("hidden", src !== "file");
+  updateReady();
+}
 
 function updateReady() {
-  hkProcessBtn.disabled = !(hkVideo1 && hkVideo2 && hkMusicUrl.value.trim());
+  const musicReady = hkSource === "url" ? !!hkMusicUrl.value.trim() : !!hkMusic;
+  hkProcessBtn.disabled = !(hkVideo1 && hkVideo2 && musicReady);
 }
 
 // --- Sliders: labels en vivo ---
@@ -84,13 +102,19 @@ el("hk-sub-highlight-color").addEventListener("input", () => {
 
 // --- Fase 1: generar ---
 hkProcessBtn.addEventListener("click", () => {
-  if (!(hkVideo1 && hkVideo2 && hkMusicUrl.value.trim())) return;
+  const musicReady = hkSource === "url" ? !!hkMusicUrl.value.trim() : !!hkMusic;
+  if (!(hkVideo1 && hkVideo2 && musicReady)) return;
 
   const form = new FormData();
   form.append("video1", hkVideo1);
   form.append("video2", hkVideo2);
-  form.append("music_url", hkMusicUrl.value.trim());
-  form.append("music_quality", el("hk-music-quality").value);
+  form.append("audio_source", hkSource);
+  if (hkSource === "url") {
+    form.append("music_url", hkMusicUrl.value.trim());
+    form.append("music_quality", el("hk-music-quality").value);
+  } else {
+    form.append("music", hkMusic);
+  }
   form.append("music_start", el("hk-music-start").value);
   form.append("seg2_duration", el("hk-seg2-duration").value);
   form.append("music_low_volume", el("hk-music-low").value);
@@ -233,10 +257,10 @@ el("hk-error-reset-btn").addEventListener("click", () => {
   hkErrorWrap.classList.add("hidden");
 });
 el("hk-reset-btn").addEventListener("click", () => {
-  hkVideo1 = hkVideo2 = null;
+  hkVideo1 = hkVideo2 = hkMusic = null;
   hkMusicUrl.value = "";
-  ["hk-video1-input", "hk-video2-input"].forEach((id) => (el(id).value = ""));
-  ["hk-video1-name", "hk-video2-name"].forEach((id) => (el(id).textContent = ""));
+  ["hk-video1-input", "hk-video2-input", "hk-music-input"].forEach((id) => (el(id).value = ""));
+  ["hk-video1-name", "hk-video2-name", "hk-music-name"].forEach((id) => (el(id).textContent = ""));
   hkSubsEditor.classList.add("hidden");
   hkPrepJobId = null;
   hkSegments = [];

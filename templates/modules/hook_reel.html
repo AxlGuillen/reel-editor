@@ -30,21 +30,41 @@
   </div>
 
   <div class="card hk-zone hk-music-card">
-    <p class="hk-music-title">🎵 <strong>Música</strong> de fondo (link)</p>
-    <input type="text" id="hk-music-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
+    <p class="hk-music-title">🎵 <strong>Música</strong> de fondo</p>
+    <div class="rx-source-tabs">
+      <button type="button" id="hk-tab-url" class="rx-tab active">🔗 Link</button>
+      <button type="button" id="hk-tab-file" class="rx-tab">📁 Archivo</button>
+    </div>
+
+    <div id="hk-source-url">
+      <input type="text" id="hk-music-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
+      <label class="control" style="margin-top:10px;">
+        <span>Calidad del audio</span>
+        <select id="hk-music-quality">
+          <option value="320">320 kbps</option>
+          <option value="192" selected>192 kbps</option>
+          <option value="128">128 kbps</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="hk-source-file" class="hidden">
+      <section id="hk-music-zone" class="drop-zone hk-music-drop">
+        <input type="file" id="hk-music-input" accept="audio/*" hidden>
+        <div class="drop-inner">
+          <p class="drop-icon">🎵</p>
+          <p>Arrastrá la <strong>música</strong> o <span class="link">click</span></p>
+          <p class="hint">mp3, wav, m4a, aac, ogg</p>
+        </div>
+      </section>
+      <p id="hk-music-name" class="file-name"></p>
+    </div>
+
     <label class="control" style="margin-top:10px;">
       <span>Empezar la música en (segundos)</span>
       <input type="number" id="hk-music-start" class="text-input" min="0" max="3600" step="0.5" value="0">
     </label>
-    <label class="control" style="margin-top:10px;">
-      <span>Calidad del audio</span>
-      <select id="hk-music-quality">
-        <option value="320">320 kbps</option>
-        <option value="192" selected>192 kbps</option>
-        <option value="128">128 kbps</option>
-      </select>
-    </label>
-    <p class="hint">se descarga desde ese segundo, se recorta al total; no se acelera</p>
+    <p class="hint">arranca desde ese segundo, se recorta al total; no se acelera</p>
   </div>
 </section>
 

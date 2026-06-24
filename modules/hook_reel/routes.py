@@ -36,11 +36,21 @@ def process():
     if not config.allowed_file(video2.filename):
         return jsonify(error=f"Video 2: extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"), 400
 
-    # La música es un link (se descarga); from_form valida la URL y la calidad.
+    # La música puede ser un link (se descarga) o un archivo subido.
+    # from_form valida la URL/calidad cuando es link.
     try:
         params = HookReelParams.from_form(request.form)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
+    music_path = None
+    if params.audio_source == "file":
+        music = request.files.get("music")
+        if not music or not music.filename:
+            return jsonify(error="Falta el archivo de música."), 400
+        if not config.allowed_audio_file(music.filename):
+            return jsonify(error=f"Música: extensión no permitida. Usar: {sorted(config.ALLOWED_AUDIO_EXTENSIONS)}"), 400
+        music_path = file_utils.save_upload(music)
 
     video1_path = file_utils.save_upload(video1)
     video2_path = file_utils.save_upload(video2)
@@ -52,7 +62,7 @@ def process():
         target=processor.process,
         args=(job_id,),
         kwargs=dict(video1_path=video1_path, video2_path=video2_path,
-                    params=params),
+                    params=params, music_path=music_path),
         daemon=True,
     )
     thread.start()

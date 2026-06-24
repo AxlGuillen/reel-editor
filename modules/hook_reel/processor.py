@@ -166,10 +166,17 @@ def _run_assembly(job_id: str, ctx: dict, output_path: str, *,
 # ---------------------------------------------------------------------------
 
 def process(job_id: str, *, video1_path: str, video2_path: str,
-            params: HookReelParams) -> None:
-    """Fase 1 (bloqueante). Descarga la música, convierte a vertical lo marcado
-    y, si hay subs, transcribe la voz del video 1 y pausa; si no, ensambla."""
+            params: HookReelParams, music_path: str | None = None) -> None:
+    """Fase 1 (bloqueante). Consigue la música (descarga o archivo), convierte a
+    vertical lo marcado y, si hay subs, transcribe la voz del video 1 y pausa; si
+    no, ensambla.
+
+    `music_path` viene seteado cuando la fuente es un archivo subido; cuando es
+    un link queda None y se completa con la descarga.
+    """
     uploads = [video1_path, video2_path]
+    if music_path:
+        uploads.append(music_path)
     intermedios: list[str] = []
     try:
         job_manager.update_job(job_id, status="processing", progress=0)
@@ -185,8 +192,10 @@ def process(job_id: str, *, video1_path: str, video2_path: str,
         total = d1 + d2
         has_v1_audio = ffmpeg_runner.has_audio_stream(video1_path)
 
-        # --- Prep: descarga de la música + conversión a vertical (en paralelo) ---
-        sub_d = job_manager.create_job(params.downloader.url, output_path="")
+        # --- Prep: música (descarga si es link) + conversión a vertical (paralelo) ---
+        sub_d = None
+        if params.audio_source == "url":
+            sub_d = job_manager.create_job(params.downloader.url, output_path="")
         sub_v1 = None
         v1_ready = video1_path
         if params.seg1_vertical:
@@ -201,9 +210,11 @@ def process(job_id: str, *, video1_path: str, video2_path: str,
         job_manager.update_job(job_id, phase="prep", sub_d=sub_d,
                                sub_v1=sub_v1, sub_v2=sub_v2)
 
-        threads = [threading.Thread(
-            target=downloader_processor.process,
-            args=(sub_d, params.downloader), daemon=True)]
+        threads = []
+        if sub_d:
+            threads.append(threading.Thread(
+                target=downloader_processor.process,
+                args=(sub_d, params.downloader), daemon=True))
         if sub_v1:
             threads.append(threading.Thread(
                 target=vertical_processor.process,
@@ -217,8 +228,11 @@ def process(job_id: str, *, video1_path: str, video2_path: str,
         for t in threads:
             t.join()
 
-        music_path = _check_subjob(sub_d, "la descarga de la música")["output_path"]
-        intermedios.append(music_path)
+        if sub_d:
+            music_path = _check_subjob(sub_d, "la descarga de la música")["output_path"]
+            intermedios.append(music_path)
+        if not music_path:
+            raise RuntimeError("No se pudo conseguir la música.")
         if sub_v1:
             _check_subjob(sub_v1, "la conversión a vertical del video 1")
             intermedios.append(v1_ready)

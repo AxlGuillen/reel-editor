@@ -5,9 +5,10 @@ Reel de dos videos encadenados con música de fondo:
     Video 1 (avatar + audio):  trae la voz adentro → su duración = segmento 1
     Video 2 (clip de cierre):  vos elegís su duración; el clip se acelera/frena
                                con setpts para cubrirla
-    Música (link):             se descarga con yt-dlp; baja mientras habla el
-                               avatar y sube a tope en el corte (ducking). Se
-                               recorta al total; NO se acelera.
+    Música (link o archivo):   un link se descarga con yt-dlp, o subís el audio
+                               ya descargado. Baja mientras habla el avatar y
+                               sube a tope en el corte (ducking). Se recorta al
+                               total; NO se acelera.
 
 Duraciones:
   D1 = duración del video 1                 → segmento 1
@@ -46,11 +47,14 @@ MUSIC_START_MIN, MUSIC_START_MAX = 0.0, 3600.0
 # Posición vertical por defecto de los subtítulos del segmento 1 (px en 1080×1920).
 HOOK_SUBTITLE_POSITION_Y = 1601
 
+AUDIO_SOURCES = {"url", "file"}
+
 
 @dataclass
 class HookReelParams:
     vertical: VerticalConvertParams
-    downloader: DownloaderParams        # música: link que se descarga (yt-dlp)
+    audio_source: str = "url"           # "url" (descarga) | "file" (subido)
+    downloader: DownloaderParams | None = None  # solo si audio_source == "url"
     seg2_duration: float = DEFAULT_SEG2
     music_start: float = 0.0            # desde qué segundo de la música arrancar
     music_low_volume: int = 25
@@ -64,7 +68,13 @@ class HookReelParams:
     @classmethod
     def from_form(cls, form) -> "HookReelParams":
         vertical = VerticalConvertParams.from_form(form)
-        downloader = _music_downloader(form)
+
+        audio_source = (form.get("audio_source") or "url").strip().lower()
+        if audio_source not in AUDIO_SOURCES:
+            raise ValueError(f"audio_source debe ser uno de {sorted(AUDIO_SOURCES)}")
+        # Link: validamos URL + calidad y armamos el downloader. Archivo: el
+        # upload lo valida y guarda la ruta la ruta (la maneja la ruta /process).
+        downloader = _music_downloader(form) if audio_source == "url" else None
 
         values: dict = {}
 
@@ -97,7 +107,8 @@ class HookReelParams:
                 subtitles.position_y = HOOK_SUBTITLE_POSITION_Y
         values["subtitles"] = subtitles
 
-        return cls(vertical=vertical, downloader=downloader, **values)
+        return cls(vertical=vertical, audio_source=audio_source,
+                   downloader=downloader, **values)
 
     @property
     def music_low_gain(self) -> float:
