@@ -118,17 +118,25 @@ def build_assembly_command(video1_path: str, video2_path: str, music_path: str,
         amap = "[music]"
 
     # --- Subtítulos (opcional) sobre el video ya concatenado ---
-    vmap = "[vcat]"
+    last = "[vcat]"
     if ass_path:
         fonts_dir = os.path.relpath(config.FONTS_FOLDER, config.BASE_DIR).replace("\\", "/")
-        filters.append(f"[vcat]ass={_esc_ass(ass_path)}:fontsdir={fonts_dir}[vout]")
-        vmap = "[vout]"
+        filters.append(f"[vcat]ass={_esc_ass(ass_path)}:fontsdir={fonts_dir}[vsub]")
+        last = "[vsub]"
+
+    # Normalización final a yuv420p rango tv. Al concatenar dos videos distintos
+    # (p. ej. un avatar en yuvj420p/rango completo + el clip), la salida heredaba
+    # rango completo y un pixfmt que el reproductor nativo de Windows rechaza
+    # (0x80004005). yuv420p rango tv es lo universalmente compatible.
+    filters.append(f"{last}scale=out_range=tv,format=yuv420p[vout]")
+    vmap = "[vout]"
 
     cmd += [
         "-filter_complex", ";".join(filters),
         "-map", vmap,
         "-map", amap,
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         output_path,
