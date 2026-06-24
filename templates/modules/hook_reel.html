@@ -29,16 +29,18 @@
     <p id="hk-video2-name" class="file-name"></p>
   </div>
 
-  <div>
-    <div id="hk-music-zone" class="card drop-zone hk-zone">
-      <input type="file" id="hk-music-input" accept="audio/*" hidden>
-      <div class="drop-inner">
-        <p class="drop-icon">🎵</p>
-        <p><strong>Música</strong> de fondo <span class="link">subir</span></p>
-        <p class="hint">se recorta al total; no se acelera</p>
-      </div>
-    </div>
-    <p id="hk-music-name" class="file-name"></p>
+  <div class="card hk-zone hk-music-card">
+    <p class="hk-music-title">🎵 <strong>Música</strong> de fondo (link)</p>
+    <input type="text" id="hk-music-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
+    <label class="control" style="margin-top:10px;">
+      <span>Calidad del audio</span>
+      <select id="hk-music-quality">
+        <option value="320">320 kbps</option>
+        <option value="192" selected>192 kbps</option>
+        <option value="128">128 kbps</option>
+      </select>
+    </label>
+    <p class="hint">se descarga, se recorta al total; no se acelera</p>
   </div>
 </section>
 

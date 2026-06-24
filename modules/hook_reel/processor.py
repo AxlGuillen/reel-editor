@@ -29,6 +29,7 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager
 from modules.hook_reel.schema import HookReelParams
 from modules.vertical_convert import processor as vertical_processor
+from modules.downloader import processor as downloader_processor
 from modules.subtitles import processor as subtitles_processor
 
 W = config.OUTPUT_WIDTH    # 1080
@@ -151,11 +152,11 @@ def _run_assembly(job_id: str, ctx: dict, output_path: str, *,
 # Fase 1 — preparación (vertical) + (opcional) transcripción de la voz
 # ---------------------------------------------------------------------------
 
-def process(job_id: str, *, video1_path: str, video2_path: str, music_path: str,
+def process(job_id: str, *, video1_path: str, video2_path: str,
             params: HookReelParams) -> None:
-    """Fase 1 (bloqueante). Convierte a vertical lo marcado y, si hay subs,
-    transcribe la voz del video 1 y pausa; si no, ensambla el reel final."""
-    uploads = [video1_path, video2_path, music_path]
+    """Fase 1 (bloqueante). Descarga la música, convierte a vertical lo marcado
+    y, si hay subs, transcribe la voz del video 1 y pausa; si no, ensambla."""
+    uploads = [video1_path, video2_path]
     intermedios: list[str] = []
     try:
         job_manager.update_job(job_id, status="processing", progress=0)
@@ -171,7 +172,8 @@ def process(job_id: str, *, video1_path: str, video2_path: str, music_path: str,
         total = d1 + d2
         has_v1_audio = ffmpeg_runner.has_audio_stream(video1_path)
 
-        # --- Prep: conversión a vertical de los clips marcados (en paralelo) ---
+        # --- Prep: descarga de la música + conversión a vertical (en paralelo) ---
+        sub_d = job_manager.create_job(params.downloader.url, output_path="")
         sub_v1 = None
         v1_ready = video1_path
         if params.seg1_vertical:
@@ -183,9 +185,12 @@ def process(job_id: str, *, video1_path: str, video2_path: str, music_path: str,
             sub_v2 = job_manager.create_job(video2_path, output_path="")
             v2_ready = file_utils.output_path_for(sub_v2)
 
-        job_manager.update_job(job_id, phase="prep", sub_v1=sub_v1, sub_v2=sub_v2)
+        job_manager.update_job(job_id, phase="prep", sub_d=sub_d,
+                               sub_v1=sub_v1, sub_v2=sub_v2)
 
-        threads = []
+        threads = [threading.Thread(
+            target=downloader_processor.process,
+            args=(sub_d, params.downloader), daemon=True)]
         if sub_v1:
             threads.append(threading.Thread(
                 target=vertical_processor.process,
@@ -198,6 +203,9 @@ def process(job_id: str, *, video1_path: str, video2_path: str, music_path: str,
             t.start()
         for t in threads:
             t.join()
+
+        music_path = _check_subjob(sub_d, "la descarga de la música")["output_path"]
+        intermedios.append(music_path)
         if sub_v1:
             _check_subjob(sub_v1, "la conversión a vertical del video 1")
             intermedios.append(v1_ready)

@@ -3,10 +3,10 @@
 // con música que sube en el corte. Dos fases cuando hay subtítulos.
 const HK_API = "/api/hook-reel";
 
-// Archivos seleccionados
+// Archivos seleccionados (la música es un link, no un archivo)
 let hkVideo1 = null;
 let hkVideo2 = null;
-let hkMusic = null;
+const hkMusicUrl = el("hk-music-url");
 
 let hkPrepJobId = null;   // job de la fase 1 (tiene el reel base + ctx)
 let hkSegments = [];      // segmentos transcritos (editables)
@@ -50,12 +50,10 @@ wireDropZone(el("hk-video1-zone"), el("hk-video1-input"), (f) => {
 wireDropZone(el("hk-video2-zone"), el("hk-video2-input"), (f) => {
   hkVideo2 = f; el("hk-video2-name").textContent = f.name; hkResetOutputs(); updateReady();
 });
-wireDropZone(el("hk-music-zone"), el("hk-music-input"), (f) => {
-  hkMusic = f; el("hk-music-name").textContent = f.name; hkResetOutputs(); updateReady();
-});
+hkMusicUrl.addEventListener("input", () => { hkResetOutputs(); updateReady(); });
 
 function updateReady() {
-  hkProcessBtn.disabled = !(hkVideo1 && hkVideo2 && hkMusic);
+  hkProcessBtn.disabled = !(hkVideo1 && hkVideo2 && hkMusicUrl.value.trim());
 }
 
 // --- Sliders: labels en vivo ---
@@ -86,12 +84,13 @@ el("hk-sub-highlight-color").addEventListener("input", () => {
 
 // --- Fase 1: generar ---
 hkProcessBtn.addEventListener("click", () => {
-  if (!(hkVideo1 && hkVideo2 && hkMusic)) return;
+  if (!(hkVideo1 && hkVideo2 && hkMusicUrl.value.trim())) return;
 
   const form = new FormData();
   form.append("video1", hkVideo1);
   form.append("video2", hkVideo2);
-  form.append("music", hkMusic);
+  form.append("music_url", hkMusicUrl.value.trim());
+  form.append("music_quality", el("hk-music-quality").value);
   form.append("seg2_duration", el("hk-seg2-duration").value);
   form.append("music_low_volume", el("hk-music-low").value);
   form.append("music_full_volume", el("hk-music-full").value);
@@ -233,9 +232,10 @@ el("hk-error-reset-btn").addEventListener("click", () => {
   hkErrorWrap.classList.add("hidden");
 });
 el("hk-reset-btn").addEventListener("click", () => {
-  hkVideo1 = hkVideo2 = hkMusic = null;
-  ["hk-video1-input", "hk-video2-input", "hk-music-input"].forEach((id) => (el(id).value = ""));
-  ["hk-video1-name", "hk-video2-name", "hk-music-name"].forEach((id) => (el(id).textContent = ""));
+  hkVideo1 = hkVideo2 = null;
+  hkMusicUrl.value = "";
+  ["hk-video1-input", "hk-video2-input"].forEach((id) => (el(id).value = ""));
+  ["hk-video1-name", "hk-video2-name"].forEach((id) => (el(id).textContent = ""));
   hkSubsEditor.classList.add("hidden");
   hkPrepJobId = null;
   hkSegments = [];

@@ -763,6 +763,8 @@ textarea.text-input { resize: vertical; font-family: inherit; }
 }
 .hk-zone { margin-bottom: 0; }
 .hk-controls { margin-bottom: 16px; }
+.hk-music-card { display: flex; flex-direction: column; justify-content: center; }
+.hk-music-title { margin: 0 0 10px; }
 @media (max-width: 900px) {
   .hk-uploads { grid-template-columns: 1fr; }
 }

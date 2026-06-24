@@ -5,8 +5,9 @@ Reel de dos videos encadenados con música de fondo:
     Video 1 (avatar + audio):  trae la voz adentro → su duración = segmento 1
     Video 2 (clip de cierre):  vos elegís su duración; el clip se acelera/frena
                                con setpts para cubrirla
-    Música:                    baja mientras habla el avatar, sube a tope en el
-                               corte (ducking). Se recorta al total; NO se acelera.
+    Música (link):             se descarga con yt-dlp; baja mientras habla el
+                               avatar y sube a tope en el corte (ducking). Se
+                               recorta al total; NO se acelera.
 
 Duraciones:
   D1 = duración del video 1                 → segmento 1
@@ -20,6 +21,9 @@ from dataclasses import dataclass
 
 from modules.vertical_convert.schema import VerticalConvertParams
 from modules.subtitles.schema import SubtitlesParams
+from modules.downloader.schema import (
+    DownloaderParams, AUDIO_QUALITIES, DEFAULT_AUDIO_QUALITY,
+)
 
 # volumen (%) -> (default, min, max). La música baja durante el video 1 y sube
 # a "full" en el corte; el full llega a 150% para poder empujar el beat.
@@ -43,6 +47,7 @@ HOOK_SUBTITLE_POSITION_Y = 1601
 @dataclass
 class HookReelParams:
     vertical: VerticalConvertParams
+    downloader: DownloaderParams        # música: link que se descarga (yt-dlp)
     seg2_duration: float = DEFAULT_SEG2
     music_low_volume: int = 25
     music_full_volume: int = 100
@@ -55,6 +60,7 @@ class HookReelParams:
     @classmethod
     def from_form(cls, form) -> "HookReelParams":
         vertical = VerticalConvertParams.from_form(form)
+        downloader = _music_downloader(form)
 
         values: dict = {}
 
@@ -83,7 +89,7 @@ class HookReelParams:
                 subtitles.position_y = HOOK_SUBTITLE_POSITION_Y
         values["subtitles"] = subtitles
 
-        return cls(vertical=vertical, **values)
+        return cls(vertical=vertical, downloader=downloader, **values)
 
     @property
     def music_low_gain(self) -> float:
@@ -96,6 +102,21 @@ class HookReelParams:
     @property
     def has_subtitles(self) -> bool:
         return self.add_subtitles and self.subtitles is not None
+
+
+def _music_downloader(form) -> DownloaderParams:
+    """Arma el DownloaderParams de la música (siempre audio) desde el link."""
+    url = (form.get("music_url") or "").strip()
+    if not url:
+        raise ValueError("Falta el link de la música.")
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise ValueError("El link de la música debe empezar con http:// o https://")
+    quality = (form.get("music_quality") or "").strip() or DEFAULT_AUDIO_QUALITY
+    if quality not in AUDIO_QUALITIES:
+        raise ValueError(
+            f"Calidad de música inválida: {quality!r}. Opciones: {sorted(AUDIO_QUALITIES)}"
+        )
+    return DownloaderParams(url=url, format="audio", quality=quality)
 
 
 def _to_int(name: str, raw) -> int:
