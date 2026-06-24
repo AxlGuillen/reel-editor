@@ -1,44 +1,32 @@
 <div class="module-header">
   <h1>🎬 Reel Frase</h1>
-  <p class="subtitle">Frase narrada sobre un fondo + clip de cierre, con música que sube en el corte</p>
+  <p class="subtitle">Video avatar + clip de cierre, con música que sube en el corte</p>
 </div>
 
-<!-- 1. Las 4 entradas -->
+<!-- 1. Las 3 entradas -->
 <section class="hk-uploads">
   <div>
-    <div id="hk-voice-zone" class="card drop-zone hk-zone">
-      <input type="file" id="hk-voice-input" accept="audio/*" hidden>
+    <div id="hk-video1-zone" class="card drop-zone hk-zone">
+      <input type="file" id="hk-video1-input" accept="video/*" hidden>
       <div class="drop-inner">
-        <p class="drop-icon">🎙️</p>
-        <p><strong>Voz</strong> (tu narración) <span class="link">subir</span></p>
-        <p class="hint">define la duración del segmento 1</p>
+        <p class="drop-icon">🗣️</p>
+        <p><strong>Video 1</strong> (avatar + audio) <span class="link">subir</span></p>
+        <p class="hint">su duración = segmento 1</p>
       </div>
     </div>
-    <p id="hk-voice-name" class="file-name"></p>
+    <p id="hk-video1-name" class="file-name"></p>
   </div>
 
   <div>
-    <div id="hk-bg-zone" class="card drop-zone hk-zone">
-      <input type="file" id="hk-bg-input" accept="image/*,video/*" hidden>
-      <div class="drop-inner">
-        <p class="drop-icon">🖼️</p>
-        <p><strong>Fondo seg. 1</strong> (imagen o video) <span class="link">subir</span></p>
-        <p class="hint">se calza a la duración de la voz</p>
-      </div>
-    </div>
-    <p id="hk-bg-name" class="file-name"></p>
-  </div>
-
-  <div>
-    <div id="hk-clip2-zone" class="card drop-zone hk-zone">
-      <input type="file" id="hk-clip2-input" accept="video/*" hidden>
+    <div id="hk-video2-zone" class="card drop-zone hk-zone">
+      <input type="file" id="hk-video2-input" accept="video/*" hidden>
       <div class="drop-inner">
         <p class="drop-icon">🎬</p>
-        <p><strong>Clip 2</strong> (el del beat drop) <span class="link">subir</span></p>
-        <p class="hint">se acelera para calzar con la música</p>
+        <p><strong>Video 2</strong> (clip de cierre) <span class="link">subir</span></p>
+        <p class="hint">se acelera para cubrir la duración que elijas</p>
       </div>
     </div>
-    <p id="hk-clip2-name" class="file-name"></p>
+    <p id="hk-video2-name" class="file-name"></p>
   </div>
 
   <div>
@@ -47,7 +35,7 @@
       <div class="drop-inner">
         <p class="drop-icon">🎵</p>
         <p><strong>Música</strong> de fondo <span class="link">subir</span></p>
-        <p class="hint">su duración manda el total del reel</p>
+        <p class="hint">se recorta al total; no se acelera</p>
       </div>
     </div>
     <p id="hk-music-name" class="file-name"></p>
@@ -57,6 +45,15 @@
 <!-- 2. Ajustes -->
 <section class="card hk-controls">
   <h2>Ajustes</h2>
+
+  <h3 class="rx-group">Segmento 2</h3>
+  <label class="control">
+    <span>Duración del video 2 (segundos)</span>
+    <input type="number" id="hk-seg2-duration" class="text-input" min="0.5" max="300" step="0.5" value="6">
+  </label>
+  <p class="hint" style="margin-bottom:8px;">
+    El clip 2 se acelera o frena para durar exactamente esto. Total del reel = video 1 + esta duración.
+  </p>
 
   <h3 class="rx-group">Música (ducking)</h3>
   <label class="control">
@@ -75,11 +72,11 @@
   <h3 class="rx-group">Formato</h3>
   <label class="control-check">
     <input type="checkbox" id="hk-seg1-vertical">
-    <span>Convertir el fondo a vertical (si es un video 16:9)</span>
+    <span>Convertir el video 1 a vertical (si viene 16:9)</span>
   </label>
   <label class="control-check">
     <input type="checkbox" id="hk-seg2-vertical" checked>
-    <span>Convertir el clip 2 a vertical (si viene 16:9)</span>
+    <span>Convertir el video 2 a vertical (si viene 16:9)</span>
   </label>
 
   <h3 class="rx-group">Subtítulos</h3>

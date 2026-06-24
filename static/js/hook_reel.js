@@ -1,12 +1,11 @@
 (function () {
-// ReelForge — módulo hook_reel ("Reel Frase"): frase narrada + clip de cierre
+// ReelForge — módulo hook_reel ("Reel Frase"): video avatar + clip de cierre
 // con música que sube en el corte. Dos fases cuando hay subtítulos.
 const HK_API = "/api/hook-reel";
 
 // Archivos seleccionados
-let hkVoice = null;
-let hkBg = null;
-let hkClip2 = null;
+let hkVideo1 = null;
+let hkVideo2 = null;
 let hkMusic = null;
 
 let hkPrepJobId = null;   // job de la fase 1 (tiene el reel base + ctx)
@@ -28,7 +27,7 @@ const hkErrorWrap = el("hk-error-wrap");
 const hkErrorMsg = el("hk-error-msg");
 
 // --- Drag & drop genérico para una zona ---
-function wireDropZone(zone, input, nameEl, onFile) {
+function wireDropZone(zone, input, onFile) {
   zone.addEventListener("click", () => input.click());
   input.addEventListener("change", (e) => {
     if (e.target.files.length) onFile(e.target.files[0]);
@@ -45,21 +44,18 @@ function wireDropZone(zone, input, nameEl, onFile) {
   });
 }
 
-wireDropZone(el("hk-voice-zone"), el("hk-voice-input"), null, (f) => {
-  hkVoice = f; el("hk-voice-name").textContent = f.name; hkResetOutputs(); updateReady();
+wireDropZone(el("hk-video1-zone"), el("hk-video1-input"), (f) => {
+  hkVideo1 = f; el("hk-video1-name").textContent = f.name; hkResetOutputs(); updateReady();
 });
-wireDropZone(el("hk-bg-zone"), el("hk-bg-input"), null, (f) => {
-  hkBg = f; el("hk-bg-name").textContent = f.name; hkResetOutputs(); updateReady();
+wireDropZone(el("hk-video2-zone"), el("hk-video2-input"), (f) => {
+  hkVideo2 = f; el("hk-video2-name").textContent = f.name; hkResetOutputs(); updateReady();
 });
-wireDropZone(el("hk-clip2-zone"), el("hk-clip2-input"), null, (f) => {
-  hkClip2 = f; el("hk-clip2-name").textContent = f.name; hkResetOutputs(); updateReady();
-});
-wireDropZone(el("hk-music-zone"), el("hk-music-input"), null, (f) => {
+wireDropZone(el("hk-music-zone"), el("hk-music-input"), (f) => {
   hkMusic = f; el("hk-music-name").textContent = f.name; hkResetOutputs(); updateReady();
 });
 
 function updateReady() {
-  hkProcessBtn.disabled = !(hkVoice && hkBg && hkClip2 && hkMusic);
+  hkProcessBtn.disabled = !(hkVideo1 && hkVideo2 && hkMusic);
 }
 
 // --- Sliders: labels en vivo ---
@@ -90,13 +86,13 @@ el("hk-sub-highlight-color").addEventListener("input", () => {
 
 // --- Fase 1: generar ---
 hkProcessBtn.addEventListener("click", () => {
-  if (!(hkVoice && hkBg && hkClip2 && hkMusic)) return;
+  if (!(hkVideo1 && hkVideo2 && hkMusic)) return;
 
   const form = new FormData();
-  form.append("voice", hkVoice);
-  form.append("background", hkBg);
-  form.append("clip2", hkClip2);
+  form.append("video1", hkVideo1);
+  form.append("video2", hkVideo2);
   form.append("music", hkMusic);
+  form.append("seg2_duration", el("hk-seg2-duration").value);
   form.append("music_low_volume", el("hk-music-low").value);
   form.append("music_full_volume", el("hk-music-full").value);
   form.append("ramp", el("hk-ramp").value);
@@ -237,9 +233,9 @@ el("hk-error-reset-btn").addEventListener("click", () => {
   hkErrorWrap.classList.add("hidden");
 });
 el("hk-reset-btn").addEventListener("click", () => {
-  hkVoice = hkBg = hkClip2 = hkMusic = null;
-  ["hk-voice-input", "hk-bg-input", "hk-clip2-input", "hk-music-input"].forEach((id) => (el(id).value = ""));
-  ["hk-voice-name", "hk-bg-name", "hk-clip2-name", "hk-music-name"].forEach((id) => (el(id).textContent = ""));
+  hkVideo1 = hkVideo2 = hkMusic = null;
+  ["hk-video1-input", "hk-video2-input", "hk-music-input"].forEach((id) => (el(id).value = ""));
+  ["hk-video1-name", "hk-video2-name", "hk-music-name"].forEach((id) => (el(id).textContent = ""));
   hkSubsEditor.classList.add("hidden");
   hkPrepJobId = null;
   hkSegments = [];

@@ -1,14 +1,17 @@
 """Parámetros y validación del módulo hook_reel ("Reel Frase").
 
-Reel de dos segmentos encadenados con una música de fondo continua:
+Reel de dos videos encadenados con música de fondo:
 
-    Segmento 1 (~voz):  fondo (imagen o video) + tu voz diciendo la frase
-    Segmento 2 (~resto): otro video acelerado para calzar
-    Música:             baja mientras hablás, sube a tope en el corte (ducking)
+    Video 1 (avatar + audio):  trae la voz adentro → su duración = segmento 1
+    Video 2 (clip de cierre):  vos elegís su duración; el clip se acelera/frena
+                               con setpts para cubrirla
+    Música:                    baja mientras habla el avatar, sube a tope en el
+                               corte (ducking). Se recorta al total; NO se acelera.
 
-La duración total la manda la MÚSICA: D1 = duración de la voz, D2 = música - D1
-(el clip 2 se acelera/frena para durar D2). La validación música > voz vive en
-el processor (necesita las duraciones reales de los archivos).
+Duraciones:
+  D1 = duración del video 1                 → segmento 1
+  D2 = `seg2_duration` (elegida por el user) → segmento 2 (el clip 2 se reescala)
+  total = D1 + D2                           → la música se recorta a esto
 
 No define parámetros de imagen propios: reusa VerticalConvertParams (para los
 clips marcados 16:9) y SubtitlesParams (subtítulos sobre el segmento 1).
@@ -18,8 +21,8 @@ from dataclasses import dataclass
 from modules.vertical_convert.schema import VerticalConvertParams
 from modules.subtitles.schema import SubtitlesParams
 
-# volumen (%) -> (default, min, max). La música baja durante la frase y sube
-# a "full" después; el full llega hasta 150% para poder empujar el beat.
+# volumen (%) -> (default, min, max). La música baja durante el video 1 y sube
+# a "full" en el corte; el full llega a 150% para poder empujar el beat.
 _VOL_PARAMS = {
     "music_low_volume": (25, 0, 100),
     "music_full_volume": (100, 0, 150),
@@ -29,6 +32,10 @@ _VOL_PARAMS = {
 DEFAULT_RAMP = 0.4
 RAMP_MIN, RAMP_MAX = 0.0, 2.0
 
+# Duración del segmento 2 (segundos), elegida por el usuario.
+DEFAULT_SEG2 = 6.0
+SEG2_MIN, SEG2_MAX = 0.5, 300.0
+
 # Posición vertical por defecto de los subtítulos del segmento 1 (px en 1080×1920).
 HOOK_SUBTITLE_POSITION_Y = 1601
 
@@ -36,11 +43,12 @@ HOOK_SUBTITLE_POSITION_Y = 1601
 @dataclass
 class HookReelParams:
     vertical: VerticalConvertParams
+    seg2_duration: float = DEFAULT_SEG2
     music_low_volume: int = 25
     music_full_volume: int = 100
     ramp: float = DEFAULT_RAMP
-    seg1_vertical: bool = False     # convertir el fondo (si es video) a 9:16
-    seg2_vertical: bool = True      # convertir el clip 2 a 9:16
+    seg1_vertical: bool = False     # convertir el video 1 a 9:16
+    seg2_vertical: bool = True      # convertir el video 2 a 9:16
     add_subtitles: bool = True      # subtítulos karaoke sobre el segmento 1
     subtitles: SubtitlesParams | None = None  # solo si add_subtitles
 
@@ -49,6 +57,11 @@ class HookReelParams:
         vertical = VerticalConvertParams.from_form(form)
 
         values: dict = {}
+
+        raw_seg2 = form.get("seg2_duration")
+        seg2 = DEFAULT_SEG2 if raw_seg2 in (None, "") else _to_float("seg2_duration", raw_seg2)
+        values["seg2_duration"] = _clamp("seg2_duration", seg2, SEG2_MIN, SEG2_MAX)
+
         for name, (default, lo, hi) in _VOL_PARAMS.items():
             raw = form.get(name)
             value = default if raw in (None, "") else _to_int(name, raw)
@@ -66,7 +79,6 @@ class HookReelParams:
         subtitles = None
         if add_subtitles:
             subtitles = SubtitlesParams.from_form(form)
-            # Default de posición propio del pipeline si el form no la trae.
             if not (form.get("position_y") or "").strip():
                 subtitles.position_y = HOOK_SUBTITLE_POSITION_Y
         values["subtitles"] = subtitles
