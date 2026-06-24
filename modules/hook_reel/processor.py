@@ -102,9 +102,14 @@ def build_assembly_command(video1_path: str, video2_path: str, music_path: str,
         ramp_term = f"gte(t,{d1:.4f})"  # rampa 0 = escalón seco
     vol_expr = f"volume='{low:.4f}+({delta:.4f})*{ramp_term}':eval=frame"
     fade_st = max(0.0, total - MUSIC_FADE)
+    # Recorte de la música: arranca en `music_start` (saltea el inicio) y dura
+    # `total`. asetpts resetea el tiempo a 0 para que la rampa de volumen (que
+    # usa `t`) y el fade-out queden relativos al inicio del reel.
+    ms = max(0.0, params.music_start)
     filters.append(
-        f"[2:a]aresample=44100,aformat=channel_layouts=stereo,{vol_expr},"
-        f"atrim=0:{total:.3f},afade=t=out:st={fade_st:.3f}:d={MUSIC_FADE}[music]"
+        f"[2:a]aresample=44100,aformat=channel_layouts=stereo,"
+        f"atrim=start={ms:.3f}:end={ms + total:.3f},asetpts=N/SR/TB,"
+        f"{vol_expr},afade=t=out:st={fade_st:.3f}:d={MUSIC_FADE}[music]"
     )
 
     # --- Audio: voz del video 1 (si tiene) + música ---

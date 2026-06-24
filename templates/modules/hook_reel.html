@@ -33,6 +33,10 @@
     <p class="hk-music-title">🎵 <strong>Música</strong> de fondo (link)</p>
     <input type="text" id="hk-music-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
     <label class="control" style="margin-top:10px;">
+      <span>Empezar la música en (segundos)</span>
+      <input type="number" id="hk-music-start" class="text-input" min="0" max="3600" step="0.5" value="0">
+    </label>
+    <label class="control" style="margin-top:10px;">
       <span>Calidad del audio</span>
       <select id="hk-music-quality">
         <option value="320">320 kbps</option>
@@ -40,7 +44,7 @@
         <option value="128">128 kbps</option>
       </select>
     </label>
-    <p class="hint">se descarga, se recorta al total; no se acelera</p>
+    <p class="hint">se descarga desde ese segundo, se recorta al total; no se acelera</p>
   </div>
 </section>
 

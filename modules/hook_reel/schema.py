@@ -40,6 +40,9 @@ RAMP_MIN, RAMP_MAX = 0.0, 2.0
 DEFAULT_SEG2 = 6.0
 SEG2_MIN, SEG2_MAX = 0.5, 300.0
 
+# Desde qué segundo de la música empezar a reproducir (saltea el inicio).
+MUSIC_START_MIN, MUSIC_START_MAX = 0.0, 3600.0
+
 # Posición vertical por defecto de los subtítulos del segmento 1 (px en 1080×1920).
 HOOK_SUBTITLE_POSITION_Y = 1601
 
@@ -49,6 +52,7 @@ class HookReelParams:
     vertical: VerticalConvertParams
     downloader: DownloaderParams        # música: link que se descarga (yt-dlp)
     seg2_duration: float = DEFAULT_SEG2
+    music_start: float = 0.0            # desde qué segundo de la música arrancar
     music_low_volume: int = 25
     music_full_volume: int = 100
     ramp: float = DEFAULT_RAMP
@@ -67,6 +71,10 @@ class HookReelParams:
         raw_seg2 = form.get("seg2_duration")
         seg2 = DEFAULT_SEG2 if raw_seg2 in (None, "") else _to_float("seg2_duration", raw_seg2)
         values["seg2_duration"] = _clamp("seg2_duration", seg2, SEG2_MIN, SEG2_MAX)
+
+        raw_ms = form.get("music_start")
+        ms = 0.0 if raw_ms in (None, "") else _to_float("music_start", raw_ms)
+        values["music_start"] = _clamp("music_start", ms, MUSIC_START_MIN, MUSIC_START_MAX)
 
         for name, (default, lo, hi) in _VOL_PARAMS.items():
             raw = form.get(name)

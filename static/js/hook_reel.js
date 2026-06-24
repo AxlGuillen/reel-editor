@@ -91,6 +91,7 @@ hkProcessBtn.addEventListener("click", () => {
   form.append("video2", hkVideo2);
   form.append("music_url", hkMusicUrl.value.trim());
   form.append("music_quality", el("hk-music-quality").value);
+  form.append("music_start", el("hk-music-start").value);
   form.append("seg2_duration", el("hk-seg2-duration").value);
   form.append("music_low_volume", el("hk-music-low").value);
   form.append("music_full_volume", el("hk-music-full").value);
