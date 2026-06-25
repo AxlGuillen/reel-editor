@@ -52,7 +52,9 @@ def upload_watermark():
 
 @bp.delete("/api/watermarks/<name>")
 def delete_watermark(name):
-    safe = secure_filename(name)
+    # basename neutraliza cualquier componente de ruta (../) sin alterar el
+    # nombre real: secure_filename rompía nombres con espacios/acentos.
+    safe = os.path.basename(name)
     path = os.path.join(config.WATERMARKS_FOLDER, safe)
     if not os.path.isfile(path):
         return jsonify(error="Watermark no encontrado"), 404
@@ -62,7 +64,9 @@ def delete_watermark(name):
 
 @bp.get("/assets/watermarks/<name>")
 def serve_watermark(name):
-    return send_from_directory(config.WATERMARKS_FOLDER, secure_filename(name))
+    # send_from_directory ya protege contra path traversal; pasamos el nombre
+    # real (con espacios/acentos) en vez de secure_filename, que lo mangleaba.
+    return send_from_directory(config.WATERMARKS_FOLDER, os.path.basename(name))
 
 
 @bp.get("/api/font")
