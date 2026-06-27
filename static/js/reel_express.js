@@ -415,6 +415,8 @@ rxProcessBtn.addEventListener("click", () => {
   form.append("watermark_x", el("rx-wm-x").value);
   form.append("watermark_size", el("rx-wm-size").value);
   form.append("watermark_y", el("rx-wm-y").value);
+  // Nombre del archivo final
+  form.append("output_name", el("rx-output-name").value);
   // Subtítulos
   form.append("add_subtitles", rxAddSubs.checked ? "1" : "0");
   if (rxAddSubs.checked) {
@@ -487,6 +489,7 @@ rxFinishBtn.addEventListener("click", () => {
   const payload = {
     job_id: rxPrepJobId,
     segments: SubtitleEditor.collect(rxSegments),
+    output_name: el("rx-output-name").value,
     font_size: el("rx-sub-font-size").value,
     position_y: el("rx-sub-position-y").value,
     words_per_line: el("rx-sub-words").value,
@@ -556,6 +559,7 @@ el("rx-reset-btn").addEventListener("click", () => {
   rxClipName.textContent = "";
   rxAudioName.textContent = "";
   rxUrl.value = "";
+  el("rx-output-name").value = "";
   rxSubsEditor.classList.add("hidden");
   rxPrepJobId = null;
   rxSegments = [];

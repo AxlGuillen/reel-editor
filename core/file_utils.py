@@ -1,5 +1,6 @@
 """Helpers para manejo de archivos temporales."""
 import os
+import re
 import uuid
 
 from werkzeug.utils import secure_filename
@@ -31,6 +32,23 @@ def output_path_for(job_id: str, ext: str = "mp4") -> str:
     """Path de salida para un job dado (mp4 por defecto)."""
     ensure_dirs()
     return os.path.join(config.OUTPUT_FOLDER, f"{job_id}.{ext}")
+
+
+def safe_download_name(name: str | None, fallback: str, ext: str = "mp4") -> str:
+    """Nombre para la descarga a partir de lo que escribió el usuario.
+
+    Quita caracteres ilegales en nombres de archivo (conserva espacios/acentos),
+    saca una extensión `.ext` repetida si la puso, y cae al `fallback` si quedó
+    vacío. Devuelve siempre con la extensión `.ext`.
+    """
+    name = (name or "").strip()
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "", name)
+    if name.lower().endswith(f".{ext}"):
+        name = name[: -(len(ext) + 1)]
+    name = name.strip()
+    if not name:
+        name = fallback
+    return f"{name}.{ext}"
 
 
 def cleanup_paths(*paths: str) -> None:

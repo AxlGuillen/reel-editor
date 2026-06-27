@@ -45,8 +45,10 @@ def process():
     clip_path = file_utils.save_upload(clip)
     job_id = job_manager.create_job(clip_path, output_path="")
     # has_wm / has_subs definen las bandas de progreso (ver _aggregate_progress).
+    # output_name: nombre elegido por el usuario para la descarga (opcional).
     job_manager.update_job(job_id, has_wm=params.has_watermark,
-                           has_subs=params.has_subtitles)
+                           has_subs=params.has_subtitles,
+                           output_name=request.form.get("output_name"))
 
     thread = threading.Thread(
         target=processor.process,
@@ -81,6 +83,7 @@ def finish():
         return jsonify(error=str(exc)), 400
 
     job_id = job_manager.create_job(base_path, output_path="")
+    job_manager.update_job(job_id, output_name=data.get("output_name"))
     output_path = file_utils.output_path_for(job_id)
 
     thread = threading.Thread(
@@ -171,5 +174,6 @@ def download(job_id):
         job["output_path"],
         mimetype="video/mp4",
         as_attachment=True,
-        download_name=f"reel_express_{job_id}.mp4",
+        download_name=file_utils.safe_download_name(
+            job.get("output_name"), f"reel_express_{job_id}"),
     )

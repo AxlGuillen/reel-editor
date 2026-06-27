@@ -117,6 +117,7 @@ hkProcessBtn.addEventListener("click", () => {
   }
   form.append("music_start", el("hk-music-start").value);
   form.append("seg2_duration", el("hk-seg2-duration").value);
+  form.append("output_name", el("hk-output-name").value);
   form.append("music_low_volume", el("hk-music-low").value);
   form.append("music_full_volume", el("hk-music-full").value);
   form.append("ramp", el("hk-ramp").value);
@@ -199,6 +200,7 @@ hkFinishBtn.addEventListener("click", () => {
   const payload = {
     job_id: hkPrepJobId,
     segments: SubtitleEditor.collect(hkSegments),
+    output_name: el("hk-output-name").value,
     font_size: el("hk-sub-font-size").value,
     position_y: el("hk-sub-position-y").value,
     words_per_line: el("hk-sub-words").value,
@@ -259,6 +261,7 @@ el("hk-error-reset-btn").addEventListener("click", () => {
 el("hk-reset-btn").addEventListener("click", () => {
   hkVideo1 = hkVideo2 = hkMusic = null;
   hkMusicUrl.value = "";
+  el("hk-output-name").value = "";
   ["hk-video1-input", "hk-video2-input", "hk-music-input"].forEach((id) => (el(id).value = ""));
   ["hk-video1-name", "hk-video2-name", "hk-music-name"].forEach((id) => (el(id).textContent = ""));
   hkSubsEditor.classList.add("hidden");

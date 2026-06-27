@@ -56,7 +56,8 @@ def process():
     video2_path = file_utils.save_upload(video2)
 
     job_id = job_manager.create_job(video1_path, output_path="")
-    job_manager.update_job(job_id, has_subs=params.has_subtitles)
+    job_manager.update_job(job_id, has_subs=params.has_subtitles,
+                           output_name=request.form.get("output_name"))
 
     thread = threading.Thread(
         target=processor.process,
@@ -91,6 +92,7 @@ def finish():
         return jsonify(error=str(exc)), 400
 
     job_id = job_manager.create_job(ctx["video1_ready"], output_path="")
+    job_manager.update_job(job_id, output_name=data.get("output_name"))
     output_path = file_utils.output_path_for(job_id)
 
     thread = threading.Thread(
@@ -159,5 +161,6 @@ def download(job_id):
         job["output_path"],
         mimetype="video/mp4",
         as_attachment=True,
-        download_name=f"reel_frase_{job_id}.mp4",
+        download_name=file_utils.safe_download_name(
+            job.get("output_name"), f"reel_frase_{job_id}"),
     )
