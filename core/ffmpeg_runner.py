@@ -3,6 +3,7 @@
 Este es el único lugar donde se ejecutan comandos de FFmpeg. Ningún módulo
 debe llamar a subprocess directamente.
 """
+import functools
 import json
 import re
 import subprocess
@@ -91,6 +92,34 @@ def probe_fps(input_path: str) -> float | None:
         return float(num) / den if den else None
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError, ZeroDivisionError):
         return None
+
+
+@functools.lru_cache(maxsize=1)
+def _nvenc_available() -> bool:
+    """Verifica si h264_nvenc está disponible (se ejecuta una sola vez al arrancar)."""
+    try:
+        r = subprocess.run(
+            [config.FFMPEG_PATH, "-f", "lavfi", "-i", "color=c=black:s=64x64:r=1",
+             "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"],
+            capture_output=True, timeout=10,
+        )
+        available = r.returncode == 0
+        tag = "GPU NVENC ✓" if available else "CPU libx264 (NVENC no disponible)"
+        print(f"[ffmpeg] encoder: {tag}")
+        return available
+    except Exception:
+        return False
+
+
+def video_encode_flags(crf: int = 18) -> list[str]:
+    """Flags de encodeo de video: h264_nvenc (GPU) si está disponible, libx264 si no.
+
+    Uso: cmd += video_encode_flags()  o  [*video_encode_flags(), ...]
+    """
+    if _nvenc_available():
+        return ["-c:v", "h264_nvenc", "-preset", "p4",
+                "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
+    return ["-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast"]
 
 
 def _hms_to_seconds(match) -> float:

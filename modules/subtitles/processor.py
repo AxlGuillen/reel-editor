@@ -280,7 +280,7 @@ def build_command(video_path: str, ass_path: str, output_path: str) -> list[str]
         "-y",
         "-i", video_path,
         "-vf", ass_filter,
-        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        *ffmpeg_runner.video_encode_flags(),
         "-c:a", "copy",
         output_path,
     ]
