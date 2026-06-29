@@ -80,7 +80,7 @@ def build_command(video_path: str, audio_path: str, output_path: str,
         "-map", amap,
     ]
     if speed_match:
-        cmd += ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
+        cmd += ["-c:v", "libx264", "-crf", "18", "-preset", "veryfast"]
     else:
         cmd += ["-c:v", "copy"]
     cmd += ["-c:a", "aac", "-b:a", "192k"]

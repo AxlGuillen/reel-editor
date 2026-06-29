@@ -118,7 +118,7 @@ def build_command(video_path: str, output_path: str, params: WatermarkParams, *,
         "-filter_complex", ";".join(filters),
         "-map", vmap,
         "-map", "0:a?",                # preserva el audio original si existe
-        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
         "-c:a", "copy",
         output_path,
     ]

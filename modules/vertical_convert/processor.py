@@ -78,7 +78,7 @@ def build_command(input_path: str, output_path: str,
         "-map", "0:a?",
         "-c:v", "libx264",
         "-crf", "18",
-        "-preset", "fast",
+        "-preset", "veryfast",
         "-c:a", "aac",
         output_path,
     ]
