@@ -1,4 +1,7 @@
 """Entry point Flask de ReelForge. Registra blueprints de cada módulo."""
+import importlib.metadata
+import subprocess
+import sys
 import traceback
 
 from flask import Flask, jsonify, render_template, request
@@ -42,6 +45,36 @@ def create_app() -> Flask:
     @app.route("/")
     def index():
         return render_template("index.html")
+
+    @app.get("/api/info")
+    def info():
+        """Devuelve versiones de dependencias clave del sistema."""
+        def pkg(name):
+            try:
+                return importlib.metadata.version(name)
+            except importlib.metadata.PackageNotFoundError:
+                return "no instalado"
+
+        def bin_version(path):
+            try:
+                out = subprocess.run(
+                    [path, "-version"], capture_output=True, text=True, timeout=5
+                )
+                line = (out.stdout or out.stderr or "").splitlines()[0]
+                # "ffmpeg version 7.1 ..." → "7.1"
+                parts = line.split("version")
+                return parts[1].strip().split()[0] if len(parts) > 1 else line
+            except Exception:
+                return "no encontrado"
+
+        return jsonify(
+            python=sys.version.split()[0],
+            flask=pkg("flask"),
+            yt_dlp=pkg("yt-dlp"),
+            faster_whisper=pkg("faster-whisper"),
+            ffmpeg=bin_version(config.FFMPEG_PATH),
+            ffprobe=bin_version(config.FFPROBE_PATH),
+        )
 
     @app.post("/api/cleanup")
     def cleanup():

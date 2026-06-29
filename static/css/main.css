@@ -771,4 +771,12 @@ textarea.text-input { resize: vertical; font-family: inherit; }
 
 .success { color: var(--ok); font-weight: 600; margin: 0 0 12px; }
 .card.error { border-color: var(--err); }
+
+/* Info */
+.info-table { width: 100%; border-collapse: collapse; }
+.info-table th,
+.info-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+.info-table th { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.info-table tr:last-child td { border-bottom: none; }
+.info-version { font-family: monospace; color: var(--accent-hover); }
 .card.error #error-msg { color: var(--err); margin: 0 0 12px; white-space: pre-wrap; }

@@ -1,0 +1,22 @@
+<div class="module-header">
+  <h1>ℹ️ Información del sistema</h1>
+  <p class="subtitle">Versiones de las dependencias instaladas</p>
+</div>
+
+<section class="card" id="info-card">
+  <div id="info-loading" class="hint" style="padding:16px 0;">Cargando versiones…</div>
+
+  <table id="info-table" class="info-table hidden">
+    <thead>
+      <tr>
+        <th>Dependencia</th>
+        <th>Versión</th>
+      </tr>
+    </thead>
+    <tbody id="info-tbody"></tbody>
+  </table>
+
+  <button id="info-refresh-btn" class="btn-secondary" style="margin-top:16px;display:none;">
+    ↺ Actualizar
+  </button>
+</section>
