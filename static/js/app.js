@@ -35,7 +35,10 @@ cleanupBtn.addEventListener("click", async () => {
         ? `✓ ${data.removed} archivo(s), ${formatBytes(data.freed_bytes)} liberados`
         : "✓ Ya estaba limpio";
   } catch (err) {
-    cleanupStatus.textContent = err.message;
+    const msg = err.message === "Failed to fetch"
+      ? "No se pudo conectar con el servidor. ¿Está la app corriendo?"
+      : err.message;
+    cleanupStatus.textContent = msg;
     cleanupStatus.classList.add("err");
   } finally {
     cleanupBtn.disabled = false;
