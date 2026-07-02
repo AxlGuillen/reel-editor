@@ -1,3 +1,7 @@
+/* Tipografía display (gaming/HUD) + monoespaciada para números. display=swap
+   degrada a la fuente del sistema si no hay conexión. */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@600;700;800&display=swap');
+
 :root {
   /* Superficies (dark) */
   --bg: #0f1115;
@@ -33,6 +37,10 @@
   --r-sm: 6px;
   --r-md: 8px;
   --r-lg: 12px;
+
+  /* Tipografía */
+  --font-display: "Orbitron", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -902,6 +910,75 @@ a:focus:not(:focus-visible) { outline: none; }
 }
 @keyframes progress-shimmer {
   to { transform: translateX(100%); }
+}
+
+/* ── Fase 2: íconos SVG (sprite + <use>, tematizados con currentColor) ── */
+.icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -.18em;
+}
+.svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.nav-icon { display: inline-flex; }
+.nav-icon .icon { width: 19px; height: 19px; transition: filter var(--dur) var(--ease-out); }
+.nav-item.active .nav-icon .icon { filter: drop-shadow(0 0 6px var(--accent-glow)); }
+.drop-icon .icon { width: 42px; height: 42px; stroke-width: 1.6; }
+.h-icon { width: 1.4rem; height: 1.4rem; color: var(--accent); vertical-align: -.22em; margin-right: .1em; }
+.btn-icon { width: 17px; height: 17px; vertical-align: -.2em; margin-right: .35em; }
+.hk-music-title .icon,
+.rx-tab .icon,
+.dl-fmt .icon { width: 16px; height: 16px; vertical-align: -.18em; margin-right: .3em; }
+
+/* ── Fase 3: tipografía display + números monoespaciados ─────────────── */
+.brand {
+  font-family: var(--font-display);
+  letter-spacing: .04em;
+  color: var(--text);
+}
+.brand .icon { color: var(--accent); filter: drop-shadow(0 0 8px var(--accent-glow)); }
+.module-header h1 {
+  font-family: var(--font-display);
+  letter-spacing: .02em;
+}
+/* Números / valores en vivo: tabular, sin salto de layout */
+.control em,
+.info-version,
+.ins-time-row,
+.dl-note code { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.info-version { color: var(--accent-hover); }
+
+/* ── Fase 4: micro-animaciones ──────────────────────────────────────── */
+/* Cambio de vista: al quitarse .hidden, display pasa de none→block y reinicia */
+.module-view { animation: view-in .3s var(--ease-out); }
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Aparición de resultado/error/progreso/editor al mostrarse */
+[id$="-result-wrap"],
+[id$="-error-wrap"],
+[id$="-progress-wrap"],
+[id$="-subs-editor"] { animation: card-pop .28s var(--ease-out); }
+@keyframes card-pop {
+  from { opacity: 0; transform: scale(.98) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+/* Stagger sutil del nav al cargar */
+.nav-item { animation: nav-in .32s var(--ease-out) both; }
+.nav-item:nth-child(2) { animation-delay: .03s; }
+.nav-item:nth-child(3) { animation-delay: .06s; }
+.nav-item:nth-child(4) { animation-delay: .09s; }
+.nav-item:nth-child(5) { animation-delay: .12s; }
+.nav-item:nth-child(6) { animation-delay: .15s; }
+@keyframes nav-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
 /* Respeto de accesibilidad: si el usuario pide menos movimiento, lo cortamos */

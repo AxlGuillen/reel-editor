@@ -1,5 +1,5 @@
 <div class="module-header">
-  <h1>⚡ Reel Express</h1>
+  <h1><svg class="icon h-icon"><use href="#i-zap"/></svg> Reel Express</h1>
   <p class="subtitle">De un clip 16:9 + audio (link o archivo) al reel final, en un paso</p>
 </div>
 
@@ -7,7 +7,7 @@
 <section id="rx-clip-zone" class="card drop-zone">
   <input type="file" id="rx-clip-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
   <div class="drop-inner">
-    <p class="drop-icon">⬆</p>
+    <p class="drop-icon"><svg class="icon"><use href="#i-upload"/></svg></p>
     <p>Arrastra tu <strong>clip 16:9</strong> o <span class="link">haz click para seleccionar</span></p>
     <p class="hint">mp4, mov, mkv, avi</p>
   </div>
@@ -37,8 +37,8 @@
       <!-- Fuente de audio -->
       <h3 class="rx-group">Audio</h3>
       <div class="rx-source-tabs">
-        <button type="button" id="rx-tab-url" class="rx-tab active" data-source="url">🔗 Link</button>
-        <button type="button" id="rx-tab-file" class="rx-tab" data-source="file">📁 Archivo</button>
+        <button type="button" id="rx-tab-url" class="rx-tab active" data-source="url"><svg class="icon"><use href="#i-link"/></svg> Link</button>
+        <button type="button" id="rx-tab-file" class="rx-tab" data-source="file"><svg class="icon"><use href="#i-folder"/></svg> Archivo</button>
       </div>
 
       <div id="rx-source-url">
@@ -60,7 +60,7 @@
         <section id="rx-audio-zone" class="card drop-zone rx-audio-zone">
           <input type="file" id="rx-audio-input" accept="audio/*,video/*" hidden>
           <div class="drop-inner">
-            <p class="drop-icon">🎙️</p>
+            <p class="drop-icon"><svg class="icon"><use href="#i-mic"/></svg></p>
             <p>Arrastra tu <strong>narración</strong> o <span class="link">haz click</span></p>
             <p class="hint">mp3, wav, m4a, aac, ogg, mp4…</p>
           </div>
