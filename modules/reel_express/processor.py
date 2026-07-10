@@ -2,13 +2,15 @@
 
 Encadena los módulos en el servidor, sin rebotes por el browser:
 
-    clip 16:9 ──vertical_convert──┐
-                                  ├──sound_drop──▶ [watermark]──▶ [subtítulos] ──▶ reel final
-    audio (link│archivo) ─────────┘
+    clip 16:9 ──vertical(+texto/marca, 1 pasada)──┐
+                                                  ├──sound_drop──▶ [subtítulos] ──▶ reel final
+    audio (link│archivo) ─────────────────────────┘
 
 La conversión a vertical y la descarga (si la fuente es un link) son
-independientes y corren en paralelo; al terminar, se mezcla y, si hay texto o
-marca, se aplica el watermark. Eso produce el "video base".
+independientes y corren en paralelo. El watermark (texto/marca) NO es una
+pasada aparte: sus filtros se fusionan en el MISMO filter_complex de la
+conversión a vertical (un decode+encode menos y una generación menos de
+pérdida). La mezcla de audio produce el "video base".
 
 Subtítulos (opcional, default ON) parte el flujo en DOS fases, porque el usuario
 revisa/edita el texto en el medio:
@@ -18,11 +20,13 @@ revisa/edita el texto en el medio:
   - Fase 2 (finish): con los segmentos editados, quema los subtítulos sobre el
     base → reel final. Los subs van últimos, así quedan encima de todo.
 
-No hay lógica de FFmpeg propia: reusa los `process()`/helpers de cada módulo.
+No hay lógica de filtros propia: compone los fragmentos puros de cada módulo
+(build_filter_complex / build_filters) y reusa sus process()/helpers.
 """
 import threading
 
-from core import file_utils, job_manager
+import config
+from core import ffmpeg_runner, file_utils, job_manager
 from modules.reel_express.schema import ReelExpressParams
 from modules.vertical_convert import processor as vertical_processor
 from modules.downloader import processor as downloader_processor
@@ -38,6 +42,53 @@ def _check_subjob(sub_id: str, etapa: str) -> dict:
         detalle = (sub or {}).get("error") or "error desconocido"
         raise RuntimeError(f"Falló en {etapa}: {detalle}")
     return sub
+
+
+def _vertical_watermark_job(job_id: str, clip_path: str, output_path: str,
+                            params: ReelExpressParams) -> None:
+    """Convierte a vertical y, si hay texto/marca, lo compone en la MISMA pasada.
+
+    Fusiona el filter_complex de vertical_convert con el fragmento de watermark
+    (un solo decode+encode en vez de dos). Sin watermark, delega en el process()
+    normal de vertical_convert. Corre como sub-job (thread de la fase prep).
+    """
+    if not params.has_watermark:
+        vertical_processor.process(job_id, clip_path, output_path, params.vertical)
+        return
+
+    temp_files: list[str] = []
+    try:
+        duration = ffmpeg_runner.probe_duration(clip_path)
+
+        (font_path, primary_files, secondary_files,
+         watermark_path, temp_files) = watermark_processor.prepare_assets(params.watermark)
+
+        # vertical: [0:v] → [vc]; watermark: [vc] → [vout]. El PNG es el input 1.
+        filters = [vertical_processor.build_filter_complex(params.vertical, out="[vc]")]
+        filters += watermark_processor.build_filters(
+            params.watermark, font_path=font_path, primary_files=primary_files,
+            secondary_files=secondary_files, watermark_path=watermark_path,
+            src="[vc]", out="[vout]", wm_index=1,
+        )
+
+        cmd = [config.FFMPEG_PATH, "-y", "-i", clip_path]
+        if watermark_path:
+            cmd += ["-i", watermark_path]
+        cmd += [
+            "-filter_complex", ";".join(filters),
+            "-map", "[vout]",
+            "-map", "0:a?",
+            *ffmpeg_runner.video_encode_flags(),
+            "-c:a", "aac",
+            output_path,
+        ]
+        # cwd=BASE_DIR: los drawtext usan rutas relativas (ver watermark._esc).
+        ffmpeg_runner.run(cmd, job_id, total_duration=duration, cwd=config.BASE_DIR)
+        job_manager.update_job(job_id, status="done", progress=100)
+    except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
+        job_manager.update_job(job_id, status="error", error=str(exc))
+    finally:
+        watermark_processor.cleanup_assets(temp_files)
 
 
 def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
@@ -57,10 +108,8 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
     try:
         job_manager.update_job(job_id, status="processing", progress=0)
 
-        # Tras la mezcla queda algo más por hacer (watermark y/o subs)?
-        needs_more_after_mix = params.has_watermark or params.has_subtitles
-
-        # --- Fase prep: vertical, y (si la fuente es link) descarga en paralelo ---
+        # --- Fase prep: vertical (+texto/marca fusionados) y, si la fuente es
+        #     un link, la descarga del audio en paralelo ---
         sub_v = job_manager.create_job(clip_path, output_path="")
         vertical_out = file_utils.output_path_for(sub_v)
         sub_d = None
@@ -69,8 +118,8 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         job_manager.update_job(job_id, phase="prep", sub_v=sub_v, sub_d=sub_d)
 
         t_v = threading.Thread(
-            target=vertical_processor.process,
-            args=(sub_v, clip_path, vertical_out, params.vertical),
+            target=_vertical_watermark_job,
+            args=(sub_v, clip_path, vertical_out, params),
             daemon=True,
         )
         t_d = None
@@ -87,15 +136,15 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         if t_d:
             t_d.join()
 
-        _check_subjob(sub_v, "la conversión a vertical")
+        _check_subjob(sub_v, "la conversión a vertical (y el texto/marca)")
         if sub_d:
             audio_path = _check_subjob(sub_d, "la descarga del audio")["output_path"]
             intermedios.append(audio_path)
         intermedios.append(vertical_out)
 
-        # --- Fase mix: audio sobre el vertical ---
+        # --- Fase mix: audio sobre el vertical(+marca). Produce el video base ---
         sub_m = job_manager.create_job(vertical_out, output_path="")
-        mix_out = (file_utils.output_path_for(sub_m) if needs_more_after_mix
+        mix_out = (file_utils.output_path_for(sub_m) if params.has_subtitles
                    else file_utils.output_path_for(job_id))
         job_manager.update_job(job_id, phase="mix", sub_m=sub_m)
 
@@ -104,17 +153,7 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         )
         _check_subjob(sub_m, "la mezcla de audio")
 
-        base_out = mix_out  # "video base": vertical + mezcla (+ watermark)
-
-        # --- Fase watermark: texto + marca sobre la mezcla (opcional) ---
-        if params.has_watermark:
-            intermedios.append(mix_out)
-            sub_w = job_manager.create_job(mix_out, output_path="")
-            base_out = (file_utils.output_path_for(sub_w) if params.has_subtitles
-                        else file_utils.output_path_for(job_id))
-            job_manager.update_job(job_id, phase="watermark", sub_w=sub_w)
-            watermark_processor.process(sub_w, mix_out, base_out, params.watermark)
-            _check_subjob(sub_w, "el texto y la marca")
+        base_out = mix_out  # "video base": vertical + texto/marca + mezcla
 
         # --- Fase subtítulos: transcribir el base y pausar para edición ---
         if params.has_subtitles:

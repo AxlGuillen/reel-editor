@@ -81,42 +81,64 @@ def _overlay_xy(params: WatermarkParams) -> tuple[str, str]:
     return x, y
 
 
-def build_command(video_path: str, output_path: str, params: WatermarkParams, *,
+def build_filters(params: WatermarkParams, *,
                   font_path: str | None = None,
                   primary_files: list[str | None] | None = None,
                   secondary_files: list[str | None] | None = None,
-                  watermark_path: str | None = None) -> list[str]:
-    """Construye el comando FFmpeg: dibuja texto + watermark, copia el audio."""
+                  watermark_path: str | None = None,
+                  src: str = "[0:v]", out: str = "[vout]",
+                  wm_index: int = 1) -> list[str]:
+    """Fragmento de filter_complex: texto + marca, desde `src` hasta `out`.
+
+    `src`/`out`/`wm_index` permiten insertar este fragmento en un filter_complex
+    mayor (lo usa reel_express para fusionarlo con la conversión a vertical).
+    `wm_index` es el índice del input que trae el PNG del watermark.
+    """
     has_text = params.has_text and font_path
     has_wm = params.has_watermark and watermark_path
-
-    cmd = [config.FFMPEG_PATH, "-y", "-i", video_path]
-    if has_wm:
-        cmd += ["-i", watermark_path]  # input índice 1
 
     filters: list[str] = []
     vops: list[str] = []
     if has_text:
         vops += _text_filters(params, font_path, primary_files or [], secondary_files or [])
 
-    if vops:
-        filters.append(f"[0:v]{','.join(vops)}[vbase]")
+    if vops and has_wm:
+        filters.append(f"{src}{','.join(vops)}[vbase]")
         base_label = "[vbase]"
+    elif vops:
+        filters.append(f"{src}{','.join(vops)}{out}")
+        return filters
     else:
-        base_label = "[0:v]"
+        base_label = src
 
     if has_wm:
         ww = round(config.OUTPUT_WIDTH * params.watermark_size / 100)
         ox, oy = _overlay_xy(params)
-        filters.append(f"[1:v]scale={ww}:-1[wm]")
-        filters.append(f"{base_label}[wm]overlay={ox}:{oy}[vout]")
-        vmap = "[vout]"
-    else:
-        vmap = "[vbase]"
+        filters.append(f"[{wm_index}:v]scale={ww}:-1[wm]")
+        filters.append(f"{base_label}[wm]overlay={ox}:{oy}{out}")
+    return filters
+
+
+def build_command(video_path: str, output_path: str, params: WatermarkParams, *,
+                  font_path: str | None = None,
+                  primary_files: list[str | None] | None = None,
+                  secondary_files: list[str | None] | None = None,
+                  watermark_path: str | None = None) -> list[str]:
+    """Construye el comando FFmpeg: dibuja texto + watermark, copia el audio."""
+    has_wm = params.has_watermark and watermark_path
+
+    cmd = [config.FFMPEG_PATH, "-y", "-i", video_path]
+    if has_wm:
+        cmd += ["-i", watermark_path]  # input índice 1
+
+    filters = build_filters(
+        params, font_path=font_path, primary_files=primary_files,
+        secondary_files=secondary_files, watermark_path=watermark_path,
+    )
 
     cmd += [
         "-filter_complex", ";".join(filters),
-        "-map", vmap,
+        "-map", "[vout]",
         "-map", "0:a?",                # preserva el audio original si existe
         *ffmpeg_runner.video_encode_flags(),
         "-c:a", "copy",
@@ -141,6 +163,47 @@ def _write_lines(text: str) -> list[str | None]:
     return files
 
 
+def prepare_assets(params: WatermarkParams) -> tuple:
+    """Resuelve la fuente, escribe los textfiles y valida el PNG del watermark.
+
+    Devuelve (font_path, primary_files, secondary_files, watermark_path,
+    temp_files). El caller es responsable de borrar `temp_files` al terminar.
+    Lo usan process() y el paso fusionado de reel_express.
+    """
+    font_path = None
+    primary_files: list[str | None] = []
+    secondary_files: list[str | None] = []
+    temp_files: list[str] = []
+    if params.has_text:
+        font_path = config.resolve_font_path()
+        if not font_path:
+            raise RuntimeError(
+                "No hay fuente cargada. Dejá tu .ttf u .otf en assets/fonts/."
+            )
+        if params.primary_text:
+            primary_files = _write_lines(params.primary_text)
+        if params.secondary_text:
+            secondary_files = _write_lines(params.secondary_text)
+        temp_files += [f for f in primary_files + secondary_files if f]
+
+    watermark_path = None
+    if params.has_watermark:
+        watermark_path = os.path.join(config.WATERMARKS_FOLDER, params.watermark)
+        if not os.path.isfile(watermark_path):
+            raise RuntimeError(f"Watermark no encontrado: {params.watermark}")
+
+    return font_path, primary_files, secondary_files, watermark_path, temp_files
+
+
+def cleanup_assets(temp_files: list[str]) -> None:
+    """Borra los textfiles temporales generados por prepare_assets."""
+    for path in temp_files:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def process(job_id: str, video_path: str, output_path: str,
             params: WatermarkParams) -> None:
     """Ejecuta el job completo (bloqueante). Actualiza job_manager en cada paso."""
@@ -148,26 +211,8 @@ def process(job_id: str, video_path: str, output_path: str,
     try:
         video_dur = ffmpeg_runner.probe_duration(video_path)
 
-        font_path = None
-        primary_files: list[str | None] = []
-        secondary_files: list[str | None] = []
-        if params.has_text:
-            font_path = config.resolve_font_path()
-            if not font_path:
-                raise RuntimeError(
-                    "No hay fuente cargada. Dejá tu .ttf u .otf en assets/fonts/."
-                )
-            if params.primary_text:
-                primary_files = _write_lines(params.primary_text)
-            if params.secondary_text:
-                secondary_files = _write_lines(params.secondary_text)
-            temp_files += [f for f in primary_files + secondary_files if f]
-
-        watermark_path = None
-        if params.has_watermark:
-            watermark_path = os.path.join(config.WATERMARKS_FOLDER, params.watermark)
-            if not os.path.isfile(watermark_path):
-                raise RuntimeError(f"Watermark no encontrado: {params.watermark}")
+        (font_path, primary_files, secondary_files,
+         watermark_path, temp_files) = prepare_assets(params)
 
         command = build_command(
             video_path, output_path, params,
@@ -180,8 +225,4 @@ def process(job_id: str, video_path: str, output_path: str,
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:
-        for path in temp_files:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        cleanup_assets(temp_files)

@@ -16,8 +16,15 @@ def _even(value: float) -> int:
     return max(2, int(round(value / 2)) * 2)
 
 
-def build_filter_complex(params: VerticalConvertParams) -> str:
-    """Arma el filter_complex a partir de los parámetros validados."""
+def build_filter_complex(params: VerticalConvertParams,
+                         src: str = "[0:v]", out: str = "[out]") -> str:
+    """Arma el filter_complex a partir de los parámetros validados.
+
+    `src`/`out` permiten encadenar esta cadena dentro de un filter_complex
+    mayor (lo usa reel_express para fusionar vertical + watermark en una sola
+    pasada). OJO: `src` se consume dos veces (fondo y clip principal), así que
+    debe ser un stream de entrada (p. ej. "[0:v]"), no un label intermedio.
+    """
     sigma = params.blur_intensity
     # bg_brightness es un multiplicador (0.3-1.0); colorchannelmixer lo aplica
     # de forma multiplicativa igual que CSS brightness(), evitando el clipping
@@ -36,7 +43,7 @@ def build_filter_complex(params: VerticalConvertParams) -> str:
         overlay_y = "(H-h)/2"
 
     bg = (
-        f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
+        f"{src}scale={W}:{H}:force_original_aspect_ratio=increase,"
         f"crop={W}:{H},"
         f"gblur=sigma={sigma},"
         f"colorchannelmixer=rr={bm}:gg={bm}:bb={bm}[bg]"
@@ -53,16 +60,16 @@ def build_filter_complex(params: VerticalConvertParams) -> str:
         brightness = round(i * 0.04, 3)          # boost general de exposición
         sat       = round(1.0 + i * 0.5, 3)
         sharp     = round(i * 0.5, 3)
-        parts.append(f"[0:v]scale={fg_width}:-2[fg_raw]")
+        parts.append(f"{src}scale={fg_width}:-2[fg_raw]")
         parts.append(
             f"[fg_raw]curves=all='0/0 0.25/{shadow} 0.5/{midtone} 0.75/{highlight} 1/1',"
             f"eq=brightness={brightness}:saturation={sat},"
             f"unsharp=lx=3:ly=3:la={sharp}:cx=3:cy=3:ca=0[fg]"
         )
     else:
-        parts.append(f"[0:v]scale={fg_width}:-2[fg]")
+        parts.append(f"{src}scale={fg_width}:-2[fg]")
 
-    parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}[out]")
+    parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}{out}")
     return ";".join(parts)
 
 

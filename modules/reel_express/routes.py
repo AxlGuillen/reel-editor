@@ -44,10 +44,9 @@ def process():
 
     clip_path = file_utils.save_upload(clip)
     job_id = job_manager.create_job(clip_path, output_path="")
-    # has_wm / has_subs definen las bandas de progreso (ver _aggregate_progress).
+    # has_subs define las bandas de progreso (ver _aggregate_progress).
     # output_name: nombre elegido por el usuario para la descarga (opcional).
-    job_manager.update_job(job_id, has_wm=params.has_watermark,
-                           has_subs=params.has_subtitles,
+    job_manager.update_job(job_id, has_subs=params.has_subtitles,
                            output_name=request.form.get("output_name"))
 
     thread = threading.Thread(
@@ -96,18 +95,13 @@ def finish():
 
 
 def _bands(job: dict) -> dict:
-    """Bandas (lo, hi) de progreso por fase, según haya watermark y/o subs.
+    """Bandas (lo, hi) de progreso por fase, según haya subtítulos.
 
-    Con subtítulos, la transcripción es el palo más largo y se lleva la cola.
+    El watermark ya no es fase propia: sus filtros van fusionados en la pasada
+    de vertical (prep). Con subtítulos, la transcripción se lleva la cola.
     """
-    has_wm = job.get("has_wm")
-    has_subs = job.get("has_subs")
-    if has_subs and has_wm:
-        return {"prep": (0, 25), "mix": (25, 38), "watermark": (38, 48), "transcribe": (48, 100)}
-    if has_subs:
+    if job.get("has_subs"):
         return {"prep": (0, 30), "mix": (30, 45), "transcribe": (45, 100)}
-    if has_wm:
-        return {"prep": (0, 55), "mix": (55, 80), "watermark": (80, 100)}
     return {"prep": (0, 70), "mix": (70, 100)}
 
 
@@ -129,10 +123,6 @@ def _aggregate_progress(job: dict) -> tuple[int, str]:
         lo, hi = bands["mix"]
         m = (job_manager.get_job(job.get("sub_m")) or {}).get("progress", 0)
         return int(lo + (m / 100) * (hi - lo)), "Mezclando…"
-    if phase == "watermark":
-        lo, hi = bands["watermark"]
-        w = (job_manager.get_job(job.get("sub_w")) or {}).get("progress", 0)
-        return int(lo + (w / 100) * (hi - lo)), "Aplicando texto y marca…"
     if phase == "transcribe":
         lo, hi = bands["transcribe"]
         t = (job_manager.get_job(job.get("sub_t")) or {}).get("progress", 0)
