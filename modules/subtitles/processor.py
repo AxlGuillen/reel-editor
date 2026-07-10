@@ -12,9 +12,13 @@ exacto, así NO salta de renglón entre grupos y calza con el preview (que usa
 textBaseline=bottom). El audio se copia sin tocar.
 
 Device: intenta cuda/float16 primero; si falla (GPU no soportada, DLLs
-ausentes) cae a cpu/int8 automáticamente.
+ausentes) cae a cpu/int8 automáticamente — incluso si el fallo aparece recién
+al inferir (los errores de DLL de CUDA en Windows son lazy).
 """
+import glob
 import os
+import sys
+import threading
 import uuid
 
 import config
@@ -33,6 +37,27 @@ COLOR_BORDER = "&H00000000&"   # contorno negro
 # Transcripción
 # ---------------------------------------------------------------------------
 
+def _register_gpu_dlls() -> None:
+    """Windows: expone las DLLs de CUDA (cuBLAS/cuDNN, wheels pip de nvidia-*)
+    en el PATH para que ctranslate2 las encuentre. Sin esto, el modelo carga en
+    GPU pero la inferencia falla con "cublas64_12.dll is not found"."""
+    if os.name != "nt":
+        return
+    pattern = os.path.join(sys.prefix, "Lib", "site-packages", "nvidia", "*", "bin")
+    dll_dirs = [os.path.abspath(d) for d in glob.glob(pattern) if os.path.isdir(d)]
+    if dll_dirs:
+        os.environ["PATH"] = os.pathsep.join(dll_dirs) + os.pathsep + os.environ["PATH"]
+
+
+_register_gpu_dlls()
+
+# Cache de modelos cargados: (nombre, device, compute) -> WhisperModel.
+# Cargar turbo tarda ~2.5s en GPU (bastante más en CPU); sin cache se pagaba
+# en CADA transcripción. ctranslate2 soporta uso concurrente del mismo modelo.
+_MODELS: dict = {}
+_MODELS_LOCK = threading.Lock()
+
+
 def _get_device() -> tuple[str, str]:
     """Detecta el mejor device disponible para faster-whisper."""
     try:
@@ -44,6 +69,17 @@ def _get_device() -> tuple[str, str]:
     return "cpu", "int8"
 
 
+def _get_model(name: str, device: str, compute: str):
+    """Devuelve el modelo cacheado, o lo carga (una sola vez por combinación)."""
+    from faster_whisper import WhisperModel
+
+    key = (name, device, compute)
+    with _MODELS_LOCK:
+        if key not in _MODELS:
+            _MODELS[key] = WhisperModel(name, device=device, compute_type=compute)
+        return _MODELS[key]
+
+
 def transcribe(video_path: str, params: SubtitlesParams,
                job_id: str | None = None) -> list[dict]:
     """Transcribe el audio y devuelve segmentos con palabras y timestamps.
@@ -51,15 +87,36 @@ def transcribe(video_path: str, params: SubtitlesParams,
     Cada segmento: {"id", "start", "end", "text", "words":[{word,start,end}]}.
     Lanza RuntimeError si no se detecta voz.
     """
-    from faster_whisper import WhisperModel
-
     device, compute = _get_device()
     try:
-        model = WhisperModel(params.model, device=device, compute_type=compute)
+        model = _get_model(params.model, device, compute)
     except Exception:
         print(f"[subtitles] {device}/{compute} falló al cargar, usando cpu/int8")
-        model = WhisperModel(params.model, device="cpu", compute_type="int8")
+        device, compute = "cpu", "int8"
+        model = _get_model(params.model, device, compute)
 
+    try:
+        segments = _run_transcription(model, video_path, params, job_id)
+    except RuntimeError:
+        if device != "cuda":
+            raise
+        # Los errores de CUDA (DLLs, VRAM) aparecen recién al inferir: el job
+        # no debe morir por eso. Reintento único en CPU.
+        print("[subtitles] la inferencia en cuda falló, reintentando en cpu/int8")
+        model = _get_model(params.model, "cpu", "int8")
+        segments = _run_transcription(model, video_path, params, job_id)
+
+    if not segments:
+        raise RuntimeError(
+            "No se detectó voz en el video. "
+            "Revisá que el video tenga audio con narración."
+        )
+    return segments
+
+
+def _run_transcription(model, video_path: str, params: SubtitlesParams,
+                       job_id: str | None) -> list[dict]:
+    """Corre la transcripción completa y arma los segmentos (con progreso)."""
     duration = ffmpeg_runner.probe_duration(video_path) or 0
     lang = None if params.language == "auto" else params.language
     seg_gen, _ = model.transcribe(
@@ -87,12 +144,6 @@ def transcribe(video_path: str, params: SubtitlesParams,
         })
         if job_id and duration:
             job_manager.set_progress(job_id, min(95, int(seg.end / duration * 100)))
-
-    if not segments:
-        raise RuntimeError(
-            "No se detectó voz en el video. "
-            "Revisá que el video tenga audio con narración."
-        )
     return segments
 
 

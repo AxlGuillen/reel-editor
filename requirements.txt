@@ -1,3 +1,8 @@
 Flask>=3.0
 yt-dlp>=2024.0
 faster-whisper>=1.0
+
+# GPU (Windows + NVIDIA): DLLs de CUDA que ctranslate2 necesita en runtime.
+# El processor de subtitles las agrega al PATH automáticamente.
+nvidia-cublas-cu12; platform_system == "Windows"
+nvidia-cudnn-cu12; platform_system == "Windows"
