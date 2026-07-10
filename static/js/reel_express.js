@@ -580,7 +580,7 @@ function rxResetOutputs() {
 }
 
 // --- Reset ---
-el("rx-reset-btn").addEventListener("click", () => {
+function rxResetAll() {
   cancelAnimationFrame(rxRafId);
   rxCtx.clearRect(0, 0, RX_W, RX_H);
   rxClipFile = null;
@@ -601,6 +601,13 @@ el("rx-reset-btn").addEventListener("click", () => {
   rxResetOutputs();
   updateReady();
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+// "Hacer otro" (tras el resultado): reset directo.
+el("rx-reset-btn").addEventListener("click", rxResetAll);
+// "Empezar de nuevo" (siempre visible en el editor): confirma antes, porque
+// puede dispararse en plena edición.
+el("rx-restart-btn").addEventListener("click", () => {
+  if (confirm("¿Empezar de nuevo? Se quitará el clip y el audio cargados.")) rxResetAll();
 });
 el("rx-error-reset-btn").addEventListener("click", () => {
   rxErrorWrap.classList.add("hidden");

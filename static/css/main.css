@@ -238,6 +238,27 @@ body {
   margin: 0;
 }
 .drop-loaded-hint { font-size: .78rem; color: var(--muted); margin: 6px 0 0; }
+
+/* Botón "Empezar de nuevo" (reset total, siempre visible en el editor) */
+.rx-editor-top { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.btn-restart {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+}
+.btn-restart:hover { color: var(--text); border-color: var(--err); background: rgba(231, 76, 60, .08); }
+.btn-restart .icon { width: 15px; height: 15px; }
 .link { color: var(--accent); text-decoration: underline; }
 .hint { font-size: .8rem; opacity: .7; }
 
