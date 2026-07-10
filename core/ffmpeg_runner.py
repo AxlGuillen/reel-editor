@@ -97,18 +97,23 @@ def probe_fps(input_path: str) -> float | None:
 @functools.lru_cache(maxsize=1)
 def _nvenc_available() -> bool:
     """Verifica si h264_nvenc está disponible (se ejecuta una sola vez al arrancar)."""
+    # OJO 1: NVENC tiene tamaño mínimo de frame; con 64x64 el probe fallaba
+    # ("Frame Dimension less than the minimum supported value") y la GPU
+    # quedaba deshabilitada en silencio. 256x256 es seguro.
+    # OJO 2: el print va FUERA del try y en ASCII puro: un UnicodeEncodeError
+    # en consolas cp1252 de Windows también apagaba la GPU en silencio.
     try:
         r = subprocess.run(
-            [config.FFMPEG_PATH, "-f", "lavfi", "-i", "color=c=black:s=64x64:r=1",
+            [config.FFMPEG_PATH, "-f", "lavfi", "-i", "color=c=black:s=256x256:r=1",
              "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"],
             capture_output=True, timeout=10,
         )
         available = r.returncode == 0
-        tag = "GPU NVENC ✓" if available else "CPU libx264 (NVENC no disponible)"
-        print(f"[ffmpeg] encoder: {tag}")
-        return available
-    except Exception:
-        return False
+    except (OSError, subprocess.SubprocessError):
+        available = False
+    tag = "GPU NVENC" if available else "CPU libx264 (NVENC no disponible)"
+    print(f"[ffmpeg] encoder: {tag}")
+    return available
 
 
 def video_encode_flags(crf: int = 18) -> list[str]:
