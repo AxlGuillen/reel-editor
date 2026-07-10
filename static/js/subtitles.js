@@ -128,13 +128,18 @@ subTranscribeBtn.addEventListener("click", () => {
       pollJob(data.job_id, {
         onProgress: subSetProgress,
         onDone: (jobId, data) => {
-          subProgressWrap.classList.add("hidden");
           subSegments = data.segments || [];
-          subSubsEditor.classList.remove("hidden");  // visible antes de medir altura
-          SubtitleEditor.render(subSegmentsBox, subSegments);
           subTranscribeBtn.disabled = false;
           subRetranscribeBtn.disabled = false;
-          subSubsEditor.scrollIntoView({ behavior: "smooth" });
+          if (el("sub-skip-review").checked) {
+            // Sin revisión: generar directo con la transcripción tal cual.
+            subRunRender(subSegments);
+          } else {
+            subProgressWrap.classList.add("hidden");
+            subSubsEditor.classList.remove("hidden");  // visible antes de medir altura
+            SubtitleEditor.render(subSegmentsBox, subSegments);
+            subSubsEditor.scrollIntoView({ behavior: "smooth" });
+          }
         },
         onError: (msg) => {
           subShowError(msg);
@@ -157,12 +162,14 @@ subRetranscribeBtn.addEventListener("click", () => {
 
 // El listado editable de segmentos lo maneja SubtitleEditor (compartido).
 
-// --- Fase 2: Generar video (render) ---
+// --- Fase 2: Generar video (render) con los segmentos dados (editados o crudos) ---
 subRenderBtn.addEventListener("click", () => {
-  if (!subTranscribeJobId || !subSegments.length) return;
-
   // Si el texto cambió, el backend redistribuye los tiempos (ver SubtitleEditor).
-  const segments = SubtitleEditor.collect(subSegments);
+  subRunRender(SubtitleEditor.collect(subSegments));
+});
+
+function subRunRender(segments) {
+  if (!subTranscribeJobId || !segments.length) return;
 
   const payload = {
     job_id: subTranscribeJobId,
@@ -198,7 +205,7 @@ subRenderBtn.addEventListener("click", () => {
       });
     })
     .catch((err) => { subShowError(err.message); subRenderBtn.disabled = false; });
-});
+}
 
 // --- Preview en canvas ---
 function startPreview() {

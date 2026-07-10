@@ -11,7 +11,9 @@ _INT_PARAMS = {
     "text_size": (55, 24, 140),       # px de la fuente (lienzo de 1080 de ancho)
     "text_y": (20, 0, 100),           # posición vertical del bloque (% del alto)
     "watermark_size": (50, 10, 70),   # % del ancho del video
-    "watermark_y": (100, 0, 100),     # posición vertical del watermark (% del alto)
+    # Posición vertical del watermark (% del alto). Permite desbordar (-50 a 200)
+    # para acomodarlo aunque quede parcialmente fuera del cuadro.
+    "watermark_y": (100, -50, 200),
 }
 _VALID_WATERMARK_X = {"left", "center", "right"}
 MAX_TEXT_LEN = 200

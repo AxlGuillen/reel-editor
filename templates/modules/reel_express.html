@@ -104,7 +104,7 @@
       </label>
       <label class="control">
         <span>Posición vertical del watermark <em id="rx-wm-y-val">100</em>%</span>
-        <input type="range" id="rx-wm-y" min="0" max="100" value="100">
+        <input type="range" id="rx-wm-y" min="-50" max="200" value="100">
       </label>
 
       <!-- Subtítulos (karaoke) -->
@@ -161,8 +161,12 @@
             <option value="large-v3">Large v3 — máxima precisión</option>
           </select>
         </label>
+        <label class="control-check">
+          <input type="checkbox" id="rx-skip-review">
+          <span>No revisar: generar con la transcripción tal cual</span>
+        </label>
         <p class="hint" style="margin-bottom:16px;">
-          Tras generar vas a poder revisar y corregir el texto antes del render final.
+          Si lo dejás desmarcado, tras transcribir vas a poder revisar y corregir el texto antes del render final.
         </p>
       </div>
 

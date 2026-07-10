@@ -81,23 +81,46 @@ function wireDropZone(zone, input, onFile) {
   });
 }
 
+// Marca una drop-zone como "cargada" (archivo seleccionado): swap del contenido
+// por un check + el nombre. Guarda el HTML original para poder restaurarlo.
+function setZoneLoaded(zone, name) {
+  const inner = zone.querySelector(".drop-inner");
+  if (!zone.dataset.origInner) zone.dataset.origInner = inner.innerHTML;
+  zone.classList.add("loaded");
+  inner.innerHTML =
+    '<p class="drop-icon"><svg class="icon"><use href="#i-check"/></svg></p>' +
+    '<p class="drop-loaded-name"></p>' +
+    '<p class="drop-loaded-hint">Click para cambiar</p>';
+  inner.querySelector(".drop-loaded-name").textContent = name;
+}
+function clearZoneLoaded(zone) {
+  const inner = zone.querySelector(".drop-inner");
+  if (zone.dataset.origInner) inner.innerHTML = zone.dataset.origInner;
+  zone.classList.remove("loaded");
+}
+
 // --- Carga del clip ---
 wireDropZone(rxClipZone, rxClipInput, loadClip);
 function loadClip(file) {
   rxClipFile = file;
   rxVideo.src = URL.createObjectURL(file);
   rxClipName.textContent = file.name;
+  rxClipZone.classList.add("hidden");   // ya no hace falta el input; se cambia con el nombre
   rxEditor.classList.remove("hidden");
   rxResetOutputs();
   updateReady();
   startPreview();
   rxEditor.scrollIntoView({ behavior: "smooth" });
 }
+// El nombre del clip funciona como "cambiar clip" (reabre el selector).
+rxClipName.style.cursor = "pointer";
+rxClipName.title = "Click para cambiar el clip";
+rxClipName.addEventListener("click", () => rxClipInput.click());
 
 // --- Carga del audio (fuente archivo) ---
 wireDropZone(rxAudioZone, rxAudioInput, (file) => {
   rxAudioFile = file;
-  rxAudioName.textContent = file.name;
+  setZoneLoaded(rxAudioZone, file.name);
   rxResetOutputs();
   updateReady();
 });
@@ -443,13 +466,18 @@ rxProcessBtn.addEventListener("click", () => {
         onProgress: rxSetProgress,
         onDone: (jobId, d) => {
           if (rxAddSubs.checked) {
-            // Fase 1 lista: mostrar el editor de subtítulos para revisar/corregir.
-            rxProgressWrap.classList.add("hidden");
             rxSegments = d.segments || [];
-            rxSubsEditor.classList.remove("hidden");
-            SubtitleEditor.render(rxSegmentsBox, rxSegments);
-            rxProcessBtn.disabled = false;
-            rxSubsEditor.scrollIntoView({ behavior: "smooth" });
+            if (el("rx-skip-review").checked) {
+              // Sin revisión: generar directo con la transcripción tal cual.
+              rxRunFinish(rxSegments);
+            } else {
+              // Fase 1 lista: mostrar el editor de subtítulos para revisar/corregir.
+              rxProgressWrap.classList.add("hidden");
+              rxSubsEditor.classList.remove("hidden");
+              SubtitleEditor.render(rxSegmentsBox, rxSegments);
+              rxProcessBtn.disabled = false;
+              rxSubsEditor.scrollIntoView({ behavior: "smooth" });
+            }
           } else {
             rxShowResult(jobId);
           }
@@ -482,13 +510,17 @@ function rxPollJob(jobId, { onProgress, onDone, onError }) {
   }, 1000);
 }
 
-// --- Fase 2: con los subtítulos editados, generar el reel final ---
+// --- Fase 2: generar el reel final con los segmentos dados (editados o crudos) ---
 rxFinishBtn.addEventListener("click", () => {
-  if (!rxPrepJobId || !rxSegments.length) return;
+  rxRunFinish(SubtitleEditor.collect(rxSegments));
+});
+
+function rxRunFinish(segments) {
+  if (!rxPrepJobId || !segments.length) return;
 
   const payload = {
     job_id: rxPrepJobId,
-    segments: SubtitleEditor.collect(rxSegments),
+    segments,
     output_name: el("rx-output-name").value,
     font_size: el("rx-sub-font-size").value,
     position_y: el("rx-sub-position-y").value,
@@ -516,7 +548,7 @@ rxFinishBtn.addEventListener("click", () => {
       });
     })
     .catch((err) => { rxShowError(err.message); rxFinishBtn.disabled = false; });
-});
+}
 
 // rxPollJob llama onProgress(progress, stage?) — el status de reel_express
 // manda también la etapa actual para mostrarla.
@@ -558,11 +590,13 @@ el("rx-reset-btn").addEventListener("click", () => {
   rxVideo.src = "";
   rxClipName.textContent = "";
   rxAudioName.textContent = "";
+  clearZoneLoaded(rxAudioZone);
   rxUrl.value = "";
   el("rx-output-name").value = "";
   rxSubsEditor.classList.add("hidden");
   rxPrepJobId = null;
   rxSegments = [];
+  rxClipZone.classList.remove("hidden");
   rxEditor.classList.add("hidden");
   rxResetOutputs();
   updateReady();

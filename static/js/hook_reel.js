@@ -155,12 +155,17 @@ hkProcessBtn.addEventListener("click", () => {
         onProgress: hkSetProgress,
         onDone: (jobId, d) => {
           if (hkAddSubs.checked) {
-            hkProgressWrap.classList.add("hidden");
             hkSegments = d.segments || [];
-            hkSubsEditor.classList.remove("hidden");
-            SubtitleEditor.render(hkSegmentsBox, hkSegments);
-            hkProcessBtn.disabled = false;
-            hkSubsEditor.scrollIntoView({ behavior: "smooth" });
+            if (el("hk-skip-review").checked) {
+              // Sin revisión: generar directo con la transcripción tal cual.
+              hkRunFinish(hkSegments);
+            } else {
+              hkProgressWrap.classList.add("hidden");
+              hkSubsEditor.classList.remove("hidden");
+              SubtitleEditor.render(hkSegmentsBox, hkSegments);
+              hkProcessBtn.disabled = false;
+              hkSubsEditor.scrollIntoView({ behavior: "smooth" });
+            }
           } else {
             hkShowResult(jobId);
           }
@@ -193,13 +198,17 @@ function hkPollJob(jobId, { onProgress, onDone, onError }) {
   }, 1000);
 }
 
-// --- Fase 2: con los subtítulos editados, generar el reel final ---
+// --- Fase 2: generar el reel final con los segmentos dados (editados o crudos) ---
 hkFinishBtn.addEventListener("click", () => {
-  if (!hkPrepJobId || !hkSegments.length) return;
+  hkRunFinish(SubtitleEditor.collect(hkSegments));
+});
+
+function hkRunFinish(segments) {
+  if (!hkPrepJobId || !segments.length) return;
 
   const payload = {
     job_id: hkPrepJobId,
-    segments: SubtitleEditor.collect(hkSegments),
+    segments,
     output_name: el("hk-output-name").value,
     font_size: el("hk-sub-font-size").value,
     position_y: el("hk-sub-position-y").value,
@@ -227,7 +236,7 @@ hkFinishBtn.addEventListener("click", () => {
       });
     })
     .catch((err) => { hkShowError(err.message); hkFinishBtn.disabled = false; });
-});
+}
 
 function hkSetProgress(pct, stage) {
   hkProgressFill.style.width = `${pct}%`;
