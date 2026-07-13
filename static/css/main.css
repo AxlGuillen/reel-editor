@@ -294,6 +294,18 @@ a:hover { color: var(--accent-hover); }
   .editor-grid { grid-template-columns: 1fr; }
 }
 
+/* El preview se queda a la vista mientras se scrollean los controles (que son
+   más largos). align-self:start evita que el grid lo estire a lo alto de la
+   fila, dándole lugar para "pegarse". Sin scroll anidado. */
+.preview-panel {
+  position: sticky;
+  top: 20px;
+  align-self: start;
+}
+@media (max-width: 760px) {
+  .preview-panel { position: static; }
+}
+
 h2 {
   font-family: var(--font-display);
   font-size: 1.1rem;
