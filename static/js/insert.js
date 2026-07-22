@@ -30,6 +30,25 @@ const insErrorMsg = el("ins-error-msg");
 let insVideoFile = null;
 let insClipFile = null;
 let insMarkers = []; // segundos (float), ordenados
+let insClipDur = 0;  // duración del mini-clip (para el reparto de adelantos)
+let insMode = "full";
+
+// Sonda offscreen para leer la duración del mini-clip sin mostrarlo.
+const insClipProbe = document.createElement("video");
+insClipProbe.preload = "metadata";
+insClipProbe.addEventListener("loadedmetadata", () => {
+  insClipDur = insClipProbe.duration || 0;
+  renderSlices();
+});
+
+// Refs del panel "caída progresiva".
+const insModeTabs = el("ins-mode-tabs");
+const insModeHint = el("ins-mode-hint");
+const insProg = el("ins-prog");
+const insRevealEnabled = el("ins-reveal-enabled");
+const insRevealOpts = el("ins-reveal-opts");
+const insManualSlices = el("ins-manual-slices");
+const insSlices = el("ins-slices");
 
 // --- Drag & drop genérico (local para no depender del orden de carga) ---
 function insWireDropZone(zone, input, onFile) {
@@ -70,6 +89,8 @@ insWireDropZone(insVideoZone, insVideoInput, (file) => {
 insWireDropZone(insClipZone, insClipInput, (file) => {
   insClipFile = file;
   insClipName.textContent = file.name;
+  insClipDur = 0;
+  insClipProbe.src = URL.createObjectURL(file);
   insResetOutputs();
   updateInsReady();
 });
@@ -152,12 +173,14 @@ function addMarker(t) {
   insMarkers.push(t);
   insMarkers.sort((a, b) => a - b);
   renderMarkers();
+  renderSlices();
   updateInsReady();
 }
 
 function removeMarker(t) {
   insMarkers = insMarkers.filter((m) => m !== t);
   renderMarkers();
+  renderSlices();
   updateInsReady();
 }
 
@@ -192,6 +215,73 @@ function updateInsReady() {
   insProcessBtn.disabled = !(insVideoFile && insClipFile && insMarkers.length > 0);
 }
 
+// --- Modo (clip completo / caída progresiva) ---
+insModeTabs.querySelectorAll(".rx-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    insMode = btn.dataset.mode;
+    insModeTabs.querySelectorAll(".rx-tab").forEach((b) =>
+      b.classList.toggle("active", b === btn));
+    insProg.classList.toggle("hidden", insMode !== "progressive");
+    insModeHint.innerHTML = insMode === "progressive"
+      ? "Va metiendo <strong>pedazos que avanzan</strong> del mini-clip en cada marca; al final, la caída completa."
+      : "Inserta el mini-clip <strong>completo</strong> en cada marca (con su audio).";
+    renderSlices();
+  });
+});
+
+insRevealEnabled.addEventListener("change", () => {
+  insRevealOpts.classList.toggle("hidden", !insRevealEnabled.checked);
+});
+el("ins-reveal-speed").addEventListener("change", () => {
+  el("ins-reveal-speed-val").textContent =
+    `${parseFloat(el("ins-reveal-speed").value)}×`;
+});
+el("ins-reveal-where").addEventListener("change", () => {
+  el("ins-reveal-at-wrap").classList.toggle(
+    "hidden", el("ins-reveal-where").value !== "at");
+});
+insManualSlices.addEventListener("change", () => {
+  insSlices.classList.toggle("hidden", !insManualSlices.checked);
+  renderSlices();
+});
+
+// Reparto de los adelantos: muestra el auto y, si el usuario ajusta, inputs editables.
+function renderSlices() {
+  const hint = el("ins-slices-hint");
+  const n = insMarkers.length;
+  if (insMode !== "progressive" || !n || !insClipDur) {
+    insSlices.innerHTML = "";
+    hint.textContent = "";
+    return;
+  }
+  const auto = insClipDur / n;
+  hint.textContent =
+    `Auto: ${insClipDur.toFixed(1)}s ÷ ${n} = ${auto.toFixed(2)}s por adelanto.`;
+
+  if (!insManualSlices.checked) {
+    insSlices.innerHTML = "";
+    return;
+  }
+  // Preserva lo tipeado si la cantidad de marcadores no cambió.
+  const prev = [...insSlices.querySelectorAll("input")].map((i) => i.value);
+  const keep = prev.length === n;
+  insSlices.innerHTML = "";
+  for (let k = 0; k < n; k++) {
+    const lbl = document.createElement("label");
+    lbl.className = "control";
+    const span = document.createElement("span");
+    span.textContent = `Adelanto ${k + 1} (s)`;
+    const inp = document.createElement("input");
+    inp.type = "number";
+    inp.min = "0.1";
+    inp.step = "0.1";
+    inp.className = "ins-time-input ins-slice-input";
+    inp.value = keep ? prev[k] : auto.toFixed(2);
+    lbl.append(span, inp);
+    insSlices.appendChild(lbl);
+  }
+}
+
 // --- Process ---
 insProcessBtn.addEventListener("click", () => {
   if (!insVideoFile || !insClipFile || insMarkers.length === 0) return;
@@ -201,6 +291,24 @@ insProcessBtn.addEventListener("click", () => {
   form.append("video", insVideoFile);
   form.append("clip", insClipFile);
   form.append("markers", JSON.stringify(insMarkers));
+  form.append("mode", insMode);
+
+  if (insMode === "progressive") {
+    form.append("reveal_enabled", insRevealEnabled.checked ? "1" : "0");
+    form.append("reveal_speed", el("ins-reveal-speed").value);
+    form.append("clip_audio", el("ins-clip-audio").value);
+    if (el("ins-reveal-where").value === "at") {
+      const at = parseTime(el("ins-reveal-at").value);
+      if (at !== null) form.append("reveal_at", at);
+    }
+    if (insManualSlices.checked) {
+      const durs = [...insSlices.querySelectorAll("input")]
+        .map((i) => parseFloat(i.value));
+      if (durs.length === insMarkers.length && durs.every((d) => d > 0)) {
+        form.append("slice_durations", JSON.stringify(durs));
+      }
+    }
+  }
 
   insResetOutputs();
   insProcessBtn.disabled = true;
@@ -250,7 +358,9 @@ el("ins-reset-btn").addEventListener("click", () => {
   insVideo.src = "";
   insVideoName.textContent = "";
   insClipName.textContent = "";
+  insClipDur = 0;
   renderMarkers();
+  renderSlices();
   insEditor.classList.add("hidden");
   insResetOutputs();
   updateInsReady();
