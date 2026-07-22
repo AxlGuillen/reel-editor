@@ -175,6 +175,32 @@
         </p>
       </div>
 
+      <!-- Fondo dinámico (caída) -->
+      <h3 class="rx-group">Fondo dinámico <span class="rx-optional">opcional</span></h3>
+      <label class="control-check">
+        <input type="checkbox" id="rx-dynamic-bg">
+        <span>Meter una <strong>caída</strong> entre partes (sin cortar la narración)</span>
+      </label>
+      <div id="rx-dynamic-controls" class="hidden">
+        <section id="rx-dyn-zone" class="card drop-zone rx-audio-zone">
+          <input type="file" id="rx-dyn-input" accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo" hidden>
+          <div class="drop-inner">
+            <p class="drop-icon"><svg class="icon"><use href="#i-film"/></svg></p>
+            <p>Arrastra el <strong>clip de la caída</strong> o <span class="link">selecciónalo</span></p>
+            <p class="hint">9:16 (1080×1920), igual que el reel</p>
+          </div>
+        </section>
+        <p id="rx-dyn-name" class="file-name"></p>
+        <label class="control">
+          <span>Posiciones (% del video)</span>
+          <input type="text" id="rx-dyn-markers" class="text-input" placeholder="ej. 25, 50, 75">
+        </label>
+        <p class="hint" style="margin-bottom:16px;">
+          La caída se reparte en esos puntos como pedazos que avanzan; el audio y la
+          narración siguen corriendo por debajo sin cortarse.
+        </p>
+      </div>
+
       <details class="rx-advanced">
         <summary>Ajustes avanzados de video y mezcla</summary>
 

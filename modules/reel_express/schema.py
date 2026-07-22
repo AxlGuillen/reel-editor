@@ -8,7 +8,8 @@ La fuente de audio puede ser un link (se descarga con yt-dlp) o un archivo
 subido (típicamente una narración). El watermark es opcional: solo se construye
 si llega texto o una marca.
 """
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 
 from modules.vertical_convert.schema import VerticalConvertParams
 from modules.downloader.schema import DownloaderParams, AUDIO_QUALITIES, DEFAULT_AUDIO_QUALITY
@@ -32,6 +33,11 @@ class ReelExpressParams:
     watermark: WatermarkParams | None = None      # solo si hay texto o marca
     add_subtitles: bool = True                    # subtítulos karaoke al final
     subtitles: SubtitlesParams | None = None       # solo si add_subtitles
+    # Fondo dinámico (cutaway): mete pedazos de una "caída" entre partes del
+    # video, SIN cortar la narración. Marcadores como fracciones (0–1) del base.
+    dynamic_bg: bool = False
+    dynamic_markers: list[float] = field(default_factory=list)
+    dynamic_slice_durations: list[float] | None = None
 
     @classmethod
     def from_form(cls, form) -> "ReelExpressParams":
@@ -77,10 +83,29 @@ class ReelExpressParams:
             if not (form.get("position_y") or "").strip():
                 subtitles.position_y = REEL_SUBTITLE_POSITION_Y
 
+        # Fondo dinámico: opcional. Los marcadores son fracciones (0–1) del video
+        # base, así el punto no se corre si sound_drop cambia la duración.
+        dynamic_bg = _to_bool(form.get("dynamic_bg"), False)
+        dynamic_markers: list[float] = []
+        dynamic_slice_durations = None
+        if dynamic_bg:
+            dynamic_markers = _parse_fractions(form.get("dynamic_markers"))
+            if not dynamic_markers:
+                raise ValueError("El fondo dinámico necesita al menos un marcador.")
+            raw_dur = form.get("dynamic_slice_durations")
+            if raw_dur not in (None, ""):
+                dynamic_slice_durations = _parse_floats(raw_dur)
+                if len(dynamic_slice_durations) != len(dynamic_markers):
+                    raise ValueError(
+                        "Las duraciones del fondo dinámico no coinciden con los marcadores."
+                    )
+
         return cls(
             vertical=vertical, sound_drop=sound_drop, audio_source=audio_source,
             downloader=downloader, watermark=watermark,
             add_subtitles=add_subtitles, subtitles=subtitles,
+            dynamic_bg=dynamic_bg, dynamic_markers=dynamic_markers,
+            dynamic_slice_durations=dynamic_slice_durations,
         )
 
     @property
@@ -91,11 +116,39 @@ class ReelExpressParams:
     def has_subtitles(self) -> bool:
         return self.add_subtitles and self.subtitles is not None
 
+    @property
+    def has_dynamic(self) -> bool:
+        return self.dynamic_bg and bool(self.dynamic_markers)
+
 
 def _to_bool(raw, default: bool) -> bool:
     if raw is None:
         return default
     return str(raw).lower() in {"1", "true", "on", "yes"}
+
+
+def _parse_floats(raw: str) -> list[float]:
+    """Acepta JSON (`[1, 2]`) o CSV (`1, 2`) y devuelve floats."""
+    raw = (raw or "").strip()
+    try:
+        values = json.loads(raw) if raw.startswith("[") else \
+            [p for p in raw.split(",") if p.strip() != ""]
+        return [float(v) for v in values]
+    except (ValueError, TypeError, json.JSONDecodeError):
+        raise ValueError(f"Valores inválidos: {raw!r}")
+
+
+def _parse_fractions(raw) -> list[float]:
+    """Marcadores como fracciones 0–1 del video base (ordenados, validados)."""
+    if raw in (None, ""):
+        return []
+    fracs = _parse_floats(raw)
+    if any(f < 0 or f > 1 for f in fracs):
+        raise ValueError("Los marcadores del fondo dinámico deben ir entre 0 y 1.")
+    if len(fracs) > 50:
+        raise ValueError("Demasiados marcadores de fondo dinámico (máximo 50).")
+    fracs.sort()
+    return fracs
 
 
 def _optional_watermark(form) -> WatermarkParams | None:

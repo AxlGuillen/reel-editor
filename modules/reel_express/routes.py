@@ -42,17 +42,30 @@ def process():
             ), 400
         audio_path = file_utils.save_upload(audio)
 
+    # Fondo dinámico: el clip de la "caída" que se mete entre partes del video.
+    dynamic_clip_path = None
+    if params.has_dynamic:
+        dyn = request.files.get("dynamic_clip")
+        if not dyn or not dyn.filename:
+            return jsonify(error="Falta el clip de la caída (fondo dinámico)."), 400
+        if not config.allowed_file(dyn.filename):
+            return jsonify(
+                error=f"Caída: extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"
+            ), 400
+        dynamic_clip_path = file_utils.save_upload(dyn)
+
     clip_path = file_utils.save_upload(clip)
     job_id = job_manager.create_job(clip_path, output_path="")
-    # has_subs define las bandas de progreso (ver _aggregate_progress).
+    # has_subs/has_dyn definen las bandas de progreso (ver _aggregate_progress).
     # output_name: nombre elegido por el usuario para la descarga (opcional).
     job_manager.update_job(job_id, has_subs=params.has_subtitles,
+                           has_dyn=params.has_dynamic,
                            output_name=request.form.get("output_name"))
 
     thread = threading.Thread(
         target=processor.process,
         args=(job_id, clip_path, params),
-        kwargs={"audio_path": audio_path},
+        kwargs={"audio_path": audio_path, "dynamic_clip_path": dynamic_clip_path},
         daemon=True,
     )
     thread.start()
@@ -95,13 +108,21 @@ def finish():
 
 
 def _bands(job: dict) -> dict:
-    """Bandas (lo, hi) de progreso por fase, según haya subtítulos.
+    """Bandas (lo, hi) de progreso por fase, según haya subtítulos / fondo dinámico.
 
     El watermark ya no es fase propia: sus filtros van fusionados en la pasada
-    de vertical (prep). Con subtítulos, la transcripción se lleva la cola.
+    de vertical (prep). Con subtítulos, la transcripción se lleva la cola. El
+    fondo dinámico (cutaway) es una fase intermedia entre mix y transcribe.
     """
-    if job.get("has_subs"):
+    subs = job.get("has_subs")
+    dyn = job.get("has_dyn")
+    if subs and dyn:
+        return {"prep": (0, 25), "mix": (25, 38), "dynamic": (38, 55),
+                "transcribe": (55, 100)}
+    if subs:
         return {"prep": (0, 30), "mix": (30, 45), "transcribe": (45, 100)}
+    if dyn:
+        return {"prep": (0, 55), "mix": (55, 72), "dynamic": (72, 100)}
     return {"prep": (0, 70), "mix": (70, 100)}
 
 
@@ -123,6 +144,10 @@ def _aggregate_progress(job: dict) -> tuple[int, str]:
         lo, hi = bands["mix"]
         m = (job_manager.get_job(job.get("sub_m")) or {}).get("progress", 0)
         return int(lo + (m / 100) * (hi - lo)), "Mezclando…"
+    if phase == "dynamic":
+        lo, hi = bands["dynamic"]
+        c = (job_manager.get_job(job.get("sub_c")) or {}).get("progress", 0)
+        return int(lo + (c / 100) * (hi - lo)), "Metiendo fondo dinámico…"
     if phase == "transcribe":
         lo, hi = bands["transcribe"]
         t = (job_manager.get_job(job.get("sub_t")) or {}).get("progress", 0)

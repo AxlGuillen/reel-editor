@@ -33,6 +33,7 @@ from modules.downloader import processor as downloader_processor
 from modules.sound_drop import processor as sound_drop_processor
 from modules.watermark import processor as watermark_processor
 from modules.subtitles import processor as subtitles_processor
+from modules.insert import processor as insert_processor
 
 
 def _check_subjob(sub_id: str, etapa: str) -> dict:
@@ -92,7 +93,8 @@ def _vertical_watermark_job(job_id: str, clip_path: str, output_path: str,
 
 
 def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
-            audio_path: str | None = None) -> None:
+            audio_path: str | None = None,
+            dynamic_clip_path: str | None = None) -> None:
     """Fase 1 del pipeline (bloqueante). Reporta al job del pipeline.
 
     `audio_path` viene seteado cuando la fuente es un archivo subido; cuando es
@@ -105,6 +107,8 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
     intermedios: list[str] = [clip_path]
     if audio_path:
         intermedios.append(audio_path)
+    if dynamic_clip_path:
+        intermedios.append(dynamic_clip_path)
     try:
         job_manager.update_job(job_id, status="processing", progress=0)
 
@@ -143,8 +147,10 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         intermedios.append(vertical_out)
 
         # --- Fase mix: audio sobre el vertical(+marca). Produce el video base ---
+        # Si hay subtítulos o fondo dinámico, el mix es intermedio (viene más).
+        needs_more_after_mix = params.has_subtitles or params.has_dynamic
         sub_m = job_manager.create_job(vertical_out, output_path="")
-        mix_out = (file_utils.output_path_for(sub_m) if params.has_subtitles
+        mix_out = (file_utils.output_path_for(sub_m) if needs_more_after_mix
                    else file_utils.output_path_for(job_id))
         job_manager.update_job(job_id, phase="mix", sub_m=sub_m)
 
@@ -154,6 +160,25 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         _check_subjob(sub_m, "la mezcla de audio")
 
         base_out = mix_out  # "video base": vertical + texto/marca + mezcla
+
+        # --- Fase fondo dinámico: cutaway. Reemplaza tramos del fondo por la
+        #     caída SIN tocar el audio (la narración/mezcla corre por debajo) ---
+        if params.has_dynamic and dynamic_clip_path:
+            base_dur = ffmpeg_runner.probe_duration(base_out)
+            if base_dur is None:
+                raise RuntimeError("No pude leer la duración del video base.")
+            positions = [f * base_dur for f in params.dynamic_markers]
+            sub_c = job_manager.create_job(base_out, output_path="")
+            cut_out = (file_utils.output_path_for(sub_c) if params.has_subtitles
+                       else file_utils.output_path_for(job_id))
+            job_manager.update_job(job_id, phase="dynamic", sub_c=sub_c)
+            insert_processor.process_cutaway(
+                sub_c, base_out, dynamic_clip_path, cut_out, positions,
+                slice_durations=params.dynamic_slice_durations,
+            )
+            _check_subjob(sub_c, "el fondo dinámico")
+            intermedios.append(base_out)   # el mix deja de ser el base
+            base_out = cut_out
 
         # --- Fase subtítulos: transcribir el base y pausar para edición ---
         if params.has_subtitles:
