@@ -219,12 +219,23 @@ function drawSampleSubtitle() {
 
 // Espeja vertical_convert.js: fondo "cover" con blur + brillo, y el clip
 // principal escalado por ancho y posicionado, con realce opcional.
+// Con la conversión desactivada, el clip (ya 9:16) se dibuja tal cual.
 function drawVertical() {
   const vw = rxVideo.videoWidth;
   const vh = rxVideo.videoHeight;
   if (rxVideo.readyState < 2 || !vw || !vh) {
     rxCtx.fillStyle = "#000";
     rxCtx.fillRect(0, 0, RX_W, RX_H);
+    return;
+  }
+
+  // Sin conversión: el clip llena el lienzo como lo hará la salida.
+  if (!el("rx-convert-vertical").checked) {
+    const cover = Math.max(RX_W / vw, RX_H / vh);
+    const dw = vw * cover;
+    const dh = vh * cover;
+    rxCtx.filter = "none";
+    rxCtx.drawImage(rxVideo, (RX_W - dw) / 2, (RX_H - dh) / 2, dw, dh);
     return;
   }
 
@@ -437,6 +448,7 @@ rxProcessBtn.addEventListener("click", () => {
     form.append("audio", rxAudioFile);
   }
   // Video vertical
+  form.append("convert_vertical", el("rx-convert-vertical").checked ? "1" : "0");
   form.append("blur_intensity", el("rx-blur_intensity").value);
   form.append("bg_brightness", el("rx-bg_brightness").value);
   form.append("main_clip_scale", el("rx-main_clip_scale").value);

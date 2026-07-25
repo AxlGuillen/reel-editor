@@ -45,16 +45,22 @@ def _check_subjob(sub_id: str, etapa: str) -> dict:
     return sub
 
 
-def _vertical_watermark_job(job_id: str, clip_path: str, output_path: str,
-                            params: ReelExpressParams) -> None:
-    """Convierte a vertical y, si hay texto/marca, lo compone en la MISMA pasada.
+def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
+                        params: ReelExpressParams) -> None:
+    """Prepara la imagen: conversión a vertical y/o texto+marca.
 
-    Fusiona el filter_complex de vertical_convert con el fragmento de watermark
-    (un solo decode+encode en vez de dos). Sin watermark, delega en el process()
-    normal de vertical_convert. Corre como sub-job (thread de la fase prep).
+    Cuando hacen falta las dos, se fusionan en un solo filter_complex (un solo
+    decode+encode en vez de dos). Si solo hace falta una, delega en el process()
+    del módulo correspondiente. Corre como sub-job (thread de la fase prep).
     """
-    if not params.has_watermark:
+    do_vertical = params.convert_vertical
+    do_wm = params.has_watermark
+
+    if do_vertical and not do_wm:
         vertical_processor.process(job_id, clip_path, output_path, params.vertical)
+        return
+    if do_wm and not do_vertical:
+        watermark_processor.process(job_id, clip_path, output_path, params.watermark)
         return
 
     temp_files: list[str] = []
@@ -112,20 +118,28 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
     try:
         job_manager.update_job(job_id, status="processing", progress=0)
 
-        # --- Fase prep: vertical (+texto/marca fusionados) y, si la fuente es
-        #     un link, la descarga del audio en paralelo ---
-        sub_v = job_manager.create_job(clip_path, output_path="")
-        vertical_out = file_utils.output_path_for(sub_v)
+        # --- Fase prep: preparación visual (vertical y/o texto/marca) y, si la
+        #     fuente es un link, la descarga del audio en paralelo ---
+        # Si el clip ya viene 9:16 y no hay texto/marca, no hay nada que
+        # preparar: el clip va directo a la mezcla (un encode menos).
+        needs_visual = params.convert_vertical or params.has_watermark
+        sub_v = None
+        vertical_out = clip_path
+        if needs_visual:
+            sub_v = job_manager.create_job(clip_path, output_path="")
+            vertical_out = file_utils.output_path_for(sub_v)
         sub_d = None
         if params.audio_source == "url":
             sub_d = job_manager.create_job(params.downloader.url, output_path="")
         job_manager.update_job(job_id, phase="prep", sub_v=sub_v, sub_d=sub_d)
 
-        t_v = threading.Thread(
-            target=_vertical_watermark_job,
-            args=(sub_v, clip_path, vertical_out, params),
-            daemon=True,
-        )
+        t_v = None
+        if sub_v:
+            t_v = threading.Thread(
+                target=_prepare_visual_job,
+                args=(sub_v, clip_path, vertical_out, params),
+                daemon=True,
+            )
         t_d = None
         if sub_d:
             t_d = threading.Thread(
@@ -133,18 +147,21 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
                 args=(sub_d, params.downloader),
                 daemon=True,
             )
-        t_v.start()
+        if t_v:
+            t_v.start()
         if t_d:
             t_d.start()
-        t_v.join()
+        if t_v:
+            t_v.join()
         if t_d:
             t_d.join()
 
-        _check_subjob(sub_v, "la conversión a vertical (y el texto/marca)")
+        if sub_v:
+            _check_subjob(sub_v, "la preparación del video (vertical/texto/marca)")
+            intermedios.append(vertical_out)
         if sub_d:
             audio_path = _check_subjob(sub_d, "la descarga del audio")["output_path"]
             intermedios.append(audio_path)
-        intermedios.append(vertical_out)
 
         # --- Fase mix: audio sobre el vertical(+marca). Produce el video base ---
         # Si hay subtítulos o fondo dinámico, el mix es intermedio (viene más).

@@ -30,6 +30,7 @@ class ReelExpressParams:
     sound_drop: SoundDropParams
     audio_source: str = "url"
     downloader: DownloaderParams | None = None   # solo si audio_source == "url"
+    convert_vertical: bool = True                 # off si el clip ya viene 9:16
     watermark: WatermarkParams | None = None      # solo si hay texto o marca
     add_subtitles: bool = True                    # subtítulos karaoke al final
     subtitles: SubtitlesParams | None = None       # solo si add_subtitles
@@ -72,6 +73,10 @@ class ReelExpressParams:
                 raise ValueError("El link debe empezar con http:// o https://")
             downloader = DownloaderParams(url=url, format="audio", quality=quality)
 
+        # Conversión a vertical: activa por defecto. Se apaga cuando el clip ya
+        # viene en 9:16, para no pasarlo dos veces por el mismo tratamiento.
+        convert_vertical = _to_bool(form.get("convert_vertical"), True)
+
         watermark = _optional_watermark(form)
 
         # Subtítulos: activos por defecto. La posición default en el pipeline es
@@ -102,7 +107,8 @@ class ReelExpressParams:
 
         return cls(
             vertical=vertical, sound_drop=sound_drop, audio_source=audio_source,
-            downloader=downloader, watermark=watermark,
+            downloader=downloader, convert_vertical=convert_vertical,
+            watermark=watermark,
             add_subtitles=add_subtitles, subtitles=subtitles,
             dynamic_bg=dynamic_bg, dynamic_markers=dynamic_markers,
             dynamic_slice_durations=dynamic_slice_durations,

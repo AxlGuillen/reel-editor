@@ -133,12 +133,13 @@ def _aggregate_progress(job: dict) -> tuple[int, str]:
 
     if phase == "prep":
         lo, hi = bands["prep"]
-        v = (job_manager.get_job(job.get("sub_v")) or {}).get("progress", 0)
-        if job.get("sub_d"):
-            d = (job_manager.get_job(job.get("sub_d")) or {}).get("progress", 0)
-            base = (v + d) / 2
-        else:
-            base = v
+        # Promedia solo los sub-jobs que existan: la preparación visual se salta
+        # cuando el clip ya viene 9:16 y no hay texto/marca.
+        progresos = [
+            (job_manager.get_job(job[key]) or {}).get("progress", 0)
+            for key in ("sub_v", "sub_d") if job.get(key)
+        ]
+        base = sum(progresos) / len(progresos) if progresos else 100
         return int(lo + base / 100 * (hi - lo)), "Preparando video y audio…"
     if phase == "mix":
         lo, hi = bands["mix"]
