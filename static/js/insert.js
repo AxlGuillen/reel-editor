@@ -122,11 +122,18 @@ function parseTime(str) {
 insVideo.addEventListener("loadedmetadata", () => {
   insDurTime.textContent = fmtTime(insVideo.duration);
 });
-insVideo.addEventListener("timeupdate", () => {
+// El tiempo actual va con décimas: los marcadores se guardan con 2 decimales
+// y sin esto no se ve la precisión al navegar de a 1s.
+function insRefreshTime() {
   const frac = insVideo.duration ? insVideo.currentTime / insVideo.duration : 0;
   insPlayhead.style.left = `${frac * 100}%`;
-  insCurTime.textContent = fmtTime(insVideo.currentTime);
-});
+  const t = insVideo.currentTime;
+  const m = Math.floor(t / 60);
+  const s = (t % 60).toFixed(1).padStart(4, "0");
+  insCurTime.textContent = isFinite(t) ? `${m}:${s}` : "0:00.0";
+}
+insVideo.addEventListener("timeupdate", insRefreshTime);
+insVideo.addEventListener("seeked", insRefreshTime);
 
 insTrack.addEventListener("click", (e) => {
   if (!insVideo.duration) return;
@@ -135,7 +142,7 @@ insTrack.addEventListener("click", (e) => {
   addMarker(frac * insVideo.duration);
 });
 
-el("ins-play-btn").addEventListener("click", () => {
+function insTogglePlay() {
   if (insVideo.paused) {
     insVideo.play();
     el("ins-play-btn").textContent = "⏸ Pausa";
@@ -143,9 +150,47 @@ el("ins-play-btn").addEventListener("click", () => {
     insVideo.pause();
     el("ins-play-btn").textContent = "▶ Play";
   }
-});
+}
+el("ins-play-btn").addEventListener("click", insTogglePlay);
 insVideo.addEventListener("ended", () => {
   el("ins-play-btn").textContent = "▶ Play";
+});
+
+// --- Velocidad del preview (solo visual: no afecta el video generado) ---
+const INS_SPEEDS = [1, 1.5, 2, 3];
+let insSpeedIdx = 0;
+function insSetSpeed(idx) {
+  insSpeedIdx = (idx + INS_SPEEDS.length) % INS_SPEEDS.length;
+  const rate = INS_SPEEDS[insSpeedIdx];
+  insVideo.playbackRate = rate;
+  el("ins-speed-btn").textContent = `${rate}×`;
+}
+el("ins-speed-btn").addEventListener("click", () => insSetSpeed(insSpeedIdx + 1));
+
+// --- Navegación fina por el timeline ---
+function insSeek(delta) {
+  if (!insVideo.duration) return;
+  const t = Math.min(insVideo.duration, Math.max(0, insVideo.currentTime + delta));
+  insVideo.currentTime = t;
+}
+el("ins-back5").addEventListener("click", () => insSeek(-5));
+el("ins-back1").addEventListener("click", () => insSeek(-1));
+el("ins-fwd1").addEventListener("click", () => insSeek(1));
+el("ins-fwd5").addEventListener("click", () => insSeek(5));
+
+// Atajos de teclado: solo con el módulo visible y fuera de un campo de texto.
+document.addEventListener("keydown", (e) => {
+  const view = el("view-insert");
+  if (!view || view.classList.contains("hidden") || !insVideoFile) return;
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+  switch (e.key) {
+    case " ":       e.preventDefault(); insTogglePlay(); break;
+    case "ArrowLeft":  e.preventDefault(); insSeek(e.shiftKey ? -5 : -1); break;
+    case "ArrowRight": e.preventDefault(); insSeek(e.shiftKey ? 5 : 1); break;
+    case "m": case "M": e.preventDefault(); addMarker(insVideo.currentTime); break;
+  }
 });
 
 el("ins-mark-here").addEventListener("click", () => {
@@ -229,6 +274,22 @@ insModeTabs.querySelectorAll(".rx-tab").forEach((btn) => {
   });
 });
 
+// --- Mini-clip a vertical: toggle + labels de los sliders ---
+const insClipVertical = el("ins-clip-vertical");
+insClipVertical.addEventListener("change", () => {
+  el("ins-vertical-adv").classList.toggle("hidden", !insClipVertical.checked);
+});
+el("ins-vertical-adv").classList.add("hidden");
+Object.entries({
+  "ins-blur_intensity": "ins-blur-val",
+  "ins-bg_brightness": "ins-brightness-val",
+  "ins-main_clip_scale": "ins-scale-val",
+  "ins-enhance_intensity": "ins-enhance-val",
+}).forEach(([inputId, labelId]) => {
+  const input = el(inputId);
+  input.addEventListener("input", () => (el(labelId).textContent = input.value));
+});
+
 insRevealEnabled.addEventListener("change", () => {
   insRevealOpts.classList.toggle("hidden", !insRevealEnabled.checked);
 });
@@ -293,6 +354,15 @@ insProcessBtn.addEventListener("click", () => {
   form.append("markers", JSON.stringify(insMarkers));
   form.append("mode", insMode);
 
+  form.append("clip_vertical", insClipVertical.checked ? "1" : "0");
+  if (insClipVertical.checked) {
+    form.append("blur_intensity", el("ins-blur_intensity").value);
+    form.append("bg_brightness", el("ins-bg_brightness").value);
+    form.append("main_clip_scale", el("ins-main_clip_scale").value);
+    form.append("enhance_intensity", el("ins-enhance_intensity").value);
+    form.append("main_clip_position", el("ins-main_clip_position").value);
+  }
+
   if (insMode === "progressive") {
     form.append("reveal_enabled", insRevealEnabled.checked ? "1" : "0");
     form.append("reveal_speed", el("ins-reveal-speed").value);
@@ -350,6 +420,8 @@ function insResetOutputs() {
 // --- Reset ---
 el("ins-reset-btn").addEventListener("click", () => {
   insVideo.pause();
+  insSetSpeed(0);
+  el("ins-play-btn").textContent = "▶ Play";
   insVideoFile = null;
   insClipFile = null;
   insMarkers = [];

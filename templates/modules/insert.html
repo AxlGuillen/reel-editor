@@ -34,10 +34,24 @@
         </div>
       </div>
 
+      <!-- Navegación fina: para clavar el punto exacto antes de marcar -->
+      <div class="ins-nav-row">
+        <button id="ins-back5" class="btn-secondary ins-nav-btn" title="-5 segundos">« 5s</button>
+        <button id="ins-back1" class="btn-secondary ins-nav-btn" title="-1 segundo">‹ 1s</button>
+        <button id="ins-fwd1" class="btn-secondary ins-nav-btn" title="+1 segundo">1s ›</button>
+        <button id="ins-fwd5" class="btn-secondary ins-nav-btn" title="+5 segundos">5s »</button>
+      </div>
+
       <div class="ins-add-row">
         <button id="ins-play-btn" class="btn-secondary ins-mini-btn">▶ Play</button>
-        <button id="ins-mark-here" class="btn-secondary ins-mini-btn"><svg class="icon"><use href="#i-pin"/></svg> Marcar en el punto actual</button>
+        <button id="ins-speed-btn" class="btn-secondary ins-mini-btn" title="Velocidad del preview">1×</button>
+        <button id="ins-mark-here" class="btn-secondary ins-mini-btn"><svg class="icon"><use href="#i-pin"/></svg> Marcar aquí</button>
       </div>
+      <p class="hint" style="margin: -4px 0 10px;">
+        Atajos: <strong>espacio</strong> play/pausa · <strong>←/→</strong> ±1s ·
+        <strong>shift+←/→</strong> ±5s · <strong>M</strong> marcar.
+        La velocidad es solo del preview, no afecta el video final.
+      </p>
       <div class="ins-add-row">
         <input type="text" id="ins-time-input" class="ins-time-input" placeholder="m:ss (ej. 1:23)">
         <button id="ins-add-time" class="btn-secondary ins-mini-btn">＋ Añadir</button>
@@ -59,9 +73,46 @@
       </div>
       <p id="ins-clip-name" class="file-name"></p>
 
+      <label class="control-check">
+        <input type="checkbox" id="ins-clip-vertical">
+        <span>Convertir el mini-clip a vertical (si viene 16:9)</span>
+      </label>
+      <p class="hint" style="margin:-8px 0 14px;">
+        Lo pasa por <em>Vertical</em> (fondo blur) antes de insertarlo, para que
+        coincida con el original sin hacerlo a mano.
+      </p>
+
+      <details class="rx-advanced" id="ins-vertical-adv">
+        <summary>Ajustes del fondo vertical</summary>
+        <label class="control">
+          <span>Blur del fondo <em id="ins-blur-val">50</em></span>
+          <input type="range" id="ins-blur_intensity" min="0" max="50" value="50">
+        </label>
+        <label class="control">
+          <span>Brillo del fondo <em id="ins-brightness-val">0.5</em></span>
+          <input type="range" id="ins-bg_brightness" min="0.3" max="1.0" step="0.05" value="0.5">
+        </label>
+        <label class="control">
+          <span>Zoom clip principal <em id="ins-scale-val">1.55</em></span>
+          <input type="range" id="ins-main_clip_scale" min="0.7" max="5" step="0.05" value="1.55">
+        </label>
+        <label class="control">
+          <span>Realce de imagen <em id="ins-enhance-val">85</em></span>
+          <input type="range" id="ins-enhance_intensity" min="0" max="100" value="85">
+        </label>
+        <label class="control">
+          <span>Posición del clip</span>
+          <select id="ins-main_clip_position">
+            <option value="center" selected>Centro</option>
+            <option value="top">Arriba</option>
+            <option value="bottom">Abajo</option>
+          </select>
+        </label>
+      </details>
+
       <p class="ins-hint-box">
-        El mini-clip debe tener la <strong>misma resolución</strong> que el original
-        (pásalo antes por <em>Vertical</em> si hace falta).
+        El mini-clip debe tener la <strong>misma resolución</strong> que el original.
+        Si no coincide, activá la conversión de arriba.
       </p>
 
       <!-- Modo -->

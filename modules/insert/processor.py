@@ -18,8 +18,9 @@ pixel format y parámetros de audio. Si una fuente no trae audio, se genera
 silencio para ese tramo.
 """
 import config
-from core import ffmpeg_runner, job_manager
+from core import ffmpeg_runner, file_utils, job_manager
 from modules.insert.schema import InsertParams
+from modules.vertical_convert import processor as vertical_processor
 
 # Audio común para que concat empalme sin glitches.
 _SR = 44100
@@ -309,10 +310,33 @@ def _progressive_total(orig_dur, clip_dur, plan, params) -> float | None:
     return total
 
 
+def _convert_clip_to_vertical(job_id: str, clip_path: str,
+                              params: InsertParams) -> str:
+    """Pasa el mini-clip por vertical_convert y devuelve el nuevo path.
+
+    Usa build_command() (puro) en vez del process() del módulo: ese marcaría el
+    job como "done" a mitad de camino y rompería el polling. Reporta en la
+    banda 0-30 para dejarle el resto a la inserción.
+    """
+    vert_path = file_utils.output_path_for(f"{job_id}_clipv")
+    command = vertical_processor.build_command(clip_path, vert_path, params.vertical)
+    duration = ffmpeg_runner.probe_duration(clip_path)
+    ffmpeg_runner.run(command, job_id, total_duration=duration,
+                      progress_range=(0, 30))
+    return vert_path
+
+
 def process(job_id: str, original_path: str, clip_path: str, output_path: str,
             params: InsertParams) -> None:
     """Ejecuta el job completo (bloqueante). Actualiza job_manager en cada paso."""
+    vert_path = None
     try:
+        # El mini-clip puede venir 16:9: lo convertimos antes de validar, así el
+        # usuario no tiene que pasarlo a mano por el módulo Vertical.
+        if params.clip_vertical and params.vertical:
+            vert_path = _convert_clip_to_vertical(job_id, clip_path, params)
+            clip_path = vert_path
+
         _validate_resolution(original_path, clip_path)
 
         fps = ffmpeg_runner.probe_fps(original_path) or 30.0
@@ -335,10 +359,15 @@ def process(job_id: str, original_path: str, clip_path: str, output_path: str,
         else:
             total = None
 
-        ffmpeg_runner.run(command, job_id, total_duration=total)
+        # Si hubo conversión previa, la inserción ocupa la banda restante.
+        lo = 30 if vert_path else 0
+        ffmpeg_runner.run(command, job_id, total_duration=total,
+                          progress_range=(lo, 100))
         job_manager.update_job(job_id, status="done", progress=100)
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
         job_manager.update_job(job_id, status="error", error=str(exc))
+    finally:
+        file_utils.cleanup_paths(vert_path)
 
 
 # ─────────────────── cutaway (fondo dinámico, para reel_express) ───────────────────

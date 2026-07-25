@@ -525,6 +525,21 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   gap: 8px;
   margin-bottom: 8px;
 }
+/* Fila de navegación fina del timeline (-5s / -1s / +1s / +5s) */
+.ins-nav-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ins-nav-btn {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+  padding: 7px 4px;
+  font-size: .8rem;
+  font-family: var(--font-mono);
+}
+
 .ins-mini-btn {
   width: auto;
   flex: 1;

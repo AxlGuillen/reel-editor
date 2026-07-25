@@ -12,6 +12,8 @@ Toma un video original y un mini-clip aparte. Dos modos:
 import json
 from dataclasses import dataclass, field
 
+from modules.vertical_convert.schema import VerticalConvertParams
+
 MAX_MARKERS = 50  # tope sano para no armar un filtergraph gigante
 MODES = ("full", "progressive")
 CLIP_AUDIO = ("clip", "mute")
@@ -36,6 +38,12 @@ class InsertParams:
     reveal_speed: float = 1.0           # 1.0 / 1.2 / 1.3 / 1.5 / 2.0
     # Audio de los recortes/reveal: "clip" (audio del mini-clip) o "mute".
     clip_audio: str = "clip"
+
+    # --- Mini-clip ---
+    # Convertirlo a 9:16 antes de insertarlo (para que matchee la resolución
+    # del original sin tener que pasarlo a mano por el módulo Vertical).
+    clip_vertical: bool = False
+    vertical: VerticalConvertParams | None = None
 
     @property
     def is_progressive(self) -> bool:
@@ -68,6 +76,12 @@ class InsertParams:
             raise ValueError(f"Modo inválido: {mode!r} (usar {MODES}).")
 
         params = cls(markers=markers, mode=mode)
+
+        # Mini-clip a vertical (opcional): reusa la validación de vertical_convert.
+        params.clip_vertical = _to_bool(form.get("clip_vertical"), False)
+        if params.clip_vertical:
+            params.vertical = VerticalConvertParams.from_form(form)
+
         if mode == "progressive":
             _fill_progressive(params, form, n=len(markers))
         return params
