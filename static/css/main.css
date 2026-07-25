@@ -525,6 +525,45 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   gap: 8px;
   margin-bottom: 8px;
 }
+/* Lista de mini-clips (cada uno con sus propias marcas) */
+.ins-clip-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.ins-clip-card {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+}
+.ins-clip-card:hover { background: var(--card-hover); }
+.ins-clip-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ins-clip-head { display: flex; align-items: center; gap: 8px; }
+.ins-clip-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.ins-clip-name {
+  flex: 1;
+  min-width: 0;
+  font-size: .88rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ins-clip-meta {
+  margin: 4px 0 6px;
+  font-size: .75rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.ins-clip-card .ins-marker-list { margin: 0; }
+.ins-clip-card .ins-marker-list li { font-size: .78rem; padding: 2px 4px 2px 9px; }
+.ins-clip-vert { margin: 8px 0 0; font-size: .8rem; }
+.ins-clip-vert input[type="checkbox"] { width: 15px; height: 15px; }
+
 /* Fila de navegación fina del timeline (-5s / -1s / +1s / +5s) */
 .ins-nav-row {
   display: flex;

@@ -10,13 +10,13 @@ const insVideoName = el("ins-video-name");
 
 const insClipZone = el("ins-clip-zone");
 const insClipInput = el("ins-clip-input");
-const insClipName = el("ins-clip-name");
+const insClipList = el("ins-clip-list");
 
 const insTrack = el("ins-track");
 const insPlayhead = el("ins-playhead");
 const insCurTime = el("ins-cur-time");
 const insDurTime = el("ins-dur-time");
-const insMarkerList = el("ins-marker-list");
+const insActiveHint = el("ins-active-hint");
 const insProcessBtn = el("ins-process-btn");
 
 const insProgressWrap = el("ins-progress-wrap");
@@ -28,18 +28,21 @@ const insErrorWrap = el("ins-error-wrap");
 const insErrorMsg = el("ins-error-msg");
 
 let insVideoFile = null;
-let insClipFile = null;
-let insMarkers = []; // segundos (float), ordenados
-let insClipDur = 0;  // duración del mini-clip (para el reparto de adelantos)
+// Mini-clips: { file, name, markers: number[], vertical: bool, dur: number }.
+// Cada uno lleva SUS marcas; el activo es al que se le agregan las nuevas.
+let insClips = [];
+let insActive = 0;
 let insMode = "full";
 
-// Sonda offscreen para leer la duración del mini-clip sin mostrarlo.
-const insClipProbe = document.createElement("video");
-insClipProbe.preload = "metadata";
-insClipProbe.addEventListener("loadedmetadata", () => {
-  insClipDur = insClipProbe.duration || 0;
-  renderSlices();
-});
+// Color por clip para los ticks del timeline (se cicla si hay más).
+const INS_COLORS = ["#6c5ce7", "#00b894", "#e17055", "#0984e3",
+                    "#e84393", "#fdcb6e", "#00cec9", "#d63031"];
+const insColor = (i) => INS_COLORS[i % INS_COLORS.length];
+
+// Duración del mini-clip activo (la usa el reparto de adelantos del progresivo).
+function insClipDurActive() {
+  return insClips[insActive] ? insClips[insActive].dur || 0 : 0;
+}
 
 // Refs del panel "caída progresiva".
 const insModeTabs = el("ins-mode-tabs");
@@ -78,22 +81,151 @@ insWireDropZone(insVideoZone, insVideoInput, (file) => {
   insVideoFile = file;
   insVideo.src = URL.createObjectURL(file);
   insVideoName.textContent = file.name;
-  insMarkers = [];
-  renderMarkers();
+  insClips.forEach((c) => (c.markers = []));   // el timeline cambió
+  renderClips();
   insEditor.classList.remove("hidden");
   insResetOutputs();
   updateInsReady();
   insEditor.scrollIntoView({ behavior: "smooth" });
 });
 
-insWireDropZone(insClipZone, insClipInput, (file) => {
-  insClipFile = file;
-  insClipName.textContent = file.name;
-  insClipDur = 0;
-  insClipProbe.src = URL.createObjectURL(file);
+// Acepta varios archivos de una (el input es multiple y el drop puede traer N).
+insClipZone.addEventListener("click", () => insClipInput.click());
+insClipInput.addEventListener("change", (e) => {
+  [...e.target.files].forEach(addClip);
+  e.target.value = "";
+});
+["dragenter", "dragover"].forEach((evt) =>
+  insClipZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    insClipZone.classList.add("dragover");
+  })
+);
+["dragleave", "drop"].forEach((evt) =>
+  insClipZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    insClipZone.classList.remove("dragover");
+  })
+);
+insClipZone.addEventListener("drop", (e) => {
+  [...e.dataTransfer.files].forEach(addClip);
+});
+
+function addClip(file) {
+  if (insMode === "progressive" && insClips.length >= 1) {
+    alert("La caída progresiva trabaja con un solo mini-clip.");
+    return;
+  }
+  const clip = { file, name: file.name, markers: [], vertical: false, dur: 0 };
+  insClips.push(clip);
+  insActive = insClips.length - 1;
+
+  // Sonda offscreen para leer la duración sin mostrar el video.
+  const probe = document.createElement("video");
+  probe.preload = "metadata";
+  probe.addEventListener("loadedmetadata", () => {
+    clip.dur = probe.duration || 0;
+    renderClips();
+    renderSlices();
+  });
+  probe.src = URL.createObjectURL(file);
+
+  renderClips();
   insResetOutputs();
   updateInsReady();
-});
+}
+
+function removeClip(idx) {
+  insClips.splice(idx, 1);
+  if (insActive >= insClips.length) insActive = Math.max(0, insClips.length - 1);
+  renderClips();
+  renderMarkers();
+  renderSlices();
+  updateInsReady();
+}
+
+// Tarjeta por clip: nombre, marcas propias, toggle de vertical y borrar.
+function renderClips() {
+  insClipList.innerHTML = "";
+  insClips.forEach((clip, i) => {
+    const card = document.createElement("div");
+    card.className = "ins-clip-card" + (i === insActive ? " active" : "");
+    card.style.borderLeftColor = insColor(i);
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("button, input")) return;
+      insActive = i;
+      renderClips();
+    });
+
+    const head = document.createElement("div");
+    head.className = "ins-clip-head";
+    const dot = document.createElement("span");
+    dot.className = "ins-clip-dot";
+    dot.style.background = insColor(i);
+    const name = document.createElement("span");
+    name.className = "ins-clip-name";
+    name.textContent = clip.name;
+    name.title = clip.name;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "ins-del";
+    del.textContent = "✕";
+    del.title = "Quitar este mini-clip";
+    del.addEventListener("click", () => removeClip(i));
+    head.append(dot, name, del);
+
+    const meta = document.createElement("p");
+    meta.className = "ins-clip-meta";
+    meta.textContent = clip.dur
+      ? `${clip.dur.toFixed(1)}s · ${clip.markers.length} marca(s)`
+      : `${clip.markers.length} marca(s)`;
+
+    // Marcas de este clip, cada una removible.
+    const chips = document.createElement("ul");
+    chips.className = "ins-marker-list";
+    clip.markers.forEach((t) => {
+      const li = document.createElement("li");
+      const lbl = document.createElement("span");
+      lbl.textContent = fmtTime(t);
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "ins-del";
+      x.textContent = "✕";
+      x.addEventListener("click", () => {
+        clip.markers = clip.markers.filter((m) => m !== t);
+        renderClips();
+        renderMarkers();
+        renderSlices();
+        updateInsReady();
+      });
+      li.append(lbl, x);
+      chips.appendChild(li);
+    });
+
+    const vert = document.createElement("label");
+    vert.className = "control-check ins-clip-vert";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = clip.vertical;
+    cb.addEventListener("change", () => {
+      clip.vertical = cb.checked;
+      el("ins-vertical-adv").classList.toggle(
+        "hidden", !insClips.some((c) => c.vertical));
+    });
+    const txt = document.createElement("span");
+    txt.textContent = "Convertir a vertical (viene 16:9)";
+    vert.append(cb, txt);
+
+    card.append(head, meta, chips, vert);
+    insClipList.appendChild(card);
+  });
+
+  const activo = insClips[insActive];
+  insActiveHint.innerHTML = activo
+    ? `Las marcas se agregan a <strong>${activo.name}</strong>.`
+    : "Subí un mini-clip para empezar a marcar.";
+  renderMarkers();
+}
 
 // --- Helpers de tiempo ---
 function fmtTime(s) {
@@ -210,54 +342,44 @@ el("ins-time-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") el("ins-add-time").click();
 });
 
+// La marca se agrega SIEMPRE al clip activo (el seleccionado en la lista).
 function addMarker(t) {
+  const clip = insClips[insActive];
+  if (!clip) return;
   if (insVideo.duration) t = Math.min(t, insVideo.duration);
   t = Math.max(0, Math.round(t * 100) / 100);
-  // Evita duplicados accidentales muy cercanos (<0.1s).
-  if (insMarkers.some((m) => Math.abs(m - t) < 0.1)) return;
-  insMarkers.push(t);
-  insMarkers.sort((a, b) => a - b);
-  renderMarkers();
+  // Evita duplicados accidentales muy cercanos (<0.1s) en el mismo clip.
+  if (clip.markers.some((m) => Math.abs(m - t) < 0.1)) return;
+  clip.markers.push(t);
+  clip.markers.sort((a, b) => a - b);
+  renderClips();
   renderSlices();
   updateInsReady();
 }
 
-function removeMarker(t) {
-  insMarkers = insMarkers.filter((m) => m !== t);
-  renderMarkers();
-  renderSlices();
-  updateInsReady();
-}
-
+// Ticks sobre el track, coloreados según el clip al que pertenecen.
 function renderMarkers() {
-  // Ticks sobre el track.
   insTrack.querySelectorAll(".ins-marker").forEach((n) => n.remove());
   const dur = insVideo.duration || 0;
-  insMarkers.forEach((t) => {
-    const tick = document.createElement("div");
-    tick.className = "ins-marker";
-    tick.style.left = dur ? `${(t / dur) * 100}%` : "0%";
-    insTrack.appendChild(tick);
+  insClips.forEach((clip, i) => {
+    clip.markers.forEach((t) => {
+      const tick = document.createElement("div");
+      tick.className = "ins-marker";
+      tick.style.left = dur ? `${(t / dur) * 100}%` : "0%";
+      tick.style.background = insColor(i);
+      tick.title = `${clip.name} @ ${fmtTime(t)}`;
+      if (i !== insActive) tick.style.opacity = ".55";
+      insTrack.appendChild(tick);
+    });
   });
+}
 
-  // Lista de chips.
-  insMarkerList.innerHTML = "";
-  insMarkers.forEach((t) => {
-    const li = document.createElement("li");
-    const label = document.createElement("span");
-    label.textContent = fmtTime(t);
-    const del = document.createElement("button");
-    del.className = "ins-del";
-    del.textContent = "✕";
-    del.title = "Quitar marca";
-    del.addEventListener("click", () => removeMarker(t));
-    li.append(label, del);
-    insMarkerList.appendChild(li);
-  });
+function insTotalMarkers() {
+  return insClips.reduce((n, c) => n + c.markers.length, 0);
 }
 
 function updateInsReady() {
-  insProcessBtn.disabled = !(insVideoFile && insClipFile && insMarkers.length > 0);
+  insProcessBtn.disabled = !(insVideoFile && insClips.length && insTotalMarkers() > 0);
 }
 
 // --- Modo (clip completo / caída progresiva) ---
@@ -268,17 +390,22 @@ insModeTabs.querySelectorAll(".rx-tab").forEach((btn) => {
       b.classList.toggle("active", b === btn));
     insProg.classList.toggle("hidden", insMode !== "progressive");
     insModeHint.innerHTML = insMode === "progressive"
-      ? "Va metiendo <strong>pedazos que avanzan</strong> del mini-clip en cada marca; al final, la caída completa."
-      : "Inserta el mini-clip <strong>completo</strong> en cada marca (con su audio).";
+      ? "Va metiendo <strong>pedazos que avanzan</strong> del mini-clip en cada marca; al final, la caída completa. Usa <strong>un solo</strong> mini-clip."
+      : "Inserta cada mini-clip <strong>completo</strong> en sus marcas (con su audio).";
+    // El progresivo trabaja con un solo clip: avisamos antes de que falle el backend.
+    if (insMode === "progressive" && insClips.length > 1) {
+      alert("La caída progresiva usa un solo mini-clip. Dejé el primero; " +
+            "quitá o volvé a agregar los demás en modo 'Clip completo'.");
+      insClips = insClips.slice(0, 1);
+      insActive = 0;
+      renderClips();
+      updateInsReady();
+    }
     renderSlices();
   });
 });
 
-// --- Mini-clip a vertical: toggle + labels de los sliders ---
-const insClipVertical = el("ins-clip-vertical");
-insClipVertical.addEventListener("change", () => {
-  el("ins-vertical-adv").classList.toggle("hidden", !insClipVertical.checked);
-});
+// --- Ajustes del fondo vertical: visibles cuando algún clip pide conversión ---
 el("ins-vertical-adv").classList.add("hidden");
 Object.entries({
   "ins-blur_intensity": "ins-blur-val",
@@ -309,15 +436,16 @@ insManualSlices.addEventListener("change", () => {
 // Reparto de los adelantos: muestra el auto y, si el usuario ajusta, inputs editables.
 function renderSlices() {
   const hint = el("ins-slices-hint");
-  const n = insMarkers.length;
-  if (insMode !== "progressive" || !n || !insClipDur) {
+  const n = insTotalMarkers();
+  const clipDur = insClipDurActive();
+  if (insMode !== "progressive" || !n || !clipDur) {
     insSlices.innerHTML = "";
     hint.textContent = "";
     return;
   }
-  const auto = insClipDur / n;
+  const auto = clipDur / n;
   hint.textContent =
-    `Auto: ${insClipDur.toFixed(1)}s ÷ ${n} = ${auto.toFixed(2)}s por adelanto.`;
+    `Auto: ${clipDur.toFixed(1)}s ÷ ${n} = ${auto.toFixed(2)}s por adelanto.`;
 
   if (!insManualSlices.checked) {
     insSlices.innerHTML = "";
@@ -345,17 +473,20 @@ function renderSlices() {
 
 // --- Process ---
 insProcessBtn.addEventListener("click", () => {
-  if (!insVideoFile || !insClipFile || insMarkers.length === 0) return;
+  if (!insVideoFile || !insClips.length || insTotalMarkers() === 0) return;
   insVideo.pause();
 
   const form = new FormData();
   form.append("video", insVideoFile);
-  form.append("clip", insClipFile);
-  form.append("markers", JSON.stringify(insMarkers));
   form.append("mode", insMode);
 
-  form.append("clip_vertical", insClipVertical.checked ? "1" : "0");
-  if (insClipVertical.checked) {
+  // Un archivo por clip (clip_0, clip_1, …) + sus specs en JSON.
+  insClips.forEach((clip, i) => form.append(`clip_${i}`, clip.file));
+  form.append("clips", JSON.stringify(
+    insClips.map((c) => ({ markers: c.markers, vertical: c.vertical }))
+  ));
+
+  if (insClips.some((c) => c.vertical)) {
     form.append("blur_intensity", el("ins-blur_intensity").value);
     form.append("bg_brightness", el("ins-bg_brightness").value);
     form.append("main_clip_scale", el("ins-main_clip_scale").value);
@@ -374,7 +505,7 @@ insProcessBtn.addEventListener("click", () => {
     if (insManualSlices.checked) {
       const durs = [...insSlices.querySelectorAll("input")]
         .map((i) => parseFloat(i.value));
-      if (durs.length === insMarkers.length && durs.every((d) => d > 0)) {
+      if (durs.length === insTotalMarkers() && durs.every((d) => d > 0)) {
         form.append("slice_durations", JSON.stringify(durs));
       }
     }
@@ -423,15 +554,13 @@ el("ins-reset-btn").addEventListener("click", () => {
   insSetSpeed(0);
   el("ins-play-btn").textContent = "▶ Play";
   insVideoFile = null;
-  insClipFile = null;
-  insMarkers = [];
+  insClips = [];
+  insActive = 0;
   insVideoInput.value = "";
   insClipInput.value = "";
   insVideo.src = "";
   insVideoName.textContent = "";
-  insClipName.textContent = "";
-  insClipDur = 0;
-  renderMarkers();
+  renderClips();
   renderSlices();
   insEditor.classList.add("hidden");
   insResetOutputs();

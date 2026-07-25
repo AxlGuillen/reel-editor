@@ -65,56 +65,85 @@ def _validate_resolution(original_path: str, clip_path: str) -> None:
 
 # ─────────────────────────── modo "full" (clásico) ───────────────────────────
 
-def _build_full(original_path: str, clip_path: str, output_path: str,
-                params: InsertParams, *, fps_s: str, orig_dur: float | None,
-                clip_dur: float | None, orig_has_audio: bool,
-                clip_has_audio: bool) -> list[str]:
-    """Inserta el mini-clip completo en cada marcador (comportamiento clásico)."""
-    markers = list(params.markers)
-    if orig_dur is not None:
-        markers = [min(m, orig_dur) for m in markers]
-    n = len(markers)
+def _clip_events(params: InsertParams, orig_dur: float | None) -> list[tuple[float, int]]:
+    """(instante, índice de clip) de cada inserción, en orden temporal.
 
+    Cada mini-clip aporta sus propios marcadores; el orden global es el que
+    manda para trocear el original.
+    """
+    events: list[tuple[float, int]] = []
+    for ci, spec in enumerate(params.clips):
+        for m in spec.markers:
+            t = min(m, orig_dur) if orig_dur is not None else m
+            events.append((t, ci))
+    events.sort(key=lambda e: (e[0], e[1]))
+    return events
+
+
+def _build_full(original_path: str, clip_paths: list[str], output_path: str,
+                params: InsertParams, *, fps_s: str, orig_dur: float | None,
+                clip_durs: list[float | None], orig_has_audio: bool,
+                clip_has_audios: list[bool]) -> list[str]:
+    """Inserta cada mini-clip completo en sus marcadores (corte seco)."""
+    events = _clip_events(params, orig_dur)
+    n = len(events)
+
+    # Tramos del original: [0,t1], [t1,t2], …, [tn, EOF].
     segments: list[tuple[float, float | None]] = []
     prev = 0.0
-    for t in markers:
+    for t, _ in events:
         segments.append((prev, t))
         prev = t
     segments.append((prev, None))
 
-    inputs: list[str] = ["-i", original_path, "-i", clip_path]
-    next_idx = 2
-    sil_o = sil_c = None
+    # Inputs: 0 = original, 1..N = mini-clips, después los silencios que hagan falta.
+    inputs: list[str] = ["-i", original_path]
+    for path in clip_paths:
+        inputs += ["-i", path]
+    next_idx = 1 + len(clip_paths)
+
+    sil_o = None
     if not orig_has_audio:
         inputs += ["-f", "lavfi", "-i",
                    f"anullsrc=channel_layout=stereo:sample_rate={_SR}"]
         sil_o = next_idx
         next_idx += 1
-    if not clip_has_audio:
-        inputs += ["-f", "lavfi", "-i",
-                   f"anullsrc=channel_layout=stereo:sample_rate={_SR}"]
-        sil_c = next_idx
-        next_idx += 1
+    sil_c: dict[int, int] = {}   # índice de clip → input de silencio
+    for ci, has_audio in enumerate(clip_has_audios):
+        if not has_audio:
+            inputs += ["-f", "lavfi", "-i",
+                       f"anullsrc=channel_layout=stereo:sample_rate={_SR}"]
+            sil_c[ci] = next_idx
+            next_idx += 1
 
     filters: list[str] = []
-    filters.append(
-        f"[1:v]fps={fps_s},setsar=1,format=yuv420p,split={n}"
-        + "".join(f"[cv{i}]" for i in range(n))
-    )
-    if clip_has_audio:
-        filters.append(f"[1:a]{_AFMT},asplit={n}" + "".join(f"[ca{i}]" for i in range(n)))
-    else:
-        dur = clip_dur if clip_dur is not None else 0
+
+    # Cada mini-clip se normaliza una vez y se duplica tantas veces como marcas tenga.
+    usos: dict[int, int] = {}
+    for _, ci in events:
+        usos[ci] = usos.get(ci, 0) + 1
+    for ci, veces in sorted(usos.items()):
+        vlabels = "".join(f"[c{ci}v{j}]" for j in range(veces))
         filters.append(
-            f"[{sil_c}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,{_AFMT},"
-            f"asplit={n}" + "".join(f"[ca{i}]" for i in range(n))
+            f"[{ci + 1}:v]fps={fps_s},setsar=1,format=yuv420p,split={veces}{vlabels}"
         )
+        alabels = "".join(f"[c{ci}a{j}]" for j in range(veces))
+        if clip_has_audios[ci]:
+            filters.append(f"[{ci + 1}:a]{_AFMT},asplit={veces}{alabels}")
+        else:
+            dur = clip_durs[ci] if clip_durs[ci] is not None else 0
+            filters.append(
+                f"[{sil_c[ci]}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,{_AFMT},"
+                f"asplit={veces}{alabels}"
+            )
 
     order: list[str] = []
+    emitidos: dict[int, int] = {}   # copias ya consumidas de cada clip
     for k, (a, b) in enumerate(segments):
         is_last = b is None
         seg_len = (orig_dur - a) if (is_last and orig_dur is not None) else (
             (b - a) if b is not None else None)
+        # Saltar tramos vacíos (marca en 0, duplicadas, o final sin contenido).
         if seg_len is not None and seg_len <= _EPS:
             pass
         else:
@@ -135,8 +164,12 @@ def _build_full(original_path: str, clip_path: str, output_path: str,
                 )
             order += [f"[ov{k}]", f"[oa{k}]"]
 
+        # Tras cada tramo intermedio va la inserción que corresponde a esa marca.
         if k < n:
-            order += [f"[cv{k}]", f"[ca{k}]"]
+            ci = events[k][1]
+            j = emitidos.get(ci, 0)
+            emitidos[ci] = j + 1
+            order += [f"[c{ci}v{j}]", f"[c{ci}a{j}]"]
 
     total = len(order) // 2
     filters.append("".join(order) + f"concat=n={total}:v=1:a=1[v][a]")
@@ -280,24 +313,27 @@ def _build_progressive(original_path: str, clip_path: str, output_path: str,
     ]
 
 
-def build_command(original_path: str, clip_path: str, output_path: str,
+def build_command(original_path: str, clip_paths: list[str], output_path: str,
                   params: InsertParams, *, fps: float,
-                  orig_dur: float | None, clip_dur: float | None,
-                  orig_has_audio: bool, clip_has_audio: bool) -> list[str]:
-    """Construye el comando FFmpeg según el modo."""
+                  orig_dur: float | None, clip_durs: list[float | None],
+                  orig_has_audio: bool, clip_has_audios: list[bool]) -> list[str]:
+    """Construye el comando FFmpeg según el modo.
+
+    `clip_paths` lleva un path por mini-clip (el modo progresivo usa el primero).
+    """
     fps_s = f"{fps:.5f}"
     if params.is_progressive:
-        if clip_dur is None:
+        if clip_durs[0] is None:
             raise ValueError("No pude leer la duración del mini-clip (¿ffprobe?).")
         return _build_progressive(
-            original_path, clip_path, output_path, params, fps_s=fps_s,
-            orig_dur=orig_dur, clip_dur=clip_dur,
-            orig_has_audio=orig_has_audio, clip_has_audio=clip_has_audio,
+            original_path, clip_paths[0], output_path, params, fps_s=fps_s,
+            orig_dur=orig_dur, clip_dur=clip_durs[0],
+            orig_has_audio=orig_has_audio, clip_has_audio=clip_has_audios[0],
         )
     return _build_full(
-        original_path, clip_path, output_path, params, fps_s=fps_s,
-        orig_dur=orig_dur, clip_dur=clip_dur,
-        orig_has_audio=orig_has_audio, clip_has_audio=clip_has_audio,
+        original_path, clip_paths, output_path, params, fps_s=fps_s,
+        orig_dur=orig_dur, clip_durs=clip_durs,
+        orig_has_audio=orig_has_audio, clip_has_audios=clip_has_audios,
     )
 
 
@@ -310,64 +346,82 @@ def _progressive_total(orig_dur, clip_dur, plan, params) -> float | None:
     return total
 
 
-def _convert_clip_to_vertical(job_id: str, clip_path: str,
-                              params: InsertParams) -> str:
-    """Pasa el mini-clip por vertical_convert y devuelve el nuevo path.
+def _convert_clips_to_vertical(job_id: str, clip_paths: list[str],
+                               params: InsertParams,
+                               hi: int) -> tuple[list[str], list[str]]:
+    """Pasa por vertical_convert los mini-clips marcados. Devuelve (paths, temporales).
 
     Usa build_command() (puro) en vez del process() del módulo: ese marcaría el
-    job como "done" a mitad de camino y rompería el polling. Reporta en la
-    banda 0-30 para dejarle el resto a la inserción.
+    job como "done" a mitad de camino y rompería el polling. El progreso se
+    reparte en la banda 0..hi entre los clips a convertir.
     """
-    vert_path = file_utils.output_path_for(f"{job_id}_clipv")
-    command = vertical_processor.build_command(clip_path, vert_path, params.vertical)
-    duration = ffmpeg_runner.probe_duration(clip_path)
-    ffmpeg_runner.run(command, job_id, total_duration=duration,
-                      progress_range=(0, 30))
-    return vert_path
+    a_convertir = [i for i, spec in enumerate(params.clips) if spec.vertical]
+    if not a_convertir or not params.vertical:
+        return clip_paths, []
+
+    resultado = list(clip_paths)
+    temporales: list[str] = []
+    paso = hi / len(a_convertir)
+    for orden, ci in enumerate(a_convertir):
+        vert_path = file_utils.output_path_for(f"{job_id}_clipv{ci}")
+        command = vertical_processor.build_command(
+            clip_paths[ci], vert_path, params.vertical)
+        ffmpeg_runner.run(
+            command, job_id,
+            total_duration=ffmpeg_runner.probe_duration(clip_paths[ci]),
+            progress_range=(int(orden * paso), int((orden + 1) * paso)),
+        )
+        resultado[ci] = vert_path
+        temporales.append(vert_path)
+    return resultado, temporales
 
 
-def process(job_id: str, original_path: str, clip_path: str, output_path: str,
-            params: InsertParams) -> None:
+def process(job_id: str, original_path: str, clip_paths: list[str],
+            output_path: str, params: InsertParams) -> None:
     """Ejecuta el job completo (bloqueante). Actualiza job_manager en cada paso."""
-    vert_path = None
+    temporales: list[str] = []
     try:
-        # El mini-clip puede venir 16:9: lo convertimos antes de validar, así el
-        # usuario no tiene que pasarlo a mano por el módulo Vertical.
-        if params.clip_vertical and params.vertical:
-            vert_path = _convert_clip_to_vertical(job_id, clip_path, params)
-            clip_path = vert_path
+        # Los mini-clips pueden venir 16:9: se convierten antes de validar, así
+        # el usuario no tiene que pasarlos a mano por el módulo Vertical.
+        lo = 30 if params.needs_vertical else 0
+        clip_paths, temporales = _convert_clips_to_vertical(
+            job_id, clip_paths, params, lo)
 
-        _validate_resolution(original_path, clip_path)
+        for path in clip_paths:
+            _validate_resolution(original_path, path)
 
         fps = ffmpeg_runner.probe_fps(original_path) or 30.0
         orig_dur = ffmpeg_runner.probe_duration(original_path)
-        clip_dur = ffmpeg_runner.probe_duration(clip_path)
+        clip_durs = [ffmpeg_runner.probe_duration(p) for p in clip_paths]
         orig_has_audio = ffmpeg_runner.has_audio_stream(original_path)
-        clip_has_audio = ffmpeg_runner.has_audio_stream(clip_path)
+        clip_has_audios = [ffmpeg_runner.has_audio_stream(p) for p in clip_paths]
 
         command = build_command(
-            original_path, clip_path, output_path, params,
-            fps=fps, orig_dur=orig_dur, clip_dur=clip_dur,
-            orig_has_audio=orig_has_audio, clip_has_audio=clip_has_audio,
+            original_path, clip_paths, output_path, params,
+            fps=fps, orig_dur=orig_dur, clip_durs=clip_durs,
+            orig_has_audio=orig_has_audio, clip_has_audios=clip_has_audios,
         )
 
-        if params.is_progressive and clip_dur is not None:
-            plan = _slice_plan(clip_dur, len(params.markers), params.slice_durations)
-            total = _progressive_total(orig_dur, clip_dur, plan, params)
-        elif orig_dur is not None and clip_dur is not None:
-            total = orig_dur + len(params.markers) * clip_dur
+        if params.is_progressive and clip_durs[0] is not None:
+            plan = _slice_plan(clip_durs[0], params.total_markers,
+                               params.slice_durations)
+            total = _progressive_total(orig_dur, clip_durs[0], plan, params)
+        elif orig_dur is not None and all(d is not None for d in clip_durs):
+            # Cada clip suma su duración por cada marca que tenga.
+            total = orig_dur + sum(
+                clip_durs[ci] * len(spec.markers)
+                for ci, spec in enumerate(params.clips)
+            )
         else:
             total = None
 
-        # Si hubo conversión previa, la inserción ocupa la banda restante.
-        lo = 30 if vert_path else 0
         ffmpeg_runner.run(command, job_id, total_duration=total,
                           progress_range=(lo, 100))
         job_manager.update_job(job_id, status="done", progress=100)
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:
-        file_utils.cleanup_paths(vert_path)
+        file_utils.cleanup_paths(*temporales)
 
 
 # ─────────────────── cutaway (fondo dinámico, para reel_express) ───────────────────
