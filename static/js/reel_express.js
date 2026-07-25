@@ -40,16 +40,8 @@ const rxSubsEditor = el("rx-subs-editor");
 const rxSegmentsBox = el("rx-segments");
 const rxFinishBtn = el("rx-finish-btn");
 
-// Fondo dinámico (caída)
-const rxDynamicBg = el("rx-dynamic-bg");
-const rxDynamicControls = el("rx-dynamic-controls");
-const rxDynZone = el("rx-dyn-zone");
-const rxDynInput = el("rx-dyn-input");
-const rxDynName = el("rx-dyn-name");
-
 let rxClipFile = null;
 let rxAudioFile = null;
-let rxDynFile = null;
 let rxSource = "url";                  // "url" | "file"
 let rxRafId = null;
 let rxFontFamily = "sans-serif";
@@ -131,16 +123,6 @@ wireDropZone(rxAudioZone, rxAudioInput, (file) => {
   setZoneLoaded(rxAudioZone, file.name);
   rxResetOutputs();
   updateReady();
-});
-
-// --- Fondo dinámico: toggle + carga del clip de la caída ---
-rxDynamicBg.addEventListener("change", () => {
-  rxDynamicControls.classList.toggle("hidden", !rxDynamicBg.checked);
-});
-wireDropZone(rxDynZone, rxDynInput, (file) => {
-  rxDynFile = file;
-  setZoneLoaded(rxDynZone, file.name);
-  rxResetOutputs();
 });
 
 // --- Toggle de fuente de audio ---
@@ -480,19 +462,6 @@ rxProcessBtn.addEventListener("click", () => {
     form.append("words_per_line", el("rx-sub-words").value);
     form.append("highlight_color", el("rx-sub-highlight-color").value);
   }
-  // Fondo dinámico: manda el clip y los marcadores como fracciones (0–1).
-  const dynOn = rxDynamicBg.checked && rxDynFile;
-  form.append("dynamic_bg", dynOn ? "1" : "0");
-  if (dynOn) {
-    form.append("dynamic_clip", rxDynFile);
-    const fracs = el("rx-dyn-markers").value
-      .split(",")
-      .map((s) => parseFloat(s.trim()))
-      .filter((v) => !isNaN(v))
-      .map((pct) => Math.min(1, Math.max(0, pct / 100)));
-    form.append("dynamic_markers", JSON.stringify(fracs));
-  }
-
   rxResetOutputs();
   rxSubsEditor.classList.add("hidden");
   rxProcessBtn.disabled = true;
@@ -627,19 +596,12 @@ function rxResetAll() {
   rxCtx.clearRect(0, 0, RX_W, RX_H);
   rxClipFile = null;
   rxAudioFile = null;
-  rxDynFile = null;
   rxClipInput.value = "";
   rxAudioInput.value = "";
-  rxDynInput.value = "";
   rxVideo.src = "";
   rxClipName.textContent = "";
   rxAudioName.textContent = "";
-  rxDynName.textContent = "";
   clearZoneLoaded(rxAudioZone);
-  clearZoneLoaded(rxDynZone);
-  rxDynamicBg.checked = false;
-  rxDynamicControls.classList.add("hidden");
-  el("rx-dyn-markers").value = "";
   rxUrl.value = "";
   el("rx-output-name").value = "";
   rxSubsEditor.classList.add("hidden");
