@@ -48,6 +48,7 @@ function insClipDurActive() {
 const insModeTabs = el("ins-mode-tabs");
 const insModeHint = el("ins-mode-hint");
 const insProg = el("ins-prog");
+const insOvl = el("ins-ovl");
 const insRevealEnabled = el("ins-reveal-enabled");
 const insRevealOpts = el("ins-reveal-opts");
 const insManualSlices = el("ins-manual-slices");
@@ -382,16 +383,22 @@ function updateInsReady() {
   insProcessBtn.disabled = !(insVideoFile && insClips.length && insTotalMarkers() > 0);
 }
 
-// --- Modo (clip completo / caída progresiva) ---
+// --- Modo (clip completo / superpuesto / caída progresiva) ---
+const INS_MODE_HINTS = {
+  full: "Inserta cada mini-clip <strong>completo</strong> en sus marcas (con su audio).",
+  overlay: "El original se <strong>congela</strong> de fondo y el mini-clip va " +
+           "<strong>superpuesto</strong> encima, tipo recuadro.",
+  progressive: "Va metiendo <strong>pedazos que avanzan</strong> del mini-clip en " +
+               "cada marca; al final, la caída completa. Usa <strong>un solo</strong> mini-clip.",
+};
 insModeTabs.querySelectorAll(".rx-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     insMode = btn.dataset.mode;
     insModeTabs.querySelectorAll(".rx-tab").forEach((b) =>
       b.classList.toggle("active", b === btn));
     insProg.classList.toggle("hidden", insMode !== "progressive");
-    insModeHint.innerHTML = insMode === "progressive"
-      ? "Va metiendo <strong>pedazos que avanzan</strong> del mini-clip en cada marca; al final, la caída completa. Usa <strong>un solo</strong> mini-clip."
-      : "Inserta cada mini-clip <strong>completo</strong> en sus marcas (con su audio).";
+    insOvl.classList.toggle("hidden", insMode !== "overlay");
+    insModeHint.innerHTML = INS_MODE_HINTS[insMode] || INS_MODE_HINTS.full;
     // El progresivo trabaja con un solo clip: avisamos antes de que falle el backend.
     if (insMode === "progressive" && insClips.length > 1) {
       alert("La caída progresiva usa un solo mini-clip. Dejé el primero; " +
@@ -415,6 +422,10 @@ Object.entries({
 }).forEach(([inputId, labelId]) => {
   const input = el(inputId);
   input.addEventListener("input", () => (el(labelId).textContent = input.value));
+});
+
+el("ins-ovl-size").addEventListener("input", () => {
+  el("ins-ovl-size-val").textContent = el("ins-ovl-size").value;
 });
 
 insRevealEnabled.addEventListener("change", () => {
@@ -492,6 +503,11 @@ insProcessBtn.addEventListener("click", () => {
     form.append("main_clip_scale", el("ins-main_clip_scale").value);
     form.append("enhance_intensity", el("ins-enhance_intensity").value);
     form.append("main_clip_position", el("ins-main_clip_position").value);
+  }
+
+  if (insMode === "overlay") {
+    form.append("overlay_position", el("ins-ovl-position").value);
+    form.append("overlay_size", el("ins-ovl-size").value);
   }
 
   if (insMode === "progressive") {

@@ -18,7 +18,12 @@ from modules.vertical_convert.schema import VerticalConvertParams
 
 MAX_MARKERS = 50  # tope sano para no armar un filtergraph gigante
 MAX_CLIPS = 10    # tope de mini-clips distintos
-MODES = ("full", "progressive")
+MODES = ("full", "progressive", "overlay")
+OVERLAY_POSITIONS = ("center", "top", "bottom")
+# Tamaño del recuadro superpuesto, como % del ancho del video.
+OVERLAY_SIZE_DEFAULT, OVERLAY_SIZE_MIN, OVERLAY_SIZE_MAX = 70, 20, 100
+# Margen del borde (fracción del alto) cuando va arriba o abajo.
+OVERLAY_MARGIN = 0.10
 CLIP_AUDIO = ("clip", "mute")
 # Velocidades permitidas para el reveal (atempo soporta hasta 2.0 sin encadenar).
 ALLOWED_SPEEDS = (1.0, 1.2, 1.3, 1.5, 2.0)
@@ -51,12 +56,21 @@ class InsertParams:
     # Audio de los recortes/reveal: "clip" (audio del mini-clip) o "mute".
     clip_audio: str = "clip"
 
+    # --- Solo modo "overlay" ---
+    # El original se congela y el mini-clip va superpuesto encima (PiP).
+    overlay_position: str = "center"     # center / top / bottom
+    overlay_size: int = OVERLAY_SIZE_DEFAULT   # % del ancho del video
+
     # Ajustes de la conversión a vertical (compartidos por los clips que la usen).
     vertical: VerticalConvertParams | None = None
 
     @property
     def is_progressive(self) -> bool:
         return self.mode == "progressive"
+
+    @property
+    def is_overlay(self) -> bool:
+        return self.mode == "overlay"
 
     @property
     def markers(self) -> list[float]:
@@ -109,7 +123,32 @@ class InsertParams:
 
         if mode == "progressive":
             _fill_progressive(params, form, n=total)
+        elif mode == "overlay":
+            _fill_overlay(params, form)
         return params
+
+
+def _fill_overlay(params: "InsertParams", form) -> None:
+    """Completa/valida los campos del modo superpuesto (PiP)."""
+    pos = (form.get("overlay_position") or "center").strip().lower()
+    if pos not in OVERLAY_POSITIONS:
+        raise ValueError(
+            f"Posición inválida: {pos!r} (usar {OVERLAY_POSITIONS})."
+        )
+    params.overlay_position = pos
+
+    raw = form.get("overlay_size")
+    if raw not in (None, ""):
+        try:
+            size = int(float(raw))
+        except (ValueError, TypeError):
+            raise ValueError(f"Tamaño del recuadro inválido: {raw!r}")
+        if not (OVERLAY_SIZE_MIN <= size <= OVERLAY_SIZE_MAX):
+            raise ValueError(
+                f"El tamaño del recuadro debe estar entre {OVERLAY_SIZE_MIN} "
+                f"y {OVERLAY_SIZE_MAX}%."
+            )
+        params.overlay_size = size
 
 
 def _parse_clips(form) -> list[ClipSpec]:

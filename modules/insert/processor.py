@@ -19,7 +19,7 @@ silencio para ese tramo.
 """
 import config
 from core import ffmpeg_runner, file_utils, job_manager
-from modules.insert.schema import InsertParams
+from modules.insert.schema import InsertParams, OVERLAY_MARGIN
 from modules.vertical_convert import processor as vertical_processor
 
 # Audio común para que concat empalme sin glitches.
@@ -184,6 +184,126 @@ def _build_full(original_path: str, clip_paths: list[str], output_path: str,
     ]
 
 
+# ─────────────────────── modo "overlay" (superpuesto / PiP) ───────────────────────
+
+def _overlay_xy(position: str) -> tuple[str, str]:
+    """Expresiones x:y del overlay (W,H = fondo; w,h = recuadro)."""
+    x = "(W-w)/2"
+    if position == "top":
+        return x, f"H*{OVERLAY_MARGIN}"
+    if position == "bottom":
+        return x, f"H-h-H*{OVERLAY_MARGIN}"
+    return x, "(H-h)/2"
+
+
+def _build_overlay(original_path: str, clip_paths: list[str], output_path: str,
+                   params: InsertParams, *, fps_s: str, orig_dur: float | None,
+                   clip_durs: list[float | None], orig_has_audio: bool,
+                   clip_has_audios: list[bool]) -> list[str]:
+    """Congela el original en cada marca y superpone el mini-clip encima (PiP).
+
+    A diferencia de "full", el original no se corta: se queda como fondo fijo
+    (frame congelado) mientras el mini-clip corre en un recuadro. El audio
+    durante ese tramo es el del mini-clip (el fondo está detenido).
+    """
+    events = _clip_events(params, orig_dur)
+    n = len(events)
+    ox, oy = _overlay_xy(params.overlay_position)
+    escala = params.overlay_size / 100
+
+    # Tramos del original entre marcas (el fondo congelado va aparte).
+    segments: list[tuple[float, float | None]] = []
+    prev = 0.0
+    for t, _ in events:
+        segments.append((prev, t))
+        prev = t
+    segments.append((prev, None))
+
+    inputs: list[str] = ["-i", original_path]
+    for path in clip_paths:
+        inputs += ["-i", path]
+    next_idx = 1 + len(clip_paths)
+
+    sil_o = None
+    if not orig_has_audio:
+        inputs += ["-f", "lavfi", "-i",
+                   f"anullsrc=channel_layout=stereo:sample_rate={_SR}"]
+        sil_o = next_idx
+        next_idx += 1
+    sil_c: dict[int, int] = {}
+    for ci, has_audio in enumerate(clip_has_audios):
+        if not has_audio:
+            inputs += ["-f", "lavfi", "-i",
+                       f"anullsrc=channel_layout=stereo:sample_rate={_SR}"]
+            sil_c[ci] = next_idx
+            next_idx += 1
+
+    filters: list[str] = []
+    order: list[str] = []
+
+    for k, (a, b) in enumerate(segments):
+        is_last = b is None
+        seg_len = (orig_dur - a) if (is_last and orig_dur is not None) else (
+            (b - a) if b is not None else None)
+
+        # Tramo normal del original (se salta si quedó vacío).
+        if not (seg_len is not None and seg_len <= _EPS):
+            end = "" if is_last else f":end={b:.3f}"
+            filters.append(
+                f"[0:v]trim=start={a:.3f}{end},setpts=PTS-STARTPTS,"
+                f"fps={fps_s},setsar=1,format=yuv420p[ov{k}]"
+            )
+            if orig_has_audio:
+                filters.append(
+                    f"[0:a]atrim=start={a:.3f}{end},asetpts=PTS-STARTPTS,{_AFMT}[oa{k}]"
+                )
+            else:
+                trim = f"0:{seg_len:.3f}" if seg_len is not None else "0"
+                filters.append(
+                    f"[{sil_o}:a]atrim={trim},asetpts=PTS-STARTPTS,{_AFMT}[oa{k}]"
+                )
+            order += [f"[ov{k}]", f"[oa{k}]"]
+
+        # En la marca: fondo congelado + mini-clip superpuesto.
+        if k < n:
+            t, ci = events[k]
+            dur = clip_durs[ci] or 0
+            # Un solo frame del original, clonado por toda la duración del clip.
+            filters.append(
+                f"[0:v]trim=start={t:.3f}:duration=0.05,setpts=PTS-STARTPTS,"
+                f"tpad=stop_mode=clone:stop_duration={dur:.3f},"
+                f"fps={fps_s},setsar=1,format=yuv420p,trim=duration={dur:.3f},"
+                f"setpts=PTS-STARTPTS[bg{k}]"
+            )
+            filters.append(
+                f"[{ci + 1}:v]scale=iw*{escala:.4f}:-2,fps={fps_s},setsar=1,"
+                f"format=yuv420p,setpts=PTS-STARTPTS[pip{k}]"
+            )
+            filters.append(
+                f"[bg{k}][pip{k}]overlay={ox}:{oy}:shortest=1,"
+                f"format=yuv420p[pv{k}]"
+            )
+            if clip_has_audios[ci]:
+                filters.append(f"[{ci + 1}:a]{_AFMT}[pa{k}]")
+            else:
+                filters.append(
+                    f"[{sil_c[ci]}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,{_AFMT}[pa{k}]"
+                )
+            order += [f"[pv{k}]", f"[pa{k}]"]
+
+    total = len(order) // 2
+    filters.append("".join(order) + f"concat=n={total}:v=1:a=1[v][a]")
+
+    return [
+        config.FFMPEG_PATH, "-y", *inputs,
+        "-filter_complex", ";".join(filters),
+        "-map", "[v]", "-map", "[a]",
+        *ffmpeg_runner.video_encode_flags(),
+        "-c:a", "aac", "-b:a", "192k",
+        output_path,
+    ]
+
+
 # ─────────────────────── modo "progressive" (caída) ───────────────────────
 
 def _build_progressive(original_path: str, clip_path: str, output_path: str,
@@ -329,6 +449,14 @@ def build_command(original_path: str, clip_paths: list[str], output_path: str,
             original_path, clip_paths[0], output_path, params, fps_s=fps_s,
             orig_dur=orig_dur, clip_dur=clip_durs[0],
             orig_has_audio=orig_has_audio, clip_has_audio=clip_has_audios[0],
+        )
+    if params.is_overlay:
+        if any(d is None for d in clip_durs):
+            raise ValueError("No pude leer la duración de los mini-clips (¿ffprobe?).")
+        return _build_overlay(
+            original_path, clip_paths, output_path, params, fps_s=fps_s,
+            orig_dur=orig_dur, clip_durs=clip_durs,
+            orig_has_audio=orig_has_audio, clip_has_audios=clip_has_audios,
         )
     return _build_full(
         original_path, clip_paths, output_path, params, fps_s=fps_s,

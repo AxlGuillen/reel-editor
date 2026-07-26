@@ -525,6 +525,9 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   gap: 8px;
   margin-bottom: 8px;
 }
+/* Tabs de modo del Insert: son 3, con menos aire para que entren */
+.ins-mode-tabs .rx-tab { padding: 8px 4px; font-size: .78rem; }
+
 /* Lista de mini-clips (cada uno con sus propias marcas) */
 .ins-clip-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .ins-clip-card {

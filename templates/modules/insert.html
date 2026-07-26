@@ -115,13 +115,34 @@
 
       <!-- Modo -->
       <h3 class="rx-group">Modo</h3>
-      <div class="rx-source-tabs" id="ins-mode-tabs">
+      <div class="rx-source-tabs ins-mode-tabs" id="ins-mode-tabs">
         <button type="button" class="rx-tab active" data-mode="full">Clip completo</button>
+        <button type="button" class="rx-tab" data-mode="overlay">Superpuesto</button>
         <button type="button" class="rx-tab" data-mode="progressive">Caída progresiva</button>
       </div>
       <p id="ins-mode-hint" class="hint" style="margin:-4px 0 14px;">
-        Inserta el mini-clip <strong>completo</strong> en cada marca (con su audio).
+        Inserta cada mini-clip <strong>completo</strong> en sus marcas (con su audio).
       </p>
+
+      <!-- Opciones del modo "superpuesto" (PiP) -->
+      <div id="ins-ovl" class="hidden">
+        <label class="control">
+          <span>Posición del recuadro</span>
+          <select id="ins-ovl-position">
+            <option value="center" selected>Centro</option>
+            <option value="top">Arriba</option>
+            <option value="bottom">Abajo</option>
+          </select>
+        </label>
+        <label class="control">
+          <span>Tamaño del recuadro <em id="ins-ovl-size-val">70</em>%</span>
+          <input type="range" id="ins-ovl-size" min="20" max="100" value="70">
+        </label>
+        <p class="hint" style="margin-bottom:16px;">
+          El original se <strong>congela</strong> como fondo y el mini-clip corre
+          encima. Durante ese tramo suena el audio del mini-clip.
+        </p>
+      </div>
 
       <!-- Opciones del modo "caída progresiva" -->
       <div id="ins-prog" class="hidden">
