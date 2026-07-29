@@ -384,6 +384,20 @@ a:hover { color: var(--text); }
   pointer-events: none;
 }
 .card-accent > * { position: relative; }
+/* Sobre lima el badge se invierte a negro (misma regla que el resto del
+   sistema: el estado se lee contra su fondo, no siempre en lima). */
+.card-accent .success {
+  background: var(--solid);
+  color: var(--accent);
+}
+.card-accent .file-name { color: rgba(17, 18, 17, .6); }
+.card-accent .btn-secondary {
+  background: rgba(17, 18, 17, .08);
+  border-color: rgba(17, 18, 17, .18);
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+.card-accent .btn-secondary:hover { background: rgba(17, 18, 17, .14); }
 
 .hidden { display: none !important; }
 
@@ -476,11 +490,42 @@ a:hover { color: var(--text); }
 /* El preview se queda a la vista mientras se scrollean los controles (que son
    más largos). align-self:start evita que el grid lo estire a lo alto de la
    fila, dándole lugar para "pegarse". Sin scroll anidado. */
+/* El preview es lo dominante de la pantalla → card negra con semitono. Además
+   el chrome oscuro alrededor del video ayuda a juzgar la imagen. */
 .preview-panel {
   position: sticky;
   top: 20px;
   align-self: start;
+  background: var(--solid);
+  color: var(--on-solid);
+  box-shadow: var(--shadow-solid);
+  overflow: hidden;
 }
+.preview-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--halftone);
+  background-size: 6px 6px;
+  pointer-events: none;
+}
+.preview-panel > * { position: relative; }
+.preview-panel h2 { color: var(--on-solid); }
+.preview-panel .preview-tag { color: var(--on-solid-dim); }
+.preview-panel .file-name,
+.preview-panel .hint,
+.preview-panel .ins-time-row { color: var(--on-solid-dim); }
+.preview-panel .hint strong { color: var(--on-solid); }
+/* Sobre la card negra el video necesita un filete para despegarse del fondo;
+   vacío se lee como placeholder rayado (textura 3, variante oscura). */
+.preview-panel video,
+.preview-panel canvas {
+  background-image: var(--stripe-dark);
+  background-color: #0b0c0b;
+  border: 1px solid var(--on-solid-border);
+}
+/* Chips e inputs claros dentro de la card negra conservan su tinta. */
+.preview-panel .ins-marker-list li { color: var(--text); }
 @media (max-width: 760px) {
   .preview-panel { position: static; }
 }
