@@ -77,6 +77,65 @@
   --font-display: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-body: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --solid-hover: #24261f;     /* hover de las superficies sólidas */
+  color-scheme: light;
+}
+
+/* ── Tema oscuro ─────────────────────────────────────────────────────────
+   Solo se redefinen tokens; ninguna regla de abajo cambia.
+
+   Clave del diseño: `--solid` sigue siendo "superficie de contraste con texto
+   claro" en ambos temas — en claro es más OSCURA que las cards, en oscuro es
+   más CLARA. Así los rgba(244,244,241,…) escritos sobre solid, y el lima con
+   texto oscuro, siguen siendo válidos sin tocar una sola regla.
+
+   Contrastes verificados contra WCAG AA (ver más abajo en el commit).        */
+:root[data-theme="dark"] {
+  --bg: #0b0c0a;
+  --card: #161714;
+  --card-2: #1e1f1b;
+  --card-hover: #24251f;
+  --field: #1a1b17;
+
+  --solid: #2a2c24;           /* destaca por ser más clara que el resto */
+  --solid-hover: #34362c;
+  --on-solid: #f4f4f1;
+  --on-solid-dim: rgba(244, 244, 241, .55);
+  --on-solid-fill: rgba(255, 255, 255, .08);
+  --on-solid-border: rgba(255, 255, 255, .14);
+
+  /* Sobre fondo oscuro el lima puro ya contrasta: no hace falta el oliva. */
+  --accent: #d9f24a;
+  --accent-hover: #e8fa8a;
+  --accent-strong: #d9f24a;
+  --accent-ink: #111211;
+  --accent-soft: rgba(217, 242, 74, .18);
+
+  --text: #f2f2ee;
+  --muted: #9c9e93;
+  --tertiary: #c2c4b8;
+  --faint: #85877c;
+  --border: rgba(244, 244, 241, .10);
+  --border-strong: rgba(244, 244, 241, .24);
+  --divider: #24251f;
+  --ok: #c3dd52;              /* el oliva no contrasta en oscuro */
+  --err: #ef7053;
+
+  /* En oscuro la sombra negra no se ve: se refuerza y se suma un halo. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .5), 0 18px 34px -22px rgba(0, 0, 0, .9);
+  --shadow-md:   0 1px 2px rgba(0, 0, 0, .5), 0 14px 28px -20px rgba(0, 0, 0, .9);
+  --shadow-lift: 0 1px 2px rgba(0, 0, 0, .6), 0 24px 40px -18px rgba(0, 0, 0, .95);
+  --shadow-solid: 0 22px 44px -22px rgba(0, 0, 0, .95);
+  --shadow-accent: 0 1px 2px rgba(0, 0, 0, .5), 0 18px 34px -22px rgba(217, 242, 74, .5);
+  --shadow-rail: 0 28px 54px -24px rgba(0, 0, 0, .95), 0 2px 4px rgba(0, 0, 0, .6);
+  --shadow-btn: 0 14px 26px -14px rgba(0, 0, 0, .95);
+
+  /* Texturas: las tramas claras se invierten para no encandilar. */
+  --halftone-accent: radial-gradient(rgba(17, 18, 17, .16) 1px, transparent 1.1px);
+  --stripe: repeating-linear-gradient(135deg, #23241f 0 6px, #1b1c18 6px 12px);
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -404,7 +463,7 @@ a:hover { color: var(--text); }
 /* Drop zone — placeholder punteado del sistema */
 .drop-zone {
   background: var(--card);
-  border: 2px dashed rgba(17, 18, 17, .16);
+  border: 2px dashed var(--border-strong);
   box-shadow: none;
   cursor: pointer;
   text-align: center;
@@ -1212,7 +1271,7 @@ textarea.text-input { resize: vertical; font-family: inherit; }
               color var(--dur-fast) var(--ease-out);
 }
 .btn-primary { background: var(--solid); color: var(--on-solid); box-shadow: var(--shadow-btn); }
-.btn-primary:hover { background: #24261f; transform: translateY(-2px); box-shadow: 0 18px 30px -14px rgba(17, 18, 17, .9); }
+.btn-primary:hover { background: var(--solid-hover); transform: translateY(-2px); box-shadow: var(--shadow-btn); }
 .btn-primary:active { transform: translateY(0) scale(.98); box-shadow: none; }
 .btn-primary:disabled { opacity: .35; cursor: not-allowed; transform: none; box-shadow: none; background: var(--solid); }
 .btn-secondary {

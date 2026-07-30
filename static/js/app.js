@@ -8,6 +8,31 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   });
 });
 
+// --- Tema claro / oscuro ---
+// El tema ya quedó aplicado por el script del <head> (evita el parpadeo);
+// acá solo se refleja en el botón y se persiste al cambiarlo.
+const themeBtn = document.getElementById("theme-btn");
+const themeIcon = document.getElementById("theme-icon");
+const themeLabel = document.getElementById("theme-label");
+
+function paintTheme(theme) {
+  const dark = theme === "dark";
+  // El botón anuncia a qué tema se cambia, no en cuál se está.
+  themeIcon.setAttribute("href", dark ? "#i-sun" : "#i-moon");
+  themeLabel.textContent = dark ? "Tema claro" : "Tema oscuro";
+  themeBtn.title = dark ? "Cambiar a tema claro" : "Cambiar a tema oscuro";
+}
+
+paintTheme(document.documentElement.getAttribute("data-theme"));
+
+themeBtn.addEventListener("click", () => {
+  const next =
+    document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("reelforge-theme", next); } catch (e) {}
+  paintTheme(next);
+});
+
 // Limpiar archivos temporales (uploads, outputs, downloads).
 const cleanupBtn = document.getElementById("cleanup-btn");
 const cleanupStatus = document.getElementById("cleanup-status");
