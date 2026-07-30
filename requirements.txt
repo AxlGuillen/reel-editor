@@ -1,6 +1,8 @@
 Flask>=3.0
-yt-dlp>=2024.0
-faster-whisper>=1.0
+# yt-dlp se rompe seguido cuando las plataformas cambian: conviene actualizarlo
+# a menudo (venv\Scripts\pip install -U yt-dlp).
+yt-dlp>=2026.7
+faster-whisper>=1.2
 
 # GPU (Windows + NVIDIA): DLLs de CUDA que ctranslate2 necesita en runtime.
 # El processor de subtitles las agrega al PATH automáticamente.

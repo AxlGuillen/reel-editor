@@ -59,11 +59,20 @@ _MODELS_LOCK = threading.Lock()
 
 
 def _get_device() -> tuple[str, str]:
-    """Detecta el mejor device disponible para faster-whisper."""
+    """Detecta el mejor device disponible para faster-whisper.
+
+    OJO: get_supported_compute_types("cuda") devuelve los TIPOS soportados
+    ({"float16", "int8", …}), nunca la string "cuda". Preguntar por "cuda" ahí
+    daba siempre falso y la transcripción caía a CPU en silencio; la GPU se
+    detecta con get_cuda_device_count().
+    """
     try:
         import ctranslate2
-        if "cuda" in ctranslate2.get_supported_compute_types("cuda"):
-            return "cuda", "float16"
+        if ctranslate2.get_cuda_device_count() > 0:
+            tipos = ctranslate2.get_supported_compute_types("cuda")
+            for compute in ("float16", "int8_float16", "bfloat16", "float32"):
+                if compute in tipos:
+                    return "cuda", compute
     except Exception:
         pass
     return "cpu", "int8"
