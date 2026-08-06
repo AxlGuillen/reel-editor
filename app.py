@@ -46,6 +46,12 @@ def create_app() -> Flask:
     def index():
         return render_template("index.html")
 
+    def _js_runtime_info():
+        """YouTube necesita un runtime de JS; si falta, la descarga degrada."""
+        from modules.downloader.processor import available_js_runtimes
+        encontrados = available_js_runtimes()
+        return ", ".join(encontrados) if encontrados else "ninguno (YouTube fallará)"
+
     @app.get("/api/info")
     def info():
         """Devuelve versiones de dependencias clave del sistema."""
@@ -74,6 +80,7 @@ def create_app() -> Flask:
             faster_whisper=pkg("faster-whisper"),
             ffmpeg=bin_version(config.FFMPEG_PATH),
             ffprobe=bin_version(config.FFPROBE_PATH),
+            js_runtime=_js_runtime_info(),
         )
 
     @app.post("/api/cleanup")

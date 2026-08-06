@@ -22,11 +22,26 @@
       <span class="dl-label">Calidad</span>
       <select id="dl-quality"></select>
     </label>
+    <label class="dl-field dl-quality-field">
+      <span class="dl-label">Cookies del navegador</span>
+      <select id="dl-cookies">
+        <option value="" selected>No usar</option>
+        <option value="chrome">Chrome</option>
+        <option value="edge">Edge</option>
+        <option value="firefox">Firefox</option>
+        <option value="brave">Brave</option>
+        <option value="opera">Opera</option>
+        <option value="vivaldi">Vivaldi</option>
+      </select>
+    </label>
   </div>
 
   <button id="dl-process-btn" class="btn-primary">Descargar</button>
   <p class="dl-note">
-    Funciona mejor con contenido público. Instagram a veces falla o pide login.
+    Si YouTube pide <strong>verificar que no sos un bot</strong>, elegí tu navegador
+    en «Cookies del navegador»: yt-dlp usa tu sesión ya iniciada para autenticar
+    (las cookies no salen de esta máquina). Cerrá el navegador antes, o puede
+    fallar al leer su base de cookies. Instagram a veces falla o pide login.
   </p>
 </section>
 

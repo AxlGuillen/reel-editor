@@ -58,6 +58,7 @@ dlProcessBtn.addEventListener("click", () => {
   form.append("url", url);
   form.append("format", dlFormat);
   form.append("quality", dlQuality.value);
+  form.append("cookies_browser", el("dl-cookies").value);
 
   dlResetOutputs();
   dlProcessBtn.disabled = true;

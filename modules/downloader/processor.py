@@ -3,9 +3,15 @@
 Descarga un asset desde un link (YouTube, TikTok, Instagram, etc.) como mp4
 (video) o mp3 (audio), con la calidad elegida. Usa el FFmpeg ya configurado
 para juntar streams / extraer audio, y reporta el progreso al job_manager.
+
+YouTube exige un runtime de JavaScript para descifrar las URLs de los formatos;
+sin él, yt-dlp avisa que la extracción está deprecada y faltan formatos. Solo
+habilita "deno" por defecto, así que acá se habilitan también node/quickjs/bun
+(basta con que uno esté instalado).
 """
 import glob
 import os
+import shutil
 
 import yt_dlp
 
@@ -15,6 +21,14 @@ from modules.downloader.schema import DownloaderParams
 
 # Mapea las altruras de video a un selector de formato de yt-dlp.
 _VIDEO_HEIGHT = {"1080": 1080, "720": 720, "480": 480}
+
+# Runtimes de JS que yt-dlp sabe usar, por orden de preferencia suyo.
+_JS_RUNTIMES = ("deno", "node", "quickjs", "bun")
+
+
+def available_js_runtimes() -> list[str]:
+    """Runtimes de JS instalados en el sistema (los que yt-dlp podría usar)."""
+    return [r for r in _JS_RUNTIMES if shutil.which(r)]
 
 
 def _format_selector(params: DownloaderParams) -> str:
@@ -52,7 +66,16 @@ def _build_opts(job_id: str, params: DownloaderParams) -> dict:
         "no_warnings": True,
         "noprogress": True,
         "progress_hooks": [_make_progress_hook(job_id)],
+        # Habilita todos los runtimes de JS conocidos: yt-dlp usa el de mayor
+        # prioridad que encuentre instalado (por defecto solo probaría deno).
+        "js_runtimes": {r: {} for r in _JS_RUNTIMES},
     }
+
+    # Cookies del navegador: es lo único que destraba el "Sign in to confirm
+    # you're not a bot" de YouTube. Opcional y explícito: las cookies se usan
+    # solo para autenticar con el sitio, no salen de esta máquina.
+    if params.cookies_browser:
+        opts["cookiesfrombrowser"] = (params.cookies_browser,)
 
     # Que yt-dlp use nuestro FFmpeg/ffprobe (puede estar fuera del PATH).
     ffmpeg_dir = os.path.dirname(config.FFMPEG_PATH)
@@ -72,9 +95,18 @@ def _build_opts(job_id: str, params: DownloaderParams) -> dict:
 
 def _friendly_error(exc: Exception) -> str:
     msg = str(exc).lower()
+    # El bot-check de YouTube se reporta como "sign in", pero no es contenido
+    # privado: el video puede ser público y aun así pedir credenciales.
+    if "not a bot" in msg or "confirm you" in msg:
+        return ("YouTube está pidiendo verificar que no sos un bot (le pasa a "
+                "videos públicos también). Activá «Usar cookies del navegador» "
+                "en los ajustes y volvé a intentar.")
+    if "429" in msg or "too many requests" in msg:
+        return ("YouTube limitó las descargas desde esta conexión por hacer "
+                "muchas seguidas. Esperá unos minutos y reintentá.")
     if "private" in msg or "login" in msg or "sign in" in msg or "cookies" in msg:
         return ("No se pudo descargar: el contenido es privado o requiere login. "
-                "Probá con un link público.")
+                "Probá con un link público, o activá «Usar cookies del navegador».")
     if "unavailable" in msg or "not available" in msg or "removed" in msg:
         return "El video no está disponible o fue eliminado."
     if "unsupported url" in msg or "no video" in msg:

@@ -12,12 +12,18 @@ AUDIO_QUALITIES = {"320", "192", "128"}           # bitrate mp3 en kbps
 DEFAULT_VIDEO_QUALITY = "1080"
 DEFAULT_AUDIO_QUALITY = "192"
 
+# Navegadores de los que yt-dlp sabe leer cookies (para el bot-check de YouTube).
+BROWSERS = {"chrome", "edge", "firefox", "brave", "opera", "vivaldi", "chromium"}
+
 
 @dataclass
 class DownloaderParams:
     url: str
     format: str = "audio"          # "audio" | "video"
     quality: str = DEFAULT_AUDIO_QUALITY
+    # Navegador del que tomar cookies, o "" para no usarlas. Solo hace falta
+    # cuando YouTube pide verificar que no sos un bot.
+    cookies_browser: str = ""
 
     @classmethod
     def from_form(cls, form) -> "DownloaderParams":
@@ -44,4 +50,10 @@ class DownloaderParams:
                 f"Calidad inválida para {fmt}: {quality!r}. Opciones: {sorted(valid)}"
             )
 
-        return cls(url=url, format=fmt, quality=quality)
+        browser = (form.get("cookies_browser") or "").strip().lower()
+        if browser and browser not in BROWSERS:
+            raise ValueError(
+                f"Navegador inválido: {browser!r}. Opciones: {sorted(BROWSERS)}"
+            )
+
+        return cls(url=url, format=fmt, quality=quality, cookies_browser=browser)

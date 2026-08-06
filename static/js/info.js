@@ -6,6 +6,7 @@
     faster_whisper: "faster-whisper",
     ffmpeg:         "FFmpeg",
     ffprobe:        "ffprobe",
+    js_runtime:     "Runtime JS (YouTube)",
   };
 
   let loaded = false;
