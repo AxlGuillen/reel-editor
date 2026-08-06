@@ -10,6 +10,9 @@ uploads/
 outputs/
 downloads/
 
+# Cookies de yt-dlp: SENSIBLE, jamás debe entrar al repo
+cookies/
+
 # Notas locales personales
 CLAUDE.local.md
 

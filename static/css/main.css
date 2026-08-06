@@ -987,6 +987,17 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   font-size: .95rem;
 }
 .dl-note { color: var(--muted); font-size: .8rem; margin: 12px 0 0; }
+
+/* Downloader: gestión del cookies.txt subido */
+.dl-cookies-file {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.dl-cookies-btn { width: auto; margin: 0; padding: 8px 14px; font-size: .85rem; }
+.dl-cookies-status { font-size: .8rem; color: var(--muted); font-family: var(--font-mono); }
 #dl-result-title { margin: 0 0 12px; font-size: .95rem; color: var(--text); }
 
 /* Reel Express: input de texto + ajustes avanzados */

@@ -11,6 +11,7 @@ habilita "deno" por defecto, así que acá se habilitan también node/quickjs/bu
 """
 import glob
 import os
+import re
 import shutil
 
 import yt_dlp
@@ -29,6 +30,57 @@ _JS_RUNTIMES = ("deno", "node", "quickjs", "bun")
 def available_js_runtimes() -> list[str]:
     """Runtimes de JS instalados en el sistema (los que yt-dlp podría usar)."""
     return [r for r in _JS_RUNTIMES if shutil.which(r)]
+
+
+# ── cookies.txt subido (formato Netscape) ────────────────────────────────
+# En Windows, Chrome/Edge/Brave cifran sus cookies (App-Bound Encryption) y
+# yt-dlp no puede leerlas del navegador. La alternativa: el usuario exporta un
+# cookies.txt con una extensión y lo sube; acá se guarda y se pasa a yt-dlp.
+
+MAX_COOKIES_SIZE = 2 * 1024 * 1024   # 2 MB: un cookies.txt real pesa unos KB
+
+
+def cookies_file_status() -> dict:
+    """Estado del cookies.txt guardado: {exists, mtime, size}."""
+    path = config.COOKIES_FILE
+    if not os.path.isfile(path):
+        return {"exists": False}
+    st = os.stat(path)
+    return {"exists": True, "mtime": int(st.st_mtime), "size": st.st_size}
+
+
+def save_cookies_file(raw: bytes) -> None:
+    """Valida y guarda el cookies.txt. Lanza ValueError si no parece válido."""
+    if len(raw) > MAX_COOKIES_SIZE:
+        raise ValueError("El archivo es demasiado grande para ser un cookies.txt.")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ValueError("El archivo no es texto. Exportalo en formato Netscape "
+                         "(extensión «Get cookies.txt LOCALLY» o similar).")
+    # Formato Netscape: header mágico o al menos una línea de 7 campos con TAB.
+    tiene_header = text.lstrip().startswith("# Netscape HTTP Cookie File") or \
+        text.lstrip().startswith("# HTTP Cookie File")
+    tiene_filas = any(
+        len(line.split("\t")) == 7
+        for line in text.splitlines() if line and not line.startswith("#")
+    )
+    if not (tiene_header or tiene_filas):
+        raise ValueError(
+            "Eso no parece un cookies.txt en formato Netscape. Exportalo con "
+            "una extensión como «Get cookies.txt LOCALLY» y subí ese archivo."
+        )
+    os.makedirs(config.COOKIES_FOLDER, exist_ok=True)
+    with open(config.COOKIES_FILE, "wb") as fh:
+        fh.write(raw)
+
+
+def delete_cookies_file() -> bool:
+    """Borra el cookies.txt guardado. Devuelve si existía."""
+    if os.path.isfile(config.COOKIES_FILE):
+        os.remove(config.COOKIES_FILE)
+        return True
+    return False
 
 
 def _format_selector(params: DownloaderParams) -> str:
@@ -71,10 +123,18 @@ def _build_opts(job_id: str, params: DownloaderParams) -> dict:
         "js_runtimes": {r: {} for r in _JS_RUNTIMES},
     }
 
-    # Cookies del navegador: es lo único que destraba el "Sign in to confirm
-    # you're not a bot" de YouTube. Opcional y explícito: las cookies se usan
-    # solo para autenticar con el sitio, no salen de esta máquina.
-    if params.cookies_browser:
+    # Cookies: es lo único que destraba el "Sign in to confirm you're not a
+    # bot" de YouTube. Opcional y explícito: se usan solo para autenticar con
+    # el sitio, no salen de esta máquina. "file" = cookies.txt subido (la vía
+    # que funciona con Chrome en Windows); un navegador = leerlas de ahí.
+    if params.cookies_browser == "file":
+        if not os.path.isfile(config.COOKIES_FILE):
+            raise ValueError(
+                "No hay ningún cookies.txt cargado. Subilo primero con el "
+                "botón «Subir cookies.txt» del Downloader."
+            )
+        opts["cookiefile"] = config.COOKIES_FILE
+    elif params.cookies_browser:
         opts["cookiesfrombrowser"] = (params.cookies_browser,)
 
     # Que yt-dlp use nuestro FFmpeg/ffprobe (puede estar fuera del PATH).
@@ -93,25 +153,42 @@ def _build_opts(job_id: str, params: DownloaderParams) -> dict:
     return opts
 
 
+# Secuencias de color ANSI que yt-dlp mete en sus mensajes de error y que en
+# la UI se ven como basura ("?[0;31mERROR:?[0m …").
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _friendly_error(exc: Exception) -> str:
-    msg = str(exc).lower()
+    # Los ValueError los generamos nosotros con mensajes ya amigables
+    # (p. ej. "No hay ningún cookies.txt cargado"): pasan tal cual.
+    if isinstance(exc, ValueError):
+        return str(exc)
+    msg = _ANSI_RE.sub("", str(exc)).lower()
+    # Chrome (y derivados) en Windows cifran las cookies con App-Bound
+    # Encryption: yt-dlp no puede leerlas del navegador. La salida es el
+    # cookies.txt exportado.
+    if "could not copy" in msg and "cookie" in msg:
+        return ("No se pudieron leer las cookies del navegador: Chrome/Edge las "
+                "cifran en Windows y bloquean el acceso. Usá la opción "
+                "«Archivo cookies.txt»: exportá las cookies con una extensión "
+                "(«Get cookies.txt LOCALLY») y subí el archivo.")
     # El bot-check de YouTube se reporta como "sign in", pero no es contenido
     # privado: el video puede ser público y aun así pedir credenciales.
     if "not a bot" in msg or "confirm you" in msg:
         return ("YouTube está pidiendo verificar que no sos un bot (le pasa a "
-                "videos públicos también). Activá «Usar cookies del navegador» "
-                "en los ajustes y volvé a intentar.")
+                "videos públicos también). Elegí una fuente en «Cookies» — en "
+                "Windows lo que funciona es «Archivo cookies.txt» — y reintentá.")
     if "429" in msg or "too many requests" in msg:
         return ("YouTube limitó las descargas desde esta conexión por hacer "
                 "muchas seguidas. Esperá unos minutos y reintentá.")
     if "private" in msg or "login" in msg or "sign in" in msg or "cookies" in msg:
         return ("No se pudo descargar: el contenido es privado o requiere login. "
-                "Probá con un link público, o activá «Usar cookies del navegador».")
+                "Probá con un link público, o configurá «Cookies».")
     if "unavailable" in msg or "not available" in msg or "removed" in msg:
         return "El video no está disponible o fue eliminado."
     if "unsupported url" in msg or "no video" in msg:
         return "Ese link no es compatible o no contiene un video descargable."
-    return f"No se pudo descargar: {exc}"
+    return f"No se pudo descargar: {_ANSI_RE.sub('', str(exc))}"
 
 
 def process(job_id: str, params: DownloaderParams) -> None:

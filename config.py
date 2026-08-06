@@ -15,6 +15,11 @@ ASSETS_FOLDER = os.path.join(BASE_DIR, "assets")
 WATERMARKS_FOLDER = os.path.join(ASSETS_FOLDER, "watermarks")
 FONTS_FOLDER = os.path.join(ASSETS_FOLDER, "fonts")
 
+# Cookies para yt-dlp (bot-check de YouTube). Persistente pero SENSIBLE:
+# va en su propia carpeta, ignorada por git y fuera de "Limpiar archivos".
+COOKIES_FOLDER = os.path.join(BASE_DIR, "cookies")
+COOKIES_FILE = os.path.join(COOKIES_FOLDER, "cookies.txt")
+
 MAX_UPLOAD_SIZE_MB = 2000
 MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 

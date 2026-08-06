@@ -46,6 +46,71 @@ document.querySelectorAll(".dl-fmt").forEach((btn) => {
   });
 });
 
+// --- Cookies: selector de fuente + gestión del cookies.txt subido ---
+const dlCookies = el("dl-cookies");
+const dlCookiesFile = el("dl-cookies-file");
+const dlCookiesStatus = el("dl-cookies-status");
+const dlCookiesDel = el("dl-cookies-del");
+
+// Recordar la última fuente elegida (p. ej. "file") entre sesiones.
+try {
+  const saved = localStorage.getItem("reelforge-dl-cookies");
+  if (saved !== null && [...dlCookies.options].some((o) => o.value === saved)) {
+    dlCookies.value = saved;
+  }
+} catch (e) {}
+
+function paintCookiesUI() {
+  dlCookiesFile.classList.toggle("hidden", dlCookies.value !== "file");
+  if (dlCookies.value === "file") refreshCookiesStatus();
+}
+
+async function refreshCookiesStatus() {
+  try {
+    const res = await fetch(`${DL_API}/cookies`);
+    const data = await res.json();
+    if (data.exists) {
+      const fecha = new Date(data.mtime * 1000).toLocaleDateString();
+      dlCookiesStatus.textContent = `✓ cookies.txt cargado (${fecha})`;
+      dlCookiesDel.classList.remove("hidden");
+    } else {
+      dlCookiesStatus.textContent = "Sin archivo cargado";
+      dlCookiesDel.classList.add("hidden");
+    }
+  } catch (e) {
+    dlCookiesStatus.textContent = "";
+  }
+}
+
+dlCookies.addEventListener("change", () => {
+  try { localStorage.setItem("reelforge-dl-cookies", dlCookies.value); } catch (e) {}
+  paintCookiesUI();
+});
+paintCookiesUI();
+
+el("dl-cookies-upload").addEventListener("click", () => el("dl-cookies-input").click());
+el("dl-cookies-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append("cookies", file);
+  try {
+    const res = await fetch(`${DL_API}/cookies`, { method: "POST", body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    refreshCookiesStatus();
+  } catch (err) {
+    dlCookiesStatus.textContent = err.message;
+  }
+  e.target.value = "";
+});
+
+dlCookiesDel.addEventListener("click", async () => {
+  if (!confirm("¿Borrar el cookies.txt guardado?")) return;
+  await fetch(`${DL_API}/cookies`, { method: "DELETE" });
+  refreshCookiesStatus();
+});
+
 // --- Process ---
 dlProcessBtn.addEventListener("click", () => {
   const url = dlUrl.value.trim();

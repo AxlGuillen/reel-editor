@@ -29,6 +29,32 @@ def process():
     return jsonify(job_id=job_id), 202
 
 
+@bp.get("/cookies")
+def cookies_status():
+    """¿Hay un cookies.txt cargado? (para pintar el estado en la UI)."""
+    return jsonify(processor.cookies_file_status())
+
+
+@bp.post("/cookies")
+def cookies_upload():
+    """Sube/reemplaza el cookies.txt (formato Netscape, exportado del browser)."""
+    f = request.files.get("cookies")
+    if not f or not f.filename:
+        return jsonify(error="Falta el archivo de cookies."), 400
+    try:
+        processor.save_cookies_file(f.read())
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(processor.cookies_file_status())
+
+
+@bp.delete("/cookies")
+def cookies_delete():
+    """Borra el cookies.txt guardado."""
+    existed = processor.delete_cookies_file()
+    return jsonify(deleted=existed)
+
+
 @bp.get("/status/<job_id>")
 def status(job_id):
     job = job_manager.get_job(job_id)

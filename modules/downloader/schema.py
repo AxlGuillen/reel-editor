@@ -13,7 +13,10 @@ DEFAULT_VIDEO_QUALITY = "1080"
 DEFAULT_AUDIO_QUALITY = "192"
 
 # Navegadores de los que yt-dlp sabe leer cookies (para el bot-check de YouTube).
+# OJO: en Windows, Chrome/Edge/Brave cifran sus cookies con App-Bound Encryption
+# y yt-dlp NO puede leerlas; para esos casos está "file" (cookies.txt subido).
 BROWSERS = {"chrome", "edge", "firefox", "brave", "opera", "vivaldi", "chromium"}
+COOKIE_SOURCES = BROWSERS | {"file"}
 
 
 @dataclass
@@ -21,8 +24,8 @@ class DownloaderParams:
     url: str
     format: str = "audio"          # "audio" | "video"
     quality: str = DEFAULT_AUDIO_QUALITY
-    # Navegador del que tomar cookies, o "" para no usarlas. Solo hace falta
-    # cuando YouTube pide verificar que no sos un bot.
+    # Fuente de cookies: un navegador, "file" (cookies.txt subido) o "" para no
+    # usarlas. Solo hace falta cuando YouTube pide verificar que no sos un bot.
     cookies_browser: str = ""
 
     @classmethod
@@ -51,9 +54,10 @@ class DownloaderParams:
             )
 
         browser = (form.get("cookies_browser") or "").strip().lower()
-        if browser and browser not in BROWSERS:
+        if browser and browser not in COOKIE_SOURCES:
             raise ValueError(
-                f"Navegador inválido: {browser!r}. Opciones: {sorted(BROWSERS)}"
+                f"Fuente de cookies inválida: {browser!r}. "
+                f"Opciones: {sorted(COOKIE_SOURCES)}"
             )
 
         return cls(url=url, format=fmt, quality=quality, cookies_browser=browser)

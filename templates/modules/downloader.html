@@ -23,25 +23,40 @@
       <select id="dl-quality"></select>
     </label>
     <label class="dl-field dl-quality-field">
-      <span class="dl-label">Cookies del navegador</span>
+      <span class="dl-label">Cookies</span>
       <select id="dl-cookies">
         <option value="" selected>No usar</option>
-        <option value="chrome">Chrome</option>
-        <option value="edge">Edge</option>
+        <option value="file">Archivo cookies.txt</option>
         <option value="firefox">Firefox</option>
-        <option value="brave">Brave</option>
+        <option value="chrome">Chrome (no funciona en Windows)</option>
+        <option value="edge">Edge (no funciona en Windows)</option>
+        <option value="brave">Brave (no funciona en Windows)</option>
         <option value="opera">Opera</option>
         <option value="vivaldi">Vivaldi</option>
       </select>
     </label>
   </div>
 
+  <!-- Gestión del cookies.txt (visible solo con la fuente "Archivo") -->
+  <div id="dl-cookies-file" class="dl-cookies-file hidden">
+    <input type="file" id="dl-cookies-input" accept=".txt,text/plain" hidden>
+    <button type="button" id="dl-cookies-upload" class="btn-secondary dl-cookies-btn">
+      Subir cookies.txt
+    </button>
+    <button type="button" id="dl-cookies-del" class="btn-secondary dl-cookies-btn hidden">
+      Borrar
+    </button>
+    <span id="dl-cookies-status" class="dl-cookies-status"></span>
+  </div>
+
   <button id="dl-process-btn" class="btn-primary">Descargar</button>
   <p class="dl-note">
-    Si YouTube pide <strong>verificar que no sos un bot</strong>, elegí tu navegador
-    en «Cookies del navegador»: yt-dlp usa tu sesión ya iniciada para autenticar
-    (las cookies no salen de esta máquina). Cerrá el navegador antes, o puede
-    fallar al leer su base de cookies. Instagram a veces falla o pide login.
+    Si YouTube pide <strong>verificar que no sos un bot</strong>, necesitás cookies.
+    En Windows, Chrome/Edge/Brave las cifran y no se pueden leer del navegador:
+    usá <strong>«Archivo cookies.txt»</strong> — exportalas con la extensión
+    «Get cookies.txt LOCALLY» (mejor desde una ventana de incógnito con sesión
+    iniciada, así duran más) y subí el archivo. Queda guardado para las próximas
+    descargas y no sale de esta máquina. Instagram a veces falla o pide login.
   </p>
 </section>
 
