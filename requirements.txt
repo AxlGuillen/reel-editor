@@ -2,6 +2,9 @@ Flask>=3.0
 # yt-dlp se rompe seguido cuando las plataformas cambian: conviene actualizarlo
 # a menudo (venv\Scripts\pip install -U yt-dlp).
 yt-dlp>=2026.7
+# Scripts resolvedores de los desafíos JS de YouTube (los ejecuta el runtime
+# de node/deno). Sin esto, YouTube solo ofrece imágenes: cero formatos de video.
+yt-dlp-ejs
 faster-whisper>=1.2
 
 # GPU (Windows + NVIDIA): DLLs de CUDA que ctranslate2 necesita en runtime.
