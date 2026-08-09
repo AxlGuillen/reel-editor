@@ -50,7 +50,13 @@ def cookies_file_status() -> dict:
 
 
 def save_cookies_file(raw: bytes) -> None:
-    """Valida y guarda el cookies.txt. Lanza ValueError si no parece válido."""
+    """Valida, FILTRA y guarda el cookies.txt. Lanza ValueError si no es válido.
+
+    Solo se conservan las cookies de YouTube/Google: son las que resuelven el
+    bot-check. Las de otros sitios se descartan a propósito — un export "de
+    todos los sitios" trae cookies parciales/viejas de TikTok o Instagram que
+    hacen que esos sitios respondan 403 a descargas que sin cookies funcionan.
+    """
     if len(raw) > MAX_COOKIES_SIZE:
         raise ValueError("El archivo es demasiado grande para ser un cookies.txt.")
     try:
@@ -58,21 +64,29 @@ def save_cookies_file(raw: bytes) -> None:
     except UnicodeDecodeError:
         raise ValueError("El archivo no es texto. Exportalo en formato Netscape "
                          "(extensión «Get cookies.txt LOCALLY» o similar).")
-    # Formato Netscape: header mágico o al menos una línea de 7 campos con TAB.
-    tiene_header = text.lstrip().startswith("# Netscape HTTP Cookie File") or \
-        text.lstrip().startswith("# HTTP Cookie File")
-    tiene_filas = any(
-        len(line.split("\t")) == 7
-        for line in text.splitlines() if line and not line.startswith("#")
-    )
-    if not (tiene_header or tiene_filas):
+
+    filas = [
+        line for line in text.splitlines()
+        if not line.startswith("#") and len(line.split("\t")) == 7
+    ]
+    if not filas:
         raise ValueError(
             "Eso no parece un cookies.txt en formato Netscape. Exportalo con "
             "una extensión como «Get cookies.txt LOCALLY» y subí ese archivo."
         )
+
+    utiles = [f for f in filas
+              if "youtube" in f.split("\t")[0] or "google" in f.split("\t")[0]]
+    if not utiles:
+        raise ValueError(
+            "El archivo no trae cookies de YouTube. Exportalo estando en "
+            "youtube.com con la sesión iniciada."
+        )
+
     os.makedirs(config.COOKIES_FOLDER, exist_ok=True)
-    with open(config.COOKIES_FILE, "wb") as fh:
-        fh.write(raw)
+    contenido = "# Netscape HTTP Cookie File\n" + "\n".join(utiles) + "\n"
+    with open(config.COOKIES_FILE, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(contenido)
 
 
 def delete_cookies_file() -> bool:
@@ -157,6 +171,34 @@ def _build_opts(job_id: str, params: DownloaderParams) -> dict:
 # la UI se ven como basura ("?[0;31mERROR:?[0m …").
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
+# Señales de fallo TRANSITORIO: TikTok (y a veces otros) rechazan por rachas
+# cortas cuando ven varias peticiones seguidas; el mismo request funciona
+# segundos después. Verificado empíricamente: 403 en 3 intentos seguidos y OK
+# al siguiente, con opciones idénticas.
+_TRANSIENT = ("403", "forbidden", "unexpected response", "timed out", "timeout")
+_RETRY_WAIT_S = 6
+_MAX_TRIES = 3
+
+
+def _download_with_retry(opts: dict, url: str):
+    """extract_info(download=True) con reintentos ante fallos transitorios."""
+    import time
+    for intento in range(1, _MAX_TRIES + 1):
+        try:
+            with yt_dlp.YoutubeDL(dict(opts)) as ydl:
+                return ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as exc:
+            msg = str(exc).lower()
+            es_transitorio = any(t in msg for t in _TRANSIENT)
+            # El bot-check también dice 403 a veces, pero trae su propia frase:
+            # no lo reintentamos (necesita cookies, no paciencia).
+            if "not a bot" in msg or "confirm you" in msg:
+                raise
+            if intento < _MAX_TRIES and es_transitorio:
+                time.sleep(_RETRY_WAIT_S)
+                continue
+            raise
+
 
 def _friendly_error(exc: Exception) -> str:
     # Los ValueError los generamos nosotros con mensajes ya amigables
@@ -181,6 +223,10 @@ def _friendly_error(exc: Exception) -> str:
     if "429" in msg or "too many requests" in msg:
         return ("YouTube limitó las descargas desde esta conexión por hacer "
                 "muchas seguidas. Esperá unos minutos y reintentá.")
+    if "403" in msg or "forbidden" in msg:
+        return ("El sitio rechazó la petición (403). Suele ser un bloqueo "
+                "temporal por varias descargas seguidas: esperá un minuto y "
+                "reintentá.")
     if "private" in msg or "login" in msg or "sign in" in msg or "cookies" in msg:
         return ("No se pudo descargar: el contenido es privado o requiere login. "
                 "Probá con un link público, o configurá «Cookies».")
@@ -198,8 +244,7 @@ def process(job_id: str, params: DownloaderParams) -> None:
         job_manager.update_job(job_id, status="processing", progress=0)
 
         opts = _build_opts(job_id, params)
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(params.url, download=True)
+        info = _download_with_retry(opts, params.url)
 
         # El nombre final depende del formato/merge; lo ubicamos por job_id.
         matches = [p for p in glob.glob(os.path.join(config.DOWNLOAD_FOLDER, f"{job_id}.*"))
