@@ -202,12 +202,40 @@ def _download_with_retry(opts: dict, url: str):
             raise
 
 
+# yt-dlp antepone el extractor al error: "ERROR: [TikTok] 123: mensaje…".
+# De ahí sale la plataforma para hablar de la correcta (antes todos los
+# mensajes asumían YouTube, incluso para links de TikTok).
+_SITE_RE = re.compile(r"\[([A-Za-z0-9_.:-]+)\]")
+_SITE_NAMES = (
+    ("youtube", "YouTube"),
+    ("tiktok", "TikTok"),
+    ("instagram", "Instagram"),
+    ("facebook", "Facebook"),
+    ("twitter", "X (Twitter)"),
+)
+
+
+def _site_name(msg: str) -> str:
+    m = _SITE_RE.search(msg)
+    if not m:
+        return "El sitio"
+    raw = m.group(1).split(":")[0].lower()
+    for clave, nombre in _SITE_NAMES:
+        if clave in raw:
+            return nombre
+    return "El sitio"
+
+
 def _friendly_error(exc: Exception) -> str:
     # Los ValueError los generamos nosotros con mensajes ya amigables
     # (p. ej. "No hay ningún cookies.txt cargado"): pasan tal cual.
     if isinstance(exc, ValueError):
         return str(exc)
-    msg = _ANSI_RE.sub("", str(exc)).lower()
+    crudo = _ANSI_RE.sub("", str(exc))
+    msg = crudo.lower()
+    sitio = _site_name(crudo)
+    es_youtube = sitio == "YouTube"
+
     # Chrome (y derivados) en Windows cifran las cookies con App-Bound
     # Encryption: yt-dlp no puede leerlas del navegador. La salida es el
     # cookies.txt exportado.
@@ -216,27 +244,46 @@ def _friendly_error(exc: Exception) -> str:
                 "cifran en Windows y bloquean el acceso. Usá la opción "
                 "«Archivo cookies.txt»: exportá las cookies con una extensión "
                 "(«Get cookies.txt LOCALLY») y subí el archivo.")
-    # El bot-check de YouTube se reporta como "sign in", pero no es contenido
-    # privado: el video puede ser público y aun así pedir credenciales.
+    # Filtro de sensibilidad de TikTok: el video existe pero exige sesión.
+    if "not be comfortable" in msg or ("log in for access" in msg):
+        return (f"{sitio} marcó este video como contenido restringido y pide "
+                "sesión iniciada para verlo. Las cookies guardadas en la app "
+                "solo cubren YouTube, así que por ahora este video no se puede "
+                "bajar desde acá.")
+    # Bot-check: en YouTube se resuelve con cookies; en el resto suele ser
+    # un bloqueo temporal y las cookies de YouTube no ayudan.
     if "not a bot" in msg or "confirm you" in msg:
-        return ("YouTube está pidiendo verificar que no sos un bot (le pasa a "
-                "videos públicos también). Elegí una fuente en «Cookies» — en "
-                "Windows lo que funciona es «Archivo cookies.txt» — y reintentá.")
+        if es_youtube:
+            return ("YouTube está pidiendo verificar que no sos un bot (le pasa "
+                    "a videos públicos también). Elegí una fuente en «Cookies» — "
+                    "en Windows lo que funciona es «Archivo cookies.txt» — y "
+                    "reintentá.")
+        return (f"{sitio} está pidiendo una verificación anti-bot. Suele ser "
+                "temporal: esperá unos minutos y reintentá.")
     if "429" in msg or "too many requests" in msg:
-        return ("YouTube limitó las descargas desde esta conexión por hacer "
+        return (f"{sitio} limitó las descargas desde esta conexión por hacer "
                 "muchas seguidas. Esperá unos minutos y reintentá.")
     if "403" in msg or "forbidden" in msg:
-        return ("El sitio rechazó la petición (403). Suele ser un bloqueo "
+        return (f"{sitio} rechazó la petición (403). Suele ser un bloqueo "
                 "temporal por varias descargas seguidas: esperá un minuto y "
                 "reintentá.")
+    # OJO: va antes que "unavailable" — "Requested format is not available"
+    # contiene "not available" y se reportaba como video eliminado.
+    if "requested format" in msg:
+        return ("No hay un formato descargable con esa calidad en este momento. "
+                "Probá otra calidad, o reintentá en unos minutos.")
     if "private" in msg or "login" in msg or "sign in" in msg or "cookies" in msg:
-        return ("No se pudo descargar: el contenido es privado o requiere login. "
-                "Probá con un link público, o configurá «Cookies».")
+        base = ("No se pudo descargar: el contenido es privado o requiere "
+                "login. Probá con un link público")
+        if es_youtube:
+            return base + ", o configurá «Cookies»."
+        return base + (". Las cookies guardadas solo cubren YouTube, así que "
+                       f"en {sitio} no ayudan.")
     if "unavailable" in msg or "not available" in msg or "removed" in msg:
         return "El video no está disponible o fue eliminado."
     if "unsupported url" in msg or "no video" in msg:
         return "Ese link no es compatible o no contiene un video descargable."
-    return f"No se pudo descargar: {_ANSI_RE.sub('', str(exc))}"
+    return f"No se pudo descargar: {crudo}"
 
 
 def process(job_id: str, params: DownloaderParams) -> None:
