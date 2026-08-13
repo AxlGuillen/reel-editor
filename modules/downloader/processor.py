@@ -176,7 +176,9 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # segundos después. Verificado empíricamente: 403 en 3 intentos seguidos y OK
 # al siguiente, con opciones idénticas.
 _TRANSIENT = ("403", "forbidden", "unexpected response", "timed out", "timeout")
-_RETRY_WAIT_S = 6
+# 25s: TikTok limita por ráfaga; con esperas de 6s el reintento caía dentro
+# de la misma ventana de bloqueo y fallaba igual (verificado).
+_RETRY_WAIT_S = 25
 _MAX_TRIES = 3
 
 
