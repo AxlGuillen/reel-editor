@@ -196,10 +196,44 @@ def _download_with_retry(opts: dict, url: str):
             # no lo reintentamos (necesita cookies, no paciencia).
             if "not a bot" in msg or "confirm you" in msg:
                 raise
+            # YouTube 403 en la MEDIA (no en la página): el cliente web exige
+            # PO tokens para los archivos de los videos largos; otros clientes
+            # no. Fallback dirigido — los shorts andan bien con el web y a los
+            # clientes alternativos a veces les faltan (o "DRM protected"),
+            # por eso no son default.
+            if ("unable to download video data" in msg and "403" in msg
+                    and "youtu" in url.lower()):
+                try:
+                    return _download_with_fallback_client(opts, url)
+                except yt_dlp.utils.DownloadError:
+                    pass  # cae al flujo normal de reintentos
             if intento < _MAX_TRIES and es_transitorio:
                 time.sleep(_RETRY_WAIT_S)
                 continue
             raise
+
+
+# Clientes alternativos de YouTube cuyas URLs de media no exigen PO token, en
+# orden de calidad: android_vr llega a 1080p; tv solo da 360p (último recurso).
+_FALLBACK_CLIENTS = ("android_vr", "tv")
+
+
+def _download_with_fallback_client(opts: dict, url: str):
+    """Reintento con clientes alternativos de YouTube (sin PO token)."""
+    ultimo_error = None
+    for cliente in _FALLBACK_CLIENTS:
+        opts_alt = dict(opts)
+        extractor_args = dict(opts_alt.get("extractor_args") or {})
+        youtube_args = dict(extractor_args.get("youtube") or {})
+        youtube_args["player_client"] = [cliente]
+        extractor_args["youtube"] = youtube_args
+        opts_alt["extractor_args"] = extractor_args
+        try:
+            with yt_dlp.YoutubeDL(opts_alt) as ydl:
+                return ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as exc:
+            ultimo_error = exc
+    raise ultimo_error
 
 
 # yt-dlp antepone el extractor al error: "ERROR: [TikTok] 123: mensaje…".

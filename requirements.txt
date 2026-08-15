@@ -1,6 +1,8 @@
 Flask>=3.0
 # yt-dlp se rompe seguido cuando las plataformas cambian: conviene actualizarlo
-# a menudo (venv\Scripts\pip install -U yt-dlp).
+# a menudo (venv\Scripts\pip install -U yt-dlp). Si YouTube da 403 al bajar la
+# MEDIA de videos largos (PO tokens) y la estable no lo arregla, instalar la
+# nightly:  venv\Scripts\pip install --pre -U yt-dlp
 yt-dlp>=2026.7
 # Scripts resolvedores de los desafíos JS de YouTube (los ejecuta el runtime
 # de node/deno). Sin esto, YouTube solo ofrece imágenes: cero formatos de video.
