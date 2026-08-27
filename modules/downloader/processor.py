@@ -107,6 +107,36 @@ def _format_selector(params: DownloaderParams) -> str:
     return "ba/b"
 
 
+def probe_duration(params: DownloaderParams) -> float | None:
+    """Duración del video del link SIN descargarlo (metadatos de yt-dlp).
+
+    Lo usa reel_express para fusionar el speed match en la pasada visual
+    mientras la descarga corre en paralelo. Best-effort: devuelve None ante
+    cualquier fallo y el pipeline cae al camino clásico.
+    """
+    opts: dict = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "skip_download": True,
+        "socket_timeout": 10,
+        "js_runtimes": {r: {} for r in _JS_RUNTIMES},
+    }
+    # Misma autenticación que la descarga (si está configurada).
+    if params.cookies_browser == "file":
+        if os.path.isfile(config.COOKIES_FILE):
+            opts["cookiefile"] = config.COOKIES_FILE
+    elif params.cookies_browser:
+        opts["cookiesfrombrowser"] = (params.cookies_browser,)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(params.url, download=False)
+        dur = (info or {}).get("duration")
+        return float(dur) if dur else None
+    except Exception:  # noqa: BLE001 - probe opcional, nunca rompe el pipeline
+        return None
+
+
 def _make_progress_hook(job_id: str):
     def hook(d: dict) -> None:
         if d.get("status") == "downloading":

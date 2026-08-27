@@ -127,6 +127,26 @@ def video_encode_flags(crf: int = 18) -> list[str]:
     return ["-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast"]
 
 
+def encoder_info() -> str:
+    """Descripción legible del encoder activo (la muestra el módulo Info)."""
+    return "GPU NVENC (h264_nvenc)" if _nvenc_available() else "CPU (libx264)"
+
+
+def atempo_chain(tempo: float) -> str:
+    """Cadena atempo válida para cualquier factor > 0.
+
+    atempo acepta [0.5, 100] por instancia; para factores menores se encadenan
+    varios (0.4 → atempo=0.5,atempo=0.8). Devuelve el fragmento de filtro listo
+    para intercalar en una cadena de audio.
+    """
+    parts: list[float] = []
+    while tempo < 0.5:
+        parts.append(0.5)
+        tempo /= 0.5
+    parts.append(min(tempo, 100.0))
+    return ",".join(f"atempo={t:.6f}" for t in parts)
+
+
 def _hms_to_seconds(match) -> float:
     hours, minutes, seconds = match.groups()
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)

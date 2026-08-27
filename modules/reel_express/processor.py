@@ -24,6 +24,7 @@ No hay lógica de filtros propia: compone los fragmentos puros de cada módulo
 (build_filter_complex / build_filters) y reusa sus process()/helpers.
 """
 import threading
+from dataclasses import replace
 
 import config
 from core import ffmpeg_runner, file_utils, job_manager
@@ -46,51 +47,81 @@ def _check_subjob(sub_id: str, etapa: str) -> dict:
 
 
 def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
-                        params: ReelExpressParams) -> None:
-    """Prepara la imagen: conversión a vertical y/o texto+marca.
+                        params: ReelExpressParams,
+                        speed_factor: float | None = None) -> None:
+    """Prepara la imagen: vertical y/o texto+marca, y opcionalmente el retime.
 
-    Cuando hacen falta las dos, se fusionan en un solo filter_complex (un solo
-    decode+encode en vez de dos). Si solo hace falta una, delega en el process()
-    del módulo correspondiente. Corre como sub-job (thread de la fase prep).
+    Todo lo que exija re-encodear el clip se fusiona en UN solo filter_complex
+    (un decode+encode, una sola generación de pérdida):
+      - conversión a vertical (build_filter_complex de vertical_convert)
+      - texto/marca (build_filters de watermark)
+      - speed match, si llega `speed_factor`: el MISMO setpts que aplicaría
+        sound_drop, pero dentro de esta pasada que ya encodea. El audio del
+        clip se retima con atempo para que el resultado sea consistente, y la
+        mezcla posterior puede ir en -c:v copy (un encode completo menos).
+
+    Sin speed_factor y con una sola tarea, delega en el process() del módulo.
+    Corre como sub-job (thread de la fase prep).
     """
     do_vertical = params.convert_vertical
     do_wm = params.has_watermark
 
-    if do_vertical and not do_wm:
-        vertical_processor.process(job_id, clip_path, output_path, params.vertical)
-        return
-    if do_wm and not do_vertical:
-        watermark_processor.process(job_id, clip_path, output_path, params.watermark)
-        return
+    if speed_factor is None:
+        if do_vertical and not do_wm:
+            vertical_processor.process(job_id, clip_path, output_path, params.vertical)
+            return
+        if do_wm and not do_vertical:
+            watermark_processor.process(job_id, clip_path, output_path, params.watermark)
+            return
 
     temp_files: list[str] = []
+    watermark_path = None
     try:
         duration = ffmpeg_runner.probe_duration(clip_path)
 
-        (font_path, primary_files, secondary_files,
-         watermark_path, temp_files) = watermark_processor.prepare_assets(params.watermark)
+        filters: list[str] = []
+        cur = "[0:v]"
+        if do_vertical:
+            filters.append(
+                vertical_processor.build_filter_complex(params.vertical, out="[vc]"))
+            cur = "[vc]"
+        if do_wm:
+            (font_path, primary_files, secondary_files,
+             watermark_path, temp_files) = watermark_processor.prepare_assets(params.watermark)
+            filters += watermark_processor.build_filters(
+                params.watermark, font_path=font_path, primary_files=primary_files,
+                secondary_files=secondary_files, watermark_path=watermark_path,
+                src=cur, out="[vw]", wm_index=1,
+            )
+            cur = "[vw]"
 
-        # vertical: [0:v] → [vc]; watermark: [vc] → [vout]. El PNG es el input 1.
-        filters = [vertical_processor.build_filter_complex(params.vertical, out="[vc]")]
-        filters += watermark_processor.build_filters(
-            params.watermark, font_path=font_path, primary_files=primary_files,
-            secondary_files=secondary_files, watermark_path=watermark_path,
-            src="[vc]", out="[vout]", wm_index=1,
-        )
+        out_duration = duration
+        if speed_factor is not None:
+            filters.append(f"{cur}setpts={speed_factor:.6f}*PTS[vsp]")
+            cur = "[vsp]"
+            if duration:
+                out_duration = duration * speed_factor
+
+        if speed_factor is not None and ffmpeg_runner.has_audio_stream(clip_path):
+            tempo = 1.0 / speed_factor
+            filters.append(f"[0:a]{ffmpeg_runner.atempo_chain(tempo)}[asp]")
+            audio_maps = ["-map", "[asp]"]
+        else:
+            audio_maps = ["-map", "0:a?"]
 
         cmd = [config.FFMPEG_PATH, "-y", "-i", clip_path]
         if watermark_path:
             cmd += ["-i", watermark_path]
         cmd += [
             "-filter_complex", ";".join(filters),
-            "-map", "[vout]",
-            "-map", "0:a?",
+            "-map", cur,
+            *audio_maps,
             *ffmpeg_runner.video_encode_flags(),
             "-c:a", "aac",
             output_path,
         ]
         # cwd=BASE_DIR: los drawtext usan rutas relativas (ver watermark._esc).
-        ffmpeg_runner.run(cmd, job_id, total_duration=duration, cwd=config.BASE_DIR)
+        ffmpeg_runner.run(cmd, job_id, total_duration=out_duration, cwd=config.BASE_DIR)
         job_manager.update_job(job_id, status="done", progress=100)
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
         job_manager.update_job(job_id, status="error", error=str(exc))
@@ -123,6 +154,25 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         # Si el clip ya viene 9:16 y no hay texto/marca, no hay nada que
         # preparar: el clip va directo a la mezcla (un encode menos).
         needs_visual = params.convert_vertical or params.has_watermark
+
+        # --- Fusión del speed match en la pasada visual ---
+        # Si el clip ya se va a re-encodear (vertical/marca), el retime va
+        # gratis en esa misma pasada y la mezcla baja a -c:v copy: se elimina
+        # un decode+encode completo del reel. La duración del audio se conoce
+        # sin descargarlo (metadatos de yt-dlp) o con un ffprobe local; si el
+        # probe falla, se cae al camino clásico (sound_drop retima).
+        speed_factor = None
+        mix_params = params.sound_drop
+        if needs_visual and params.sound_drop.speed_match:
+            clip_dur = ffmpeg_runner.probe_duration(clip_path)
+            if params.audio_source == "url":
+                audio_dur = downloader_processor.probe_duration(params.downloader)
+            else:
+                audio_dur = ffmpeg_runner.probe_duration(audio_path)
+            if clip_dur and audio_dur:
+                speed_factor = audio_dur / clip_dur
+                mix_params = replace(params.sound_drop, speed_match=False)
+
         sub_v = None
         vertical_out = clip_path
         if needs_visual:
@@ -137,7 +187,7 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         if sub_v:
             t_v = threading.Thread(
                 target=_prepare_visual_job,
-                args=(sub_v, clip_path, vertical_out, params),
+                args=(sub_v, clip_path, vertical_out, params, speed_factor),
                 daemon=True,
             )
         t_d = None
@@ -172,7 +222,7 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         job_manager.update_job(job_id, phase="mix", sub_m=sub_m)
 
         sound_drop_processor.process(
-            sub_m, vertical_out, audio_path, mix_out, params.sound_drop
+            sub_m, vertical_out, audio_path, mix_out, mix_params
         )
         _check_subjob(sub_m, "la mezcla de audio")
 
