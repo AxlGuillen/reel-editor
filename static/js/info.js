@@ -5,6 +5,7 @@
     yt_dlp:         "yt-dlp",
     faster_whisper: "faster-whisper",
     ffmpeg:         "FFmpeg",
+    encoder:        "Encoder de video",
     ffprobe:        "ffprobe",
     js_runtime:     "Runtime JS (YouTube)",
   };

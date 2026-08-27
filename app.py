@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 import config
+from core import ffmpeg_runner
 from core import file_utils
 from modules.vertical_convert.routes import bp as vertical_convert_bp
 from modules.sound_drop.routes import bp as sound_drop_bp
@@ -79,6 +80,7 @@ def create_app() -> Flask:
             yt_dlp=pkg("yt-dlp"),
             faster_whisper=pkg("faster-whisper"),
             ffmpeg=bin_version(config.FFMPEG_PATH),
+            encoder=ffmpeg_runner.encoder_info(),
             ffprobe=bin_version(config.FFPROBE_PATH),
             js_runtime=_js_runtime_info(),
         )
