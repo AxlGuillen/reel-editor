@@ -16,9 +16,15 @@ Subtítulos (opcional, default ON) parte el flujo en DOS fases, porque el usuari
 revisa/edita el texto en el medio:
   - Fase 1 (process): produce el video base y, si hay subs, lo transcribe y
     deja los segmentos en el job (status done + segments). El video base
-    sobrevive para la fase 2.
+    sobrevive para la fase 2. Con speed match, la transcripción es TEMPRANA:
+    lee la narración (no el base) y corre en paralelo con la pasada visual,
+    así el editor aparece apenas termina el encode.
   - Fase 2 (finish): con los segmentos editados, quema los subtítulos sobre el
     base → reel final. Los subs van últimos, así quedan encima de todo.
+
+Con "No revisar" (skip_review) y speed match, el flujo colapsa a UNA fase y UN
+solo encode: transcribir la narración → quemar el .ass dentro de la propia
+pasada visual → mezcla en copy (ver _process_fast_subs).
 
 No hay lógica de filtros propia: compone los fragmentos puros de cada módulo
 (build_filter_complex / build_filters) y reusa sus process()/helpers.
@@ -48,7 +54,8 @@ def _check_subjob(sub_id: str, etapa: str) -> dict:
 
 def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
                         params: ReelExpressParams,
-                        speed_factor: float | None = None) -> None:
+                        speed_factor: float | None = None,
+                        ass_path: str | None = None) -> None:
     """Prepara la imagen: vertical y/o texto+marca, y opcionalmente el retime.
 
     Todo lo que exija re-encodear el clip se fusiona en UN solo filter_complex
@@ -59,14 +66,17 @@ def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
         sound_drop, pero dentro de esta pasada que ya encodea. El audio del
         clip se retima con atempo para que el resultado sea consistente, y la
         mezcla posterior puede ir en -c:v copy (un encode completo menos).
+      - subtítulos, si llega `ass_path` (camino rápido de "No revisar"): el
+        filtro ass va al FINAL de la cadena, después del retime, porque sus
+        timestamps viven en el timeline del audio (= el timeline retimado).
 
-    Sin speed_factor y con una sola tarea, delega en el process() del módulo.
-    Corre como sub-job (thread de la fase prep).
+    Sin speed_factor ni ass y con una sola tarea, delega en el process() del
+    módulo. Corre como sub-job (thread de la fase prep).
     """
     do_vertical = params.convert_vertical
     do_wm = params.has_watermark
 
-    if speed_factor is None:
+    if speed_factor is None and ass_path is None:
         if do_vertical and not do_wm:
             vertical_processor.process(job_id, clip_path, output_path, params.vertical)
             return
@@ -102,6 +112,10 @@ def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
             if duration:
                 out_duration = duration * speed_factor
 
+        if ass_path is not None:
+            filters.append(f"{cur}{subtitles_processor.ass_filter(ass_path)}[vsub]")
+            cur = "[vsub]"
+
         if speed_factor is not None and ffmpeg_runner.has_audio_stream(clip_path):
             tempo = 1.0 / speed_factor
             filters.append(f"[0:a]{ffmpeg_runner.atempo_chain(tempo)}[asp]")
@@ -127,6 +141,66 @@ def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:
         watermark_processor.cleanup_assets(temp_files)
+
+
+def _process_fast_subs(job_id: str, clip_path: str, params: ReelExpressParams, *,
+                       audio_path: str | None, speed_factor: float,
+                       mix_params, intermedios: list[str]) -> None:
+    """Camino rápido de "No revisar": el reel completo con UN solo encode.
+
+    Sin pausa de edición el orden se invierte: descargar → transcribir la
+    narración (GPU, segundos) → quemar el .ass DENTRO de la pasada visual
+    (vertical + marca + speed match + subs en un filter_complex) → mezcla en
+    -c:v copy directo al output final. Se elimina el segundo decode+encode
+    (el quemado) y una generación de pérdida.
+
+    Se pierde el paralelismo descarga∥visual (el .ass debe existir antes del
+    encode), pero la descarga son segundos y el encode eliminado, decenas.
+    """
+    ass_path = None
+    try:
+        job_manager.update_job(job_id, fast_subs=True)
+
+        # 1) Audio de la narración (descarga si es link)
+        if params.audio_source == "url":
+            sub_d = job_manager.create_job(params.downloader.url, output_path="")
+            job_manager.update_job(job_id, phase="prep", sub_d=sub_d)
+            downloader_processor.process(sub_d, params.downloader)
+            audio_path = _check_subjob(sub_d, "la descarga del audio")["output_path"]
+            intermedios.append(audio_path)
+
+        # 2) Transcripción de la narración (timeline == timeline final retimado)
+        sub_t = job_manager.create_job(audio_path, output_path="")
+        job_manager.update_job(job_id, phase="transcribe", sub_t=sub_t)
+        segments = subtitles_processor.transcribe(
+            audio_path, params.subtitles, job_id=sub_t)
+        job_manager.update_job(sub_t, status="done", progress=100)
+
+        # 3) Pasada visual única, con los subtítulos adentro
+        ass_path = subtitles_processor.prepare_ass(segments, params.subtitles)
+        sub_v = job_manager.create_job(clip_path, output_path="")
+        visual_out = file_utils.output_path_for(sub_v)
+        job_manager.update_job(job_id, phase="visual", sub_v=sub_v)
+        _prepare_visual_job(sub_v, clip_path, visual_out, params,
+                            speed_factor, ass_path=ass_path)
+        _check_subjob(sub_v, "la pasada de video (vertical/marca/subtítulos)")
+        intermedios.append(visual_out)
+
+        # 4) Mezcla (-c:v copy: el retime ya se hizo) directo al reel final
+        sub_m = job_manager.create_job(visual_out, output_path="")
+        final_out = file_utils.output_path_for(job_id)
+        job_manager.update_job(job_id, phase="mix", sub_m=sub_m)
+        sound_drop_processor.process(
+            sub_m, visual_out, audio_path, final_out, mix_params)
+        _check_subjob(sub_m, "la mezcla de audio")
+
+        job_manager.update_job(job_id, status="done", progress=100, phase=None,
+                               output_path=final_out, fast_done=True)
+        file_utils.cleanup_paths(*intermedios)
+    except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
+        job_manager.update_job(job_id, status="error", error=str(exc))
+    finally:
+        file_utils.cleanup_paths(ass_path)
 
 
 def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
@@ -173,6 +247,23 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
                 speed_factor = audio_dur / clip_dur
                 mix_params = replace(params.sound_drop, speed_match=False)
 
+        # --- Transcripción TEMPRANA de la narración ---
+        # Con speed match, el video se retima AL timeline del audio: transcribir
+        # la narración (limpia, ya disponible) da los mismos timestamps que
+        # transcribir el base, pero puede correr en paralelo con la pasada
+        # visual (flujo con revisión) o antes de ella (camino rápido de
+        # "No revisar", que además quema los subs en esa misma pasada).
+        early_subs = params.has_subtitles and speed_factor is not None
+        fast_path = early_subs and params.skip_review and not params.has_dynamic
+
+        if fast_path:
+            _process_fast_subs(
+                job_id, clip_path, params,
+                audio_path=audio_path, speed_factor=speed_factor,
+                mix_params=mix_params, intermedios=intermedios,
+            )
+            return
+
         sub_v = None
         vertical_out = clip_path
         if needs_visual:
@@ -181,7 +272,36 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         sub_d = None
         if params.audio_source == "url":
             sub_d = job_manager.create_job(params.downloader.url, output_path="")
-        job_manager.update_job(job_id, phase="prep", sub_v=sub_v, sub_d=sub_d)
+        sub_t = None
+        if early_subs:
+            sub_t = job_manager.create_job(audio_path or params.downloader.url,
+                                           output_path="")
+        job_manager.update_job(job_id, phase="prep", sub_v=sub_v, sub_d=sub_d,
+                               sub_t=sub_t, early_subs=early_subs)
+
+        # Con transcripción temprana, la cadena descarga→transcripción corre en
+        # UN thread (la transcripción necesita el audio), en paralelo con la
+        # pasada visual. Los resultados quedan en los sub-jobs.
+        segments_holder: dict = {}
+
+        def _audio_chain() -> None:
+            if sub_d:
+                downloader_processor.process(sub_d, params.downloader)
+                d = job_manager.get_job(sub_d)
+                if not d or d["status"] == "error":
+                    job_manager.update_job(
+                        sub_t, status="error",
+                        error=(d or {}).get("error") or "falló la descarga")
+                    return
+                src = d["output_path"]
+            else:
+                src = audio_path
+            try:
+                segments_holder["segments"] = subtitles_processor.transcribe(
+                    src, params.subtitles, job_id=sub_t)
+                job_manager.update_job(sub_t, status="done", progress=100)
+            except Exception as exc:  # noqa: BLE001 - se reporta vía el sub-job
+                job_manager.update_job(sub_t, status="error", error=str(exc))
 
         t_v = None
         if sub_v:
@@ -191,7 +311,9 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
                 daemon=True,
             )
         t_d = None
-        if sub_d:
+        if sub_t:
+            t_d = threading.Thread(target=_audio_chain, daemon=True)
+        elif sub_d:
             t_d = threading.Thread(
                 target=downloader_processor.process,
                 args=(sub_d, params.downloader),
@@ -212,6 +334,8 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
         if sub_d:
             audio_path = _check_subjob(sub_d, "la descarga del audio")["output_path"]
             intermedios.append(audio_path)
+        if sub_t:
+            _check_subjob(sub_t, "la transcripción de la voz")
 
         # --- Fase mix: audio sobre el vertical(+marca). Produce el video base ---
         # Si hay subtítulos o fondo dinámico, el mix es intermedio (viene más).
@@ -247,14 +371,19 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
             intermedios.append(base_out)   # el mix deja de ser el base
             base_out = cut_out
 
-        # --- Fase subtítulos: transcribir el base y pausar para edición ---
+        # --- Fase subtítulos: pausar para edición ---
+        # Con transcripción temprana los segmentos ya están (se hicieron en
+        # paralelo con la pasada visual); si no, se transcribe el base acá.
         if params.has_subtitles:
-            sub_t = job_manager.create_job(base_out, output_path="")
-            job_manager.update_job(job_id, phase="transcribe", sub_t=sub_t)
-            segments = subtitles_processor.transcribe(
-                base_out, params.subtitles, job_id=sub_t
-            )
-            job_manager.update_job(sub_t, status="done", progress=100)
+            if early_subs:
+                segments = segments_holder["segments"]
+            else:
+                sub_t = job_manager.create_job(base_out, output_path="")
+                job_manager.update_job(job_id, phase="transcribe", sub_t=sub_t)
+                segments = subtitles_processor.transcribe(
+                    base_out, params.subtitles, job_id=sub_t
+                )
+                job_manager.update_job(sub_t, status="done", progress=100)
             # El base debe sobrevivir a la fase 2: NO lo borramos.
             file_utils.cleanup_paths(*intermedios)
             job_manager.update_job(

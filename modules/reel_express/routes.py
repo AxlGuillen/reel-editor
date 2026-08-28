@@ -116,6 +116,17 @@ def _bands(job: dict) -> dict:
     """
     subs = job.get("has_subs")
     dyn = job.get("has_dyn")
+    # Camino rápido de "No revisar": descarga → transcripción → pasada visual
+    # (el palo largo, con los subs adentro) → mezcla en copy.
+    if job.get("fast_subs"):
+        return {"prep": (0, 12), "transcribe": (12, 28),
+                "visual": (28, 90), "mix": (90, 100)}
+    # Transcripción temprana: corre DENTRO de prep (en paralelo con la pasada
+    # visual), así que no hay fase transcribe aparte.
+    if subs and job.get("early_subs"):
+        if dyn:
+            return {"prep": (0, 60), "mix": (60, 75), "dynamic": (75, 100)}
+        return {"prep": (0, 80), "mix": (80, 100)}
     if subs and dyn:
         return {"prep": (0, 25), "mix": (25, 38), "dynamic": (38, 55),
                 "transcribe": (55, 100)}
@@ -134,13 +145,18 @@ def _aggregate_progress(job: dict) -> tuple[int, str]:
     if phase == "prep":
         lo, hi = bands["prep"]
         # Promedia solo los sub-jobs que existan: la preparación visual se salta
-        # cuando el clip ya viene 9:16 y no hay texto/marca.
+        # cuando el clip ya viene 9:16 y no hay texto/marca; sub_t existe solo
+        # con transcripción temprana (corre dentro de prep, en paralelo).
         progresos = [
             (job_manager.get_job(job[key]) or {}).get("progress", 0)
-            for key in ("sub_v", "sub_d") if job.get(key)
+            for key in ("sub_v", "sub_d", "sub_t") if job.get(key)
         ]
         base = sum(progresos) / len(progresos) if progresos else 100
         return int(lo + base / 100 * (hi - lo)), "Preparando video y audio…"
+    if phase == "visual":
+        lo, hi = bands["visual"]
+        v = (job_manager.get_job(job.get("sub_v")) or {}).get("progress", 0)
+        return int(lo + (v / 100) * (hi - lo)), "Generando reel con subtítulos…"
     if phase == "mix":
         lo, hi = bands["mix"]
         m = (job_manager.get_job(job.get("sub_m")) or {}).get("progress", 0)
@@ -175,6 +191,10 @@ def status(job_id):
         stage=stage,
         error=job["error"],
         segments=job.get("segments"),
+        # Camino rápido de "No revisar": la fase 1 ya produjo el reel FINAL
+        # (subs quemados en la pasada visual); el frontend no debe llamar a
+        # /finish, solo mostrar el resultado.
+        finished=bool(job.get("fast_done")),
     )
 
 

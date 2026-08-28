@@ -331,15 +331,41 @@ def _esc_filter(path: str) -> str:
     return rel.replace(":", "\\:").replace("'", "\\'")
 
 
+def ass_filter(ass_path: str) -> str:
+    """Fragmento de filtro `ass=…:fontsdir=…` (para -vf o un filter_complex).
+
+    Requiere correr FFmpeg con cwd=BASE_DIR (las rutas van relativas). Lo usan
+    build_command y la pasada fusionada de reel_express.
+    """
+    fonts_dir = os.path.relpath(config.FONTS_FOLDER, config.BASE_DIR).replace("\\", "/")
+    return f"ass={_esc_filter(ass_path)}:fontsdir={fonts_dir}"
+
+
+def prepare_ass(segments_data: list[dict], params: SubtitlesParams) -> str:
+    """Arma el .ass desde los segmentos y devuelve su ruta (el caller lo borra).
+
+    Centraliza lo que hacían render_job y los pipelines por su cuenta:
+    reconstruir palabras, resolver la fuente y escribir el archivo.
+    """
+    seg_words = words_from_segments(segments_data)
+    if not seg_words:
+        raise RuntimeError("No hay texto en los subtítulos para generar.")
+
+    font_name = "Poppins-Bold"
+    font_path = config.resolve_font_path()
+    if font_path:
+        font_name = os.path.splitext(os.path.basename(font_path))[0]
+
+    return _write_ass(build_ass(seg_words, params, font_name=font_name))
+
+
 def build_command(video_path: str, ass_path: str, output_path: str) -> list[str]:
     """Comando FFmpeg para quemar el .ass sobre el video (audio sin tocar)."""
-    fonts_dir = os.path.relpath(config.FONTS_FOLDER, config.BASE_DIR).replace("\\", "/")
-    ass_filter = f"ass={_esc_filter(ass_path)}:fontsdir={fonts_dir}"
     return [
         config.FFMPEG_PATH,
         "-y",
         "-i", video_path,
-        "-vf", ass_filter,
+        "-vf", ass_filter(ass_path),
         *ffmpeg_runner.video_encode_flags(),
         "-c:a", "copy",
         output_path,
@@ -353,17 +379,7 @@ def render_job(job_id: str, video_path: str, segments_data: list[dict],
     try:
         job_manager.update_job(job_id, status="processing", progress=5,
                                stage="Generando subtítulos…")
-        seg_words = words_from_segments(segments_data)
-        if not seg_words:
-            raise RuntimeError("No hay texto en los subtítulos para generar.")
-
-        font_name = "Poppins-Bold"
-        font_path = config.resolve_font_path()
-        if font_path:
-            font_name = os.path.splitext(os.path.basename(font_path))[0]
-
-        ass_content = build_ass(seg_words, params, font_name=font_name)
-        ass_path = _write_ass(ass_content)
+        ass_path = prepare_ass(segments_data, params)
         job_manager.update_job(job_id, progress=10, stage="Quemando subtítulos…")
 
         video_dur = ffmpeg_runner.probe_duration(video_path)

@@ -34,6 +34,9 @@ class ReelExpressParams:
     watermark: WatermarkParams | None = None      # solo si hay texto o marca
     add_subtitles: bool = True                    # subtítulos karaoke al final
     subtitles: SubtitlesParams | None = None       # solo si add_subtitles
+    # "No revisar": sin pausa de edición. Le permite al backend elegir el
+    # camino rápido (transcribir antes y quemar los subs en la pasada visual).
+    skip_review: bool = False
     # Fondo dinámico (cutaway): mete pedazos de una "caída" entre partes del
     # video, SIN cortar la narración. Marcadores como fracciones (0–1) del base.
     dynamic_bg: bool = False
@@ -83,10 +86,12 @@ class ReelExpressParams:
         # 1601 (si el form no la trae). El resto de los params usa sus defaults.
         add_subtitles = _to_bool(form.get("add_subtitles"), True)
         subtitles = None
+        skip_review = False
         if add_subtitles:
             subtitles = SubtitlesParams.from_form(form)
             if not (form.get("position_y") or "").strip():
                 subtitles.position_y = REEL_SUBTITLE_POSITION_Y
+            skip_review = _to_bool(form.get("skip_review"), False)
 
         # Fondo dinámico: opcional. Los marcadores son fracciones (0–1) del video
         # base, así el punto no se corre si sound_drop cambia la duración.
@@ -110,6 +115,7 @@ class ReelExpressParams:
             downloader=downloader, convert_vertical=convert_vertical,
             watermark=watermark,
             add_subtitles=add_subtitles, subtitles=subtitles,
+            skip_review=skip_review,
             dynamic_bg=dynamic_bg, dynamic_markers=dynamic_markers,
             dynamic_slice_durations=dynamic_slice_durations,
         )

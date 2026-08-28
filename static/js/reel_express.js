@@ -455,6 +455,8 @@ rxProcessBtn.addEventListener("click", () => {
   // Subtítulos
   form.append("add_subtitles", rxAddSubs.checked ? "1" : "0");
   if (rxAddSubs.checked) {
+    // El backend usa skip_review para el camino rápido de un solo encode.
+    form.append("skip_review", el("rx-skip-review").checked ? "1" : "0");
     form.append("language", el("rx-sub-language").value);
     form.append("model", el("rx-sub-model").value);
     form.append("font_size", el("rx-sub-font-size").value);
@@ -476,10 +478,17 @@ rxProcessBtn.addEventListener("click", () => {
       rxPollJob(data.job_id, {
         onProgress: rxSetProgress,
         onDone: (jobId, d) => {
+          // Camino rápido del backend ("No revisar"): la fase 1 ya trae el
+          // reel final con los subs quemados; no hay /finish que llamar.
+          if (d.finished) {
+            rxShowResult(jobId);
+            return;
+          }
           if (rxAddSubs.checked) {
             rxSegments = d.segments || [];
             if (el("rx-skip-review").checked) {
-              // Sin revisión: generar directo con la transcripción tal cual.
+              // Fallback sin camino rápido (p. ej. sin speed match): generar
+              // directo con la transcripción tal cual, como antes.
               rxRunFinish(rxSegments);
             } else {
               // Fase 1 lista: mostrar el editor de subtítulos para revisar/corregir.
