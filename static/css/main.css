@@ -186,9 +186,10 @@ a:hover { color: var(--text); }
   z-index: 50;
   transition: width var(--dur) var(--ease-out);
 }
-/* Se superpone al contenido: la grilla no salta al expandirse. */
-.sidebar:hover,
-.sidebar:focus-within { width: 226px; }
+/* El rail se expande por ELECCIÓN (botón), no por hover: expandirse al pasar
+   el mouse resultaba incómodo. El estado vive en :root[data-rail] (lo escribe
+   el script del <head> antes de pintar) y se recuerda en localStorage. */
+:root[data-rail="expanded"] .sidebar { width: 226px; }
 
 .brand {
   display: flex;
@@ -208,17 +209,49 @@ a:hover { color: var(--text); }
   color: var(--on-solid);
   transition: width var(--dur) var(--ease-out);
 }
-.sidebar:hover .brand,
-.sidebar:focus-within .brand { width: 202px; }
-.brand .icon {
+:root[data-rail="expanded"] .brand { width: 202px; }
+/* Logo de marca: el SVG ya trae su propio fondo y color, así que va como
+   <img> (la clase .icon fuerza fill:none y lo dejaría invisible). */
+.brand-logo {
   width: 38px;
   height: 38px;
   flex: none;
-  padding: 10px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  border-radius: 14px;
+  display: block;
+  border-radius: 12px;
 }
+.brand-name { overflow: hidden; }
+
+/* Botón que colapsa/expande el rail */
+.rail-toggle {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 38px;
+  height: 34px;
+  flex: none;
+  margin: 0 12px 8px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 14px;
+  color: rgba(244, 244, 241, .38);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: width var(--dur) var(--ease-out),
+              background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+.rail-toggle:hover { color: var(--on-solid); background: var(--on-solid-fill); }
+.rail-toggle .icon { transition: transform var(--dur) var(--ease-out); }
+.rail-toggle-label { opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+:root[data-rail="expanded"] .rail-toggle { width: 202px; }
+:root[data-rail="expanded"] .rail-toggle .icon { transform: rotate(180deg); }
+:root[data-rail="expanded"] .rail-toggle-label { opacity: 1; }
 
 /* La nav toma el alto restante y hace scroll si no entra; marca y footer
    quedan fijos arriba y abajo. */
@@ -257,8 +290,7 @@ a:hover { color: var(--text); }
               background var(--dur-fast) var(--ease-out),
               color var(--dur-fast) var(--ease-out);
 }
-.sidebar:hover .nav-item,
-.sidebar:focus-within .nav-item { width: 202px; }
+:root[data-rail="expanded"] .nav-item { width: 202px; }
 .nav-item:hover { color: var(--on-solid); background: var(--on-solid-fill); }
 .nav-item.active {
   background: var(--on-solid-fill);
@@ -288,8 +320,7 @@ a:hover { color: var(--text); }
   letter-spacing: .12em;
   text-transform: uppercase;
 }
-.sidebar:hover .nav-section,
-.sidebar:focus-within .nav-section {
+:root[data-rail="expanded"] .nav-section {
   height: auto;
   min-height: 0;
   line-height: 1.5;
@@ -327,8 +358,7 @@ a:hover { color: var(--text); }
               background var(--dur-fast) var(--ease-out),
               color var(--dur-fast) var(--ease-out);
 }
-.sidebar:hover .cleanup-btn,
-.sidebar:focus-within .cleanup-btn { width: 202px; }
+:root[data-rail="expanded"] .cleanup-btn { width: 202px; }
 .cleanup-btn:hover { color: var(--accent); background: var(--on-solid-fill); }
 .cleanup-btn:disabled { opacity: .4; cursor: not-allowed; }
 .cleanup-status {
@@ -338,8 +368,7 @@ a:hover { color: var(--text); }
   color: var(--on-solid-dim);
   margin: 8px 14px 0;
 }
-.sidebar:hover .cleanup-status,
-.sidebar:focus-within .cleanup-status { display: block; }
+:root[data-rail="expanded"] .cleanup-status { display: block; }
 .cleanup-status.err { color: var(--accent); }
 
 /* ── Lienzo ─────────────────────────────────────────────────────────────── */
@@ -348,7 +377,11 @@ a:hover { color: var(--text); }
   min-width: 0;
   margin-left: 80px;          /* 62 del rail + 18 de gap */
   padding-bottom: 32px;
+  transition: margin-left var(--dur) var(--ease-out);
 }
+/* Con el rail expandido por elección el estado es permanente: el contenido se
+   corre en vez de quedar tapado (con el hover, que era temporal, se superponía). */
+:root[data-rail="expanded"] .content { margin-left: 244px; }  /* 226 + 18 */
 .content > .module-view { max-width: 1180px; margin: 0 auto; }
 
 .module-header { padding: 2px 0 20px; }
@@ -379,13 +412,15 @@ a:hover { color: var(--text); }
     overflow-y: hidden;
     border-radius: var(--r-rail);
   }
-  .sidebar:hover, .sidebar:focus-within { width: auto; }
-  .brand, .sidebar:hover .brand { width: 38px; margin: 0 8px 0 0; }
+  /* Como barra inferior no hay colapso: se neutraliza el estado expandido. */
+  :root[data-rail="expanded"] .sidebar { width: auto; }
+  .brand, :root[data-rail="expanded"] .brand { width: 38px; margin: 0 8px 0 0; }
+  .rail-toggle { display: none; }
   .nav { flex-direction: row; align-items: center; gap: 4px; }
   .nav-item,
-  .sidebar:hover .nav-item { width: 38px; margin: 0; }
+  :root[data-rail="expanded"] .nav-item { width: 38px; margin: 0; }
   .nav-section,
-  .sidebar:hover .nav-section {
+  :root[data-rail="expanded"] .nav-section {
     width: 1px;
     height: 24px;
     min-width: 1px;
@@ -395,9 +430,10 @@ a:hover { color: var(--text); }
     color: transparent;
   }
   .sidebar-footer { margin: 0 0 0 auto; padding: 0; }
-  .cleanup-btn, .sidebar:hover .cleanup-btn { width: 38px; margin: 0; }
-  .cleanup-status, .sidebar:hover .cleanup-status { display: none; }
-  .content { margin-left: 0; padding-bottom: 84px; }
+  .cleanup-btn, :root[data-rail="expanded"] .cleanup-btn { width: 38px; margin: 0; }
+  .cleanup-status, :root[data-rail="expanded"] .cleanup-status { display: none; }
+  .content,
+  :root[data-rail="expanded"] .content { margin-left: 0; padding-bottom: 84px; }
 }
 
 /* Card blanca flotante — la sombra difusa es lo que la despega del lienzo. */

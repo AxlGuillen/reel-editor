@@ -8,6 +8,39 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   });
 });
 
+// --- Rail: colapsar / expandir por elección ---
+// El estado ya viene aplicado por el script del <head> (evita el salto de
+// ancho al cargar); acá solo se refleja en el botón y se persiste al cambiar.
+const railToggle = document.getElementById("rail-toggle");
+const railLabel = document.getElementById("rail-toggle")
+  ?.querySelector(".rail-toggle-label");
+
+// Con el rail colapsado solo se ve el ícono: el tooltip nativo da el nombre
+// sin tener que expandir. Se toma del propio texto para no duplicarlo.
+document.querySelectorAll(".nav-item").forEach((btn) => {
+  const txt = btn.textContent.trim();
+  if (txt) btn.title = txt;
+});
+
+function paintRail(state) {
+  const expanded = state === "expanded";
+  if (railLabel) railLabel.textContent = expanded ? "Colapsar" : "Expandir";
+  railToggle.title = expanded ? "Colapsar menú" : "Expandir menú";
+  railToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+}
+
+paintRail(document.documentElement.getAttribute("data-rail"));
+
+railToggle.addEventListener("click", () => {
+  const next =
+    document.documentElement.getAttribute("data-rail") === "expanded"
+      ? "collapsed"
+      : "expanded";
+  document.documentElement.setAttribute("data-rail", next);
+  try { localStorage.setItem("reelforge-rail", next); } catch (e) {}
+  paintRail(next);
+});
+
 // --- Tema claro / oscuro ---
 // El tema ya quedó aplicado por el script del <head> (evita el parpadeo);
 // acá solo se refleja en el botón y se persiste al cambiarlo.
