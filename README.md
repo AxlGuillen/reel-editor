@@ -129,3 +129,9 @@ La arquitectura interna y las guías para agregar módulos están en [`CLAUDE.md
 - El **Instagram** es el menos confiable (a veces pide login). YouTube y TikTok públicos andan bien.
 - Descargar de estas plataformas puede ir contra sus términos de servicio; usalo para contenido propio o de uso personal.
 - No hay autenticación: no expongas el puerto en una red pública.
+
+---
+
+<p align="center">
+  <img src="static/img/4xl-logo.svg" alt="4XL" width="72">
+</p>
