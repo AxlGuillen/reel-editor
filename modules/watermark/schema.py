@@ -10,7 +10,7 @@ from dataclasses import dataclass
 _INT_PARAMS = {
     "text_size": (55, 24, 140),       # px de la fuente (lienzo de 1080 de ancho)
     "text_y": (20, 0, 100),           # posición vertical del bloque (% del alto)
-    "watermark_size": (50, 10, 70),   # % del ancho del video
+    "watermark_size": (50, 10, 100),  # % del ancho del video
     # Posición vertical del watermark (% del alto). Permite desbordar (-50 a 200)
     # para acomodarlo aunque quede parcialmente fuera del cuadro.
     "watermark_y": (100, -50, 200),

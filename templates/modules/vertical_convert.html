@@ -63,6 +63,47 @@
         </select>
       </label>
 
+      <label class="control">
+        <span>Ajuste fino vertical <em id="offset-val">0</em>%</span>
+        <input type="range" id="main_clip_offset" min="-50" max="50" value="0">
+      </label>
+
+      <h3 class="rx-group">Marcador (HUD) <span class="rx-optional">opcional</span></h3>
+      <label class="control-check">
+        <input type="checkbox" id="hud-enabled">
+        <span>Recortar el marcador del juego y flotarlo como placa</span>
+      </label>
+      <div id="hud-controls" class="hidden">
+        <p class="hint" style="margin-bottom:12px;">
+          La región se recorta del clip original (en %). Los valores por defecto
+          apuntan al marcador de LoL en 1080p; afiná mirando el preview.
+        </p>
+        <label class="control">
+          <span>Región: X <em id="hud-x-val">70</em>%</span>
+          <input type="range" id="hud_x" min="0" max="99" step="0.5" value="70">
+        </label>
+        <label class="control">
+          <span>Región: Y <em id="hud-y-val">0</em>%</span>
+          <input type="range" id="hud_y" min="0" max="99" step="0.5" value="0">
+        </label>
+        <label class="control">
+          <span>Región: ancho <em id="hud-w-val">29</em>%</span>
+          <input type="range" id="hud_w" min="1" max="100" step="0.5" value="29">
+        </label>
+        <label class="control">
+          <span>Región: alto <em id="hud-h-val">5.5</em>%</span>
+          <input type="range" id="hud_h" min="1" max="100" step="0.5" value="5.5">
+        </label>
+        <label class="control">
+          <span>Tamaño de la placa <em id="hud-scale-val">55</em>%</span>
+          <input type="range" id="hud_scale" min="10" max="100" value="55">
+        </label>
+        <label class="control">
+          <span>Posición vertical de la placa <em id="hud-pos-val">10</em>%</span>
+          <input type="range" id="hud_pos_y" min="0" max="100" value="10">
+        </label>
+      </div>
+
       <button id="process-btn" class="btn-primary">Procesar a vertical</button>
     </div>
   </div>

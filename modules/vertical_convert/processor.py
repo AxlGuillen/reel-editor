@@ -34,13 +34,14 @@ def build_filter_complex(params: VerticalConvertParams,
     # Capa principal: escalada por ancho del lienzo y zoom configurable.
     fg_width = _even(W * params.main_clip_scale)
 
-    # Posición vertical del clip principal.
+    # Posición vertical del clip principal: preset + ajuste fino (px).
+    off_px = round(params.main_clip_offset / 100 * H)
     if params.main_clip_position == "top":
-        overlay_y = "0"
+        overlay_y = str(off_px)
     elif params.main_clip_position == "bottom":
-        overlay_y = "H-h"
+        overlay_y = f"H-h{off_px:+d}" if off_px else "H-h"
     else:
-        overlay_y = "(H-h)/2"
+        overlay_y = f"(H-h)/2{off_px:+d}" if off_px else "(H-h)/2"
 
     if sigma >= 8:
         # gblur es el filtro más caro de la cadena y su costo escala con los
@@ -83,7 +84,25 @@ def build_filter_complex(params: VerticalConvertParams,
     else:
         parts.append(f"{src}scale={fg_width}:-2[fg]")
 
-    parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}{out}")
+    if params.hud:
+        # Marcador (HUD): tercer consumo del clip fuente. Se recorta la región
+        # (en fracciones de iw/ih: independiente de la resolución del clip),
+        # se escala al ancho pedido y se enmarca con un pad asimétrico
+        # (2px arriba/izquierda, 6px abajo/derecha) que hace de placa con
+        # sombra. Va ENCIMA del clip principal, centrado.
+        parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}[vmain]")
+        hud_px = _even(W * params.hud_scale / 100)
+        fx, fy = params.hud_x / 100, params.hud_y / 100
+        fw, fh = params.hud_w / 100, params.hud_h / 100
+        parts.append(
+            f"{src}crop=iw*{fw:.4f}:ih*{fh:.4f}:iw*{fx:.4f}:ih*{fy:.4f},"
+            f"scale={hud_px}:-2,"
+            f"pad=iw+8:ih+8:2:2:0x0C100E[hud]"
+        )
+        hud_y = params.hud_pos_y / 100
+        parts.append(f"[vmain][hud]overlay=(W-w)/2:(H-h)*{hud_y:.4f}{out}")
+    else:
+        parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}{out}")
     return ";".join(parts)
 
 

@@ -104,6 +104,7 @@ function drawVerticalPreview() {
   if (position === "top") fgY = 0;
   else if (position === "bottom") fgY = CANVAS_H - fgH;
   else fgY = (CANVAS_H - fgH) / 2;
+  fgY += (+el("main_clip_offset").value / 100) * CANVAS_H;
 
   if (enhance > 0) {
     const i = enhance / 100;
@@ -116,6 +117,25 @@ function drawVerticalPreview() {
   }
   vCtx.drawImage(preview, fgX, fgY, fgW, fgH);
   vCtx.filter = "none";
+
+  // Marcador (HUD): recorte del clip fuente flotando como placa con borde
+  // asimétrico (espeja el crop+pad del processor).
+  if (el("hud-enabled").checked) {
+    const sx = vw * (+el("hud_x").value / 100);
+    const sy = vh * (+el("hud_y").value / 100);
+    const sw = vw * (+el("hud_w").value / 100);
+    const sh = vh * (+el("hud_h").value / 100);
+    if (sw >= 2 && sh >= 2) {
+      const dw = CANVAS_W * (+el("hud_scale").value / 100);
+      const dh = dw * (sh / sw);
+      const dx = (CANVAS_W - dw) / 2;
+      const dy = (CANVAS_H - dh) * (+el("hud_pos_y").value / 100);
+      const s = CANVAS_W / 1080;
+      vCtx.fillStyle = "#0C100E";
+      vCtx.fillRect(dx - 2 * s, dy - 2 * s, dw + 8 * s, dh + 8 * s);
+      vCtx.drawImage(preview, sx, sy, sw, sh, dx, dy, dw, dh);
+    }
+  }
 }
 
 // --- Sliders: live value labels ---
@@ -124,7 +144,19 @@ const liveLabels = {
   bg_brightness: "brightness-val",
   main_clip_scale: "scale-val",
   enhance_intensity: "enhance-val",
+  main_clip_offset: "offset-val",
+  hud_x: "hud-x-val",
+  hud_y: "hud-y-val",
+  hud_w: "hud-w-val",
+  hud_h: "hud-h-val",
+  hud_scale: "hud-scale-val",
+  hud_pos_y: "hud-pos-val",
 };
+
+// Marcador (HUD): toggle de sus controles
+el("hud-enabled").addEventListener("change", () => {
+  el("hud-controls").classList.toggle("hidden", !el("hud-enabled").checked);
+});
 Object.entries(liveLabels).forEach(([inputId, labelId]) => {
   const input = el(inputId);
   input.addEventListener("input", () => (el(labelId).textContent = input.value));
@@ -140,7 +172,11 @@ processBtn.addEventListener("click", () => {
   form.append("bg_brightness", el("bg_brightness").value);
   form.append("main_clip_scale", el("main_clip_scale").value);
   form.append("main_clip_position", el("main_clip_position").value);
+  form.append("main_clip_offset", el("main_clip_offset").value);
   form.append("enhance_intensity", el("enhance_intensity").value);
+  form.append("hud_enabled", el("hud-enabled").checked ? "1" : "0");
+  ["hud_x", "hud_y", "hud_w", "hud_h", "hud_scale", "hud_pos_y"].forEach(
+    (k) => form.append(k, el(k).value));
 
   resetOutputs();
   processBtn.disabled = true;
