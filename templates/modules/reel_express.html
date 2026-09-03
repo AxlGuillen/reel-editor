@@ -49,6 +49,55 @@
         Desactivalo si el clip <strong>ya viene en 9:16</strong>, para no pasarlo
         dos veces por el mismo tratamiento.
       </p>
+      <label class="control">
+        <span>Posición del clip (altura)</span>
+        <select id="rx-main_clip_position">
+          <option value="center" selected>Centro</option>
+          <option value="top">Arriba</option>
+          <option value="bottom">Abajo</option>
+        </select>
+      </label>
+      <label class="control">
+        <span>Ajuste fino vertical <em id="rx-offset-val">0</em>%</span>
+        <input type="range" id="rx-main_clip_offset" min="-50" max="50" value="0">
+      </label>
+
+      <h3 class="rx-group">Marcador (HUD)</h3>
+      <label class="control-check">
+        <input type="checkbox" id="rx-hud-enabled" checked>
+        <span>Recortar el marcador del juego y flotarlo como placa</span>
+      </label>
+      <div id="rx-hud-controls">
+        <p class="hint" style="margin-bottom:12px;">
+          Región en % del clip original (defaults: marcador de LoL 1080p).
+          Requiere la conversión a vertical activa. Afiná mirando el preview.
+        </p>
+        <label class="control">
+          <span>Recorte: borde izquierdo <em id="rx-hud-left-val">80</em>%</span>
+          <input type="range" id="rx-hud_left" min="0" max="100" step="0.5" value="80">
+        </label>
+        <label class="control">
+          <span>Recorte: borde derecho <em id="rx-hud-right-val">99.5</em>%</span>
+          <input type="range" id="rx-hud_right" min="0" max="100" step="0.5" value="99.5">
+        </label>
+        <label class="control">
+          <span>Recorte: borde superior <em id="rx-hud-top-val">0</em>%</span>
+          <input type="range" id="rx-hud_top" min="0" max="100" step="0.5" value="0">
+        </label>
+        <label class="control">
+          <span>Recorte: borde inferior <em id="rx-hud-bottom-val">3</em>%</span>
+          <input type="range" id="rx-hud_bottom" min="0" max="100" step="0.5" value="3">
+        </label>
+        <label class="control">
+          <span>Tamaño de la placa <em id="rx-hud-scale-val">91</em>%</span>
+          <input type="range" id="rx-hud_scale" min="10" max="100" value="91">
+        </label>
+        <label class="control">
+          <span>Posición vertical de la placa <em id="rx-hud-pos-val">23</em>%</span>
+          <input type="range" id="rx-hud_pos_y" min="0" max="100" value="23">
+        </label>
+      </div>
+
 
       <!-- Fuente de audio -->
       <h3 class="rx-group">Audio</h3>
@@ -210,55 +259,6 @@
           <span>Realce de imagen <em id="rx-enhance-val">85</em></span>
           <input type="range" id="rx-enhance_intensity" min="0" max="100" value="85">
         </label>
-        <label class="control">
-          <span>Posición del clip</span>
-          <select id="rx-main_clip_position">
-            <option value="center" selected>Centro</option>
-            <option value="top">Arriba</option>
-            <option value="bottom">Abajo</option>
-          </select>
-        </label>
-        <label class="control">
-          <span>Ajuste fino vertical <em id="rx-offset-val">0</em>%</span>
-          <input type="range" id="rx-main_clip_offset" min="-50" max="50" value="0">
-        </label>
-
-        <h3 class="rx-group">Marcador (HUD) <span class="rx-optional">opcional</span></h3>
-        <label class="control-check">
-          <input type="checkbox" id="rx-hud-enabled">
-          <span>Recortar el marcador del juego y flotarlo como placa</span>
-        </label>
-        <div id="rx-hud-controls" class="hidden">
-          <p class="hint" style="margin-bottom:12px;">
-            Región en % del clip original (defaults: marcador de LoL 1080p).
-            Requiere la conversión a vertical activa. Afiná mirando el preview.
-          </p>
-          <label class="control">
-            <span>Recorte: borde izquierdo <em id="rx-hud-left-val">80</em>%</span>
-            <input type="range" id="rx-hud_left" min="0" max="100" step="0.5" value="80">
-          </label>
-          <label class="control">
-            <span>Recorte: borde derecho <em id="rx-hud-right-val">99.5</em>%</span>
-            <input type="range" id="rx-hud_right" min="0" max="100" step="0.5" value="99.5">
-          </label>
-          <label class="control">
-            <span>Recorte: borde superior <em id="rx-hud-top-val">0</em>%</span>
-            <input type="range" id="rx-hud_top" min="0" max="100" step="0.5" value="0">
-          </label>
-          <label class="control">
-            <span>Recorte: borde inferior <em id="rx-hud-bottom-val">3</em>%</span>
-            <input type="range" id="rx-hud_bottom" min="0" max="100" step="0.5" value="3">
-          </label>
-          <label class="control">
-            <span>Tamaño de la placa <em id="rx-hud-scale-val">55</em>%</span>
-            <input type="range" id="rx-hud_scale" min="10" max="100" value="55">
-          </label>
-          <label class="control">
-            <span>Posición vertical de la placa <em id="rx-hud-pos-val">10</em>%</span>
-            <input type="range" id="rx-hud_pos_y" min="0" max="100" value="10">
-          </label>
-        </div>
-
         <h3 class="rx-group">Mezcla de audio</h3>
         <label class="control">
           <span>Volumen original <em id="rx-vo-val">0</em></span>

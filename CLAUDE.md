@@ -100,9 +100,9 @@ Convierte 16:9 → 9:16 con efecto "split blur background": fondo = el clip esca
 | `main_clip_position` | string | "center" | center / top / bottom |
 | `main_clip_offset` | int | 0 | −50–50 (% del alto; se SUMA al preset) |
 | `enhance_intensity` | int | 85 | 0–100 (realce de imagen) |
-| `hud_enabled` | bool | false | Marcador (HUD): recorta una región del clip fuente y la flota como placa redondeada (borde blanco + sombra) |
+| `hud_enabled` | bool | false (Reel Express: ON) | Marcador (HUD): recorta una región del clip fuente y la flota como placa redondeada (borde blanco + sombra) |
 | `hud_left` / `hud_right` / `hud_top` / `hud_bottom` | float | 80 / 99.5 / 0 / 3 | bordes de la región (% del clip fuente; defaults = marcador de LoL 1080p) |
-| `hud_scale` / `hud_pos_y` | int | 55 / 10 | ancho de la placa (% del lienzo) / posición vertical (%) |
+| `hud_scale` / `hud_pos_y` | int | 91 / 23 | ancho de la placa (% del lienzo) / posición vertical (%) |
 
 **Input:** `video`. **UI:** preview vertical en vivo en un `<canvas>` que replica el efecto mientras movés los sliders. La placa del HUD se arma en el mismo filter_complex (máscara redondeada y sombra calculadas sobre UN frame con `trim=end_frame=1`, reutilizadas vía `repeatlast`): costo extra nulo. Reel Express hereda todo esto vía `VerticalConvertParams`.
 

@@ -9,8 +9,8 @@ _INT_PARAMS = {
     # a la posición elegida (top/center/bottom). Negativo = más arriba.
     "main_clip_offset": (0, -50, 50),
     # Marcador (HUD) recortado del clip fuente y superpuesto como placa.
-    "hud_scale": (55, 10, 100),      # ancho de la placa (% del lienzo)
-    "hud_pos_y": (10, 0, 100),       # posición vertical (% del alto libre)
+    "hud_scale": (91, 10, 100),      # ancho de la placa (% del lienzo)
+    "hud_pos_y": (23, 0, 100),       # posición vertical (% del alto libre)
 }
 _FLOAT_PARAMS = {
     "bg_brightness": (0.5, 0.3, 1.0),
@@ -41,8 +41,8 @@ class VerticalConvertParams:
     hud_right: float = 99.5
     hud_top: float = 0.0
     hud_bottom: float = 3.0
-    hud_scale: int = 55
-    hud_pos_y: int = 10
+    hud_scale: int = 91
+    hud_pos_y: int = 23
 
     @classmethod
     def from_form(cls, form) -> "VerticalConvertParams":
