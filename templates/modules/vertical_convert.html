@@ -75,24 +75,24 @@
       </label>
       <div id="hud-controls" class="hidden">
         <p class="hint" style="margin-bottom:12px;">
-          La región se recorta del clip original (en %). Los valores por defecto
+          Cada borde recorta el clip original (en % del ancho/alto). Los valores por defecto
           apuntan al marcador de LoL en 1080p; afiná mirando el preview.
         </p>
         <label class="control">
-          <span>Región: X <em id="hud-x-val">70</em>%</span>
-          <input type="range" id="hud_x" min="0" max="99" step="0.5" value="70">
+          <span>Recorte: borde izquierdo <em id="hud-left-val">80</em>%</span>
+          <input type="range" id="hud_left" min="0" max="100" step="0.5" value="80">
         </label>
         <label class="control">
-          <span>Región: Y <em id="hud-y-val">0</em>%</span>
-          <input type="range" id="hud_y" min="0" max="99" step="0.5" value="0">
+          <span>Recorte: borde derecho <em id="hud-right-val">99.5</em>%</span>
+          <input type="range" id="hud_right" min="0" max="100" step="0.5" value="99.5">
         </label>
         <label class="control">
-          <span>Región: ancho <em id="hud-w-val">29</em>%</span>
-          <input type="range" id="hud_w" min="1" max="100" step="0.5" value="29">
+          <span>Recorte: borde superior <em id="hud-top-val">0</em>%</span>
+          <input type="range" id="hud_top" min="0" max="100" step="0.5" value="0">
         </label>
         <label class="control">
-          <span>Región: alto <em id="hud-h-val">5.5</em>%</span>
-          <input type="range" id="hud_h" min="1" max="100" step="0.5" value="5.5">
+          <span>Recorte: borde inferior <em id="hud-bottom-val">3</em>%</span>
+          <input type="range" id="hud_bottom" min="0" max="100" step="0.5" value="3">
         </label>
         <label class="control">
           <span>Tamaño de la placa <em id="hud-scale-val">55</em>%</span>

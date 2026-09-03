@@ -15,13 +15,16 @@ _INT_PARAMS = {
 _FLOAT_PARAMS = {
     "bg_brightness": (0.5, 0.3, 1.0),
     "main_clip_scale": (1.55, 0.7, 5.0),
-    # Región del marcador en el clip FUENTE (% del ancho/alto del original).
+    # Región del marcador en el clip FUENTE, como BORDES (% del ancho/alto del
+    # original): izquierda/derecha y arriba/abajo. Cada borde se mueve solo,
+    # así recortar "un poco más de la izquierda" es un slider y nada más.
     # Defaults calibrados al marcador de LoL en 1080p (esquina sup. derecha).
-    "hud_x": (70.0, 0.0, 99.0),
-    "hud_y": (0.0, 0.0, 99.0),
-    "hud_w": (29.0, 1.0, 100.0),
-    "hud_h": (5.5, 1.0, 100.0),
+    "hud_left": (80.0, 0.0, 100.0),
+    "hud_right": (99.5, 0.0, 100.0),
+    "hud_top": (0.0, 0.0, 100.0),
+    "hud_bottom": (3.0, 0.0, 100.0),
 }
+HUD_MIN_SIZE = 1.0   # % mínimo de ancho/alto de la región
 _VALID_POSITIONS = {"center", "top", "bottom"}
 
 
@@ -34,10 +37,10 @@ class VerticalConvertParams:
     main_clip_offset: int = 0
     enhance_intensity: int = 85
     hud: bool = False
-    hud_x: float = 70.0
-    hud_y: float = 0.0
-    hud_w: float = 29.0
-    hud_h: float = 5.5
+    hud_left: float = 80.0
+    hud_right: float = 99.5
+    hud_top: float = 0.0
+    hud_bottom: float = 3.0
     hud_scale: int = 55
     hud_pos_y: int = 10
 
@@ -69,14 +72,14 @@ class VerticalConvertParams:
         values["hud"] = str(form.get("hud_enabled") or "").lower() in {
             "1", "true", "on", "yes"}
         if values["hud"]:
-            if values["hud_x"] + values["hud_w"] > 100:
+            if values["hud_right"] - values["hud_left"] < HUD_MIN_SIZE:
                 raise ValueError(
-                    "La región del marcador se sale del clip a lo ancho "
-                    "(x + ancho supera el 100%).")
-            if values["hud_y"] + values["hud_h"] > 100:
+                    "La región del marcador no tiene ancho: el borde derecho "
+                    "tiene que quedar a la derecha del izquierdo.")
+            if values["hud_bottom"] - values["hud_top"] < HUD_MIN_SIZE:
                 raise ValueError(
-                    "La región del marcador se sale del clip a lo alto "
-                    "(y + alto supera el 100%).")
+                    "La región del marcador no tiene alto: el borde inferior "
+                    "tiene que quedar debajo del superior.")
 
         return cls(**values)
 

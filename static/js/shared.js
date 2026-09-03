@@ -47,3 +47,34 @@ function runJob(apiBase, formData, { onProgress, onDone, onError }) {
     }, 1000);
   }
 }
+
+/** Dibuja la placa del marcador en un canvas 9:16 (compartido por módulos). */
+function drawHudPlate(ctx, video, vw, vh, cw, ch, get, pfx = "") {
+  const left = +get(pfx + "hud_left").value, right = +get(pfx + "hud_right").value;
+  const top = +get(pfx + "hud_top").value, bottom = +get(pfx + "hud_bottom").value;
+  const sx = vw * (left / 100), sy = vh * (top / 100);
+  const sw = vw * ((right - left) / 100), sh = vh * ((bottom - top) / 100);
+  if (sw < 2 || sh < 2) return;
+  const s = cw / 1080;                 // escala px lienzo → px canvas
+  const border = 4 * s, radius = 18 * s;
+  const dw = cw * (+get(pfx + "hud_scale").value / 100);
+  const dh = dw * (sh / sw);
+  const px = (cw - dw - 2 * border) / 2;
+  const py = (ch - dh - 2 * border) * (+get(pfx + "hud_pos_y").value / 100);
+  ctx.save();
+  // Placa blanca (borde) con sombra suave desplazada hacia abajo.
+  ctx.shadowColor = "rgba(0,0,0,0.55)";
+  ctx.shadowBlur = 14 * s;
+  ctx.shadowOffsetY = 6 * s;
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.roundRect(px, py, dw + 2 * border, dh + 2 * border, radius);
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  // Recorte del video, con las esquinas redondeadas por dentro del borde.
+  ctx.beginPath();
+  ctx.roundRect(px + border, py + border, dw, dh, Math.max(0, radius - border));
+  ctx.clip();
+  ctx.drawImage(video, sx, sy, sw, sh, px + border, py + border, dw, dh);
+  ctx.restore();
+}

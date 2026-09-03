@@ -257,22 +257,9 @@ function drawVertical() {
   rxCtx.drawImage(rxVideo, fgX, fgY, fgW, fgH);
   rxCtx.filter = "none";
 
-  // Marcador (HUD): espeja el crop+pad del processor.
+  // Marcador (HUD): placa redondeada (drawHudPlate en shared.js).
   if (el("rx-hud-enabled").checked) {
-    const sx = vw * (+el("rx-hud_x").value / 100);
-    const sy = vh * (+el("rx-hud_y").value / 100);
-    const sw = vw * (+el("rx-hud_w").value / 100);
-    const sh = vh * (+el("rx-hud_h").value / 100);
-    if (sw >= 2 && sh >= 2) {
-      const dw = RX_W * (+el("rx-hud_scale").value / 100);
-      const dh = dw * (sh / sw);
-      const dx = (RX_W - dw) / 2;
-      const dy = (RX_H - dh) * (+el("rx-hud_pos_y").value / 100);
-      const s = RX_W / 1080;
-      rxCtx.fillStyle = "#0C100E";
-      rxCtx.fillRect(dx - 2 * s, dy - 2 * s, dw + 8 * s, dh + 8 * s);
-      rxCtx.drawImage(rxVideo, sx, sy, sw, sh, dx, dy, dw, dh);
-    }
+    drawHudPlate(rxCtx, rxVideo, vw, vh, RX_W, RX_H, (id) => el(id), "rx-");
   }
 }
 
@@ -410,10 +397,10 @@ const rxLabels = {
   "rx-main_clip_scale": "rx-scale-val",
   "rx-enhance_intensity": "rx-enhance-val",
   "rx-main_clip_offset": "rx-offset-val",
-  "rx-hud_x": "rx-hud-x-val",
-  "rx-hud_y": "rx-hud-y-val",
-  "rx-hud_w": "rx-hud-w-val",
-  "rx-hud_h": "rx-hud-h-val",
+  "rx-hud_left": "rx-hud-left-val",
+  "rx-hud_right": "rx-hud-right-val",
+  "rx-hud_top": "rx-hud-top-val",
+  "rx-hud_bottom": "rx-hud-bottom-val",
   "rx-hud_scale": "rx-hud-scale-val",
   "rx-hud_pos_y": "rx-hud-pos-val",
   "rx-original_volume": "rx-vo-val",
@@ -470,8 +457,8 @@ rxProcessBtn.addEventListener("click", () => {
   form.append("main_clip_position", el("rx-main_clip_position").value);
   form.append("main_clip_offset", el("rx-main_clip_offset").value);
   form.append("hud_enabled", el("rx-hud-enabled").checked ? "1" : "0");
-  ["hud_x", "hud_y", "hud_w", "hud_h", "hud_scale", "hud_pos_y"].forEach(
-    (k) => form.append(k, el("rx-" + k).value));
+  ["hud_left", "hud_right", "hud_top", "hud_bottom", "hud_scale", "hud_pos_y"]
+    .forEach((k) => form.append(k, el("rx-" + k).value));
   // Mezcla
   form.append("original_volume", el("rx-original_volume").value);
   form.append("new_volume", el("rx-new_volume").value);
