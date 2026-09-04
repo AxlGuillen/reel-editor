@@ -78,3 +78,37 @@ function drawHudPlate(ctx, video, vw, vh, cw, ch, get, pfx = "") {
   ctx.drawImage(video, sx, sy, sw, sh, px + border, py + border, dw, dh);
   ctx.restore();
 }
+
+// --- Selector de archivos con carpeta inicial ---
+// Un <input type="file"> no puede elegir en qué carpeta abre. La File System
+// Access API (Chrome/Edge) sí: `startIn` fija la carpeta inicial y `id` hace
+// que el navegador RECUERDE la última carpeta usada por cada tipo de selector.
+// Así el audio abre en Descargas, y los clips en Videos la primera vez y en
+// la carpeta que hayas usado (p. ej. Overwolf/Insights Capture) las siguientes.
+// En navegadores sin la API (Firefox) cae al input clásico.
+const FILE_PICKERS = {
+  clip: {
+    id: "reelforge-clips", startIn: "videos",
+    types: [{ description: "Video", accept: {
+      "video/mp4": [".mp4"], "video/quicktime": [".mov"],
+      "video/x-matroska": [".mkv"], "video/x-msvideo": [".avi"] } }],
+  },
+  audio: {
+    id: "reelforge-audio", startIn: "downloads",
+    types: [{ description: "Audio o video", accept: {
+      "audio/mpeg": [".mp3"], "audio/wav": [".wav"], "audio/mp4": [".m4a"],
+      "audio/aac": [".aac"], "audio/ogg": [".ogg"], "video/mp4": [".mp4"],
+      "video/quicktime": [".mov"], "video/x-matroska": [".mkv"] } }],
+  },
+};
+function openFilePicker(kind, fallbackInput, onFile) {
+  const opts = FILE_PICKERS[kind];
+  if (!window.showOpenFilePicker || !opts) { fallbackInput.click(); return; }
+  window.showOpenFilePicker({ ...opts, multiple: false })
+    .then(([handle]) => handle.getFile())
+    .then((file) => { if (file) onFile(file); })
+    .catch((err) => {
+      // AbortError = el usuario canceló. Cualquier otro fallo: input clásico.
+      if (err && err.name !== "AbortError") fallbackInput.click();
+    });
+}

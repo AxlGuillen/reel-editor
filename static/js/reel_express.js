@@ -58,8 +58,8 @@ fetch("/api/font").then((r) => r.json()).then((info) => {
 });
 
 // --- Drag & drop genérico para una zona ---
-function wireDropZone(zone, input, onFile) {
-  zone.addEventListener("click", () => input.click());
+function wireDropZone(zone, input, onFile, pickerKind) {
+  zone.addEventListener("click", () => openFilePicker(pickerKind, input, onFile));
   input.addEventListener("change", (e) => {
     if (e.target.files.length) onFile(e.target.files[0]);
   });
@@ -100,7 +100,7 @@ function clearZoneLoaded(zone) {
 }
 
 // --- Carga del clip ---
-wireDropZone(rxClipZone, rxClipInput, loadClip);
+wireDropZone(rxClipZone, rxClipInput, loadClip, "clip");
 function loadClip(file) {
   rxClipFile = file;
   rxVideo.src = URL.createObjectURL(file);
@@ -115,7 +115,7 @@ function loadClip(file) {
 // El nombre del clip funciona como "cambiar clip" (reabre el selector).
 rxClipName.style.cursor = "pointer";
 rxClipName.title = "Click para cambiar el clip";
-rxClipName.addEventListener("click", () => rxClipInput.click());
+rxClipName.addEventListener("click", () => openFilePicker("clip", rxClipInput, loadClip));
 
 // --- Carga del audio (fuente archivo) ---
 wireDropZone(rxAudioZone, rxAudioInput, (file) => {
@@ -123,7 +123,7 @@ wireDropZone(rxAudioZone, rxAudioInput, (file) => {
   setZoneLoaded(rxAudioZone, file.name);
   rxResetOutputs();
   updateReady();
-});
+}, "audio");
 
 // --- Toggle de fuente de audio ---
 el("rx-tab-url").addEventListener("click", () => setSource("url"));

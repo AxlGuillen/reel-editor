@@ -29,7 +29,7 @@ let rafId = null;
 let selectedFile = null;
 
 // --- Upload: click + drag & drop ---
-dropZone.addEventListener("click", () => fileInput.click());
+dropZone.addEventListener("click", () => openFilePicker("clip", fileInput, loadFile));
 fileInput.addEventListener("change", (e) => {
   if (e.target.files.length) loadFile(e.target.files[0]);
 });

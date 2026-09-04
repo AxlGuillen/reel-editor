@@ -30,8 +30,8 @@ let sdVideoFile = null;
 let sdAudioFile = null;
 
 // --- Drag & drop genérico para una zona ---
-function wireDropZone(zone, input, onFile) {
-  zone.addEventListener("click", () => input.click());
+function wireDropZone(zone, input, onFile, pickerKind) {
+  zone.addEventListener("click", () => openFilePicker(pickerKind, input, onFile));
   input.addEventListener("change", (e) => {
     if (e.target.files.length) onFile(e.target.files[0]);
   });
@@ -69,7 +69,7 @@ wireDropZone(sdAudioZone, sdAudioInput, (file) => {
   sdAudioName.textContent = file.name;
   sdResetOutputs();
   updateReady();
-});
+}, "audio");
 
 function updateReady() {
   const ready = !!(sdVideoFile && sdAudioFile);
