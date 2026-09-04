@@ -1328,7 +1328,7 @@ textarea.text-input { resize: vertical; font-family: inherit; }
   margin-top: 10px;
   box-shadow: 0 6px 14px -8px rgba(17, 18, 17, .4);
 }
-.btn-secondary:hover { color: var(--text); border-color: var(--border-strong); background: #fff; transform: translateY(-1px); }
+.btn-secondary:hover { color: var(--text); border-color: var(--border-strong); background: var(--card-hover); transform: translateY(-1px); }
 .btn-secondary:active { transform: translateY(0) scale(.98); }
 .btn-secondary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
@@ -1538,6 +1538,7 @@ a:focus:not(:focus-visible) { outline: none; }
 /* Librería de clips: botón en la drop zone + galería modal */
 .drop-lib-btn {
   margin-top: 14px;
+  width: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
