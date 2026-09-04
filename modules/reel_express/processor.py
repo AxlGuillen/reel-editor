@@ -205,8 +205,12 @@ def _process_fast_subs(job_id: str, clip_path: str, params: ReelExpressParams, *
 
 def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
             audio_path: str | None = None,
-            dynamic_clip_path: str | None = None) -> None:
+            dynamic_clip_path: str | None = None,
+            keep_clip: bool = False) -> None:
     """Fase 1 del pipeline (bloqueante). Reporta al job del pipeline.
+
+    `keep_clip=True` cuando el clip viene de la librería local (no es un
+    upload temporal): se procesa in situ y jamás se borra.
 
     `audio_path` viene seteado cuando la fuente es un archivo subido; cuando es
     un link queda None y se completa con la descarga.
@@ -215,7 +219,7 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
     segmentos en el job (status done + segments), a la espera de la fase 2.
     Si no, el video base es el reel final.
     """
-    intermedios: list[str] = [clip_path]
+    intermedios: list[str] = [] if keep_clip else [clip_path]
     if audio_path:
         intermedios.append(audio_path)
     if dynamic_clip_path:

@@ -40,7 +40,8 @@ reel-editor/
 │   ├── insert/                 ← Insertar un mini-clip en marcadores
 │   ├── downloader/             ← Descargar assets (YouTube/TikTok/IG) con yt-dlp
 │   ├── audio_merge/            ← Unir varios audios + capar pausas
-│   └── assets/                 ← CRUD de watermarks + fuente (blueprint, no procesa video)
+│   ├── assets/                 ← CRUD de watermarks + fuente (blueprint, no procesa video)
+│   └── library/                ← Librería de clips: lista la carpeta local de capturas (sin upload)
 │       ├── routes.py           ← Blueprint Flask con sus endpoints
 │       ├── processor.py        ← Lógica del módulo (FFmpeg / yt-dlp / whisper)
 │       └── schema.py           ← Parámetros y validación del módulo
@@ -213,6 +214,17 @@ GET    /api/font                  → ¿hay fuente cargada?
 GET    /assets/font               → servir la fuente (para el @font-face del preview)
 ```
 
+### library — librería de clips locales
+
+No procesa video: lista la **carpeta local de capturas** (`config.CLIPS_LIBRARY_FOLDER`, por defecto `~/Videos/Overwolf/Insights Capture`; override con la env var `REELFORGE_CLIPS_FOLDER`) para elegir un clip **sin subirlo**: las grabaciones de Overwolf pesan varios GB y superan el límite de upload. Vertical y Reel Express aceptan `library_clip=<nombre>` en lugar del archivo y procesan el original **in situ** (Reel Express lo marca `keep_clip` para no borrarlo con los intermedios).
+
+```
+GET /api/library/clips                → { folder, available, clips:[{name,size,mtime,duration,ok,url,thumb}] } (más nuevos primero)
+GET /api/library/clips/<name>/file    → el video (con Range, para el <video> del preview)
+GET /api/library/clips/<name>/thumb   → miniatura JPG (cache en cache/thumbs/; 3 s o 25 % si dura >5 min)
+```
+`ok=false` = ffprobe no lo pudo leer (grabación cortada sin `moov`): se lista como dañado, no elegible. **UI:** botón "Elegir de mis capturas" en la drop zone → galería modal (`openClipLibrary` en `shared.js`); el clip elegido es `{name, url, fromLibrary:true}` y `appendClip()` manda `library_clip` en vez del archivo.
+
 ### Endpoints (contrato común)
 
 ```
@@ -278,7 +290,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 9 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 10 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 

@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 import config
 from core import file_utils, job_manager
+from modules.library.routes import resolve_clip
 from modules.reel_express import processor
 from modules.reel_express.schema import ReelExpressParams
 from modules.subtitles.schema import SubtitlesParams
@@ -15,18 +16,21 @@ bp = Blueprint("reel_express", __name__, url_prefix="/api/reel-express")
 
 @bp.post("/process")
 def process():
-    if "clip" not in request.files:
-        return jsonify(error="Falta el archivo 'clip' (video 16:9)"), 400
-    clip = request.files["clip"]
-    if not clip.filename:
-        return jsonify(error="Nombre de clip vacío"), 400
-    if not config.allowed_file(clip.filename):
-        return jsonify(
-            error=f"Clip: extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"
-        ), 400
+    # El clip llega subido ("clip") o como nombre de la librería de clips
+    # ("library_clip"): en ese caso se procesa in situ y NO se borra al final.
+    library_clip = (request.form.get("library_clip") or "").strip()
+    clip = request.files.get("clip")
+    if not library_clip:
+        if not clip or not clip.filename:
+            return jsonify(error="Falta el archivo 'clip' (video 16:9)"), 400
+        if not config.allowed_file(clip.filename):
+            return jsonify(
+                error=f"Clip: extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"
+            ), 400
 
     try:
         params = ReelExpressParams.from_form(request.form)
+        library_path = resolve_clip(library_clip) if library_clip else None
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
@@ -54,7 +58,7 @@ def process():
             ), 400
         dynamic_clip_path = file_utils.save_upload(dyn)
 
-    clip_path = file_utils.save_upload(clip)
+    clip_path = library_path or file_utils.save_upload(clip)
     job_id = job_manager.create_job(clip_path, output_path="")
     # has_subs/has_dyn definen las bandas de progreso (ver _aggregate_progress).
     # output_name: nombre elegido por el usuario para la descarga (opcional).
@@ -65,7 +69,8 @@ def process():
     thread = threading.Thread(
         target=processor.process,
         args=(job_id, clip_path, params),
-        kwargs={"audio_path": audio_path, "dynamic_clip_path": dynamic_clip_path},
+        kwargs={"audio_path": audio_path, "dynamic_clip_path": dynamic_clip_path,
+                "keep_clip": library_path is not None},
         daemon=True,
     )
     thread.start()

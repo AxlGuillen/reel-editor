@@ -9,6 +9,7 @@ env/
 uploads/
 outputs/
 downloads/
+cache/
 
 # Cookies de yt-dlp: SENSIBLE, jamás debe entrar al repo
 cookies/

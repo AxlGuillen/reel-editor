@@ -20,6 +20,14 @@ FONTS_FOLDER = os.path.join(ASSETS_FOLDER, "fonts")
 COOKIES_FOLDER = os.path.join(BASE_DIR, "cookies")
 COOKIES_FILE = os.path.join(COOKIES_FOLDER, "cookies.txt")
 
+# Librería de clips: carpeta LOCAL que la app lista y procesa in situ (sin
+# subir el archivo por el browser: las capturas de Overwolf pesan varios GB).
+# Se puede apuntar a otra carpeta con la variable de entorno
+# REELFORGE_CLIPS_FOLDER. Las miniaturas se cachean en cache/thumbs/.
+CLIPS_LIBRARY_FOLDER = os.environ.get("REELFORGE_CLIPS_FOLDER") or os.path.join(
+    os.path.expanduser("~"), "Videos", "Overwolf", "Insights Capture")
+THUMBS_FOLDER = os.path.join(BASE_DIR, "cache", "thumbs")
+
 MAX_UPLOAD_SIZE_MB = 2000
 MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 

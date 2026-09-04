@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 import config
 from core import file_utils, job_manager
+from modules.library.routes import resolve_clip
 from modules.vertical_convert import processor
 from modules.vertical_convert.schema import VerticalConvertParams
 
@@ -14,23 +15,24 @@ bp = Blueprint("vertical_convert", __name__,
 
 @bp.post("/process")
 def process():
-    if "video" not in request.files:
-        return jsonify(error="Falta el archivo 'video'"), 400
-
-    file = request.files["video"]
-    if not file.filename:
-        return jsonify(error="Nombre de archivo vacío"), 400
-    if not config.allowed_file(file.filename):
-        return jsonify(
-            error=f"Extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"
-        ), 400
+    # El video llega subido ("video") o como nombre de la librería de clips
+    # ("library_clip"), en cuyo caso se procesa in situ, sin copiarlo.
+    library_clip = (request.form.get("library_clip") or "").strip()
+    file = request.files.get("video")
+    if not library_clip:
+        if not file or not file.filename:
+            return jsonify(error="Falta el archivo 'video'"), 400
+        if not config.allowed_file(file.filename):
+            return jsonify(
+                error=f"Extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"
+            ), 400
 
     try:
         params = VerticalConvertParams.from_form(request.form)
+        input_path = (resolve_clip(library_clip) if library_clip
+                      else file_utils.save_upload(file))
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
-
-    input_path = file_utils.save_upload(file)
     job_id = job_manager.create_job(input_path, output_path="")
     output_path = file_utils.output_path_for(job_id)
     job_manager.update_job(job_id, output_path=output_path)

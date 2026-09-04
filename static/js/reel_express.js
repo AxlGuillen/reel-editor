@@ -101,9 +101,10 @@ function clearZoneLoaded(zone) {
 
 // --- Carga del clip ---
 wireDropZone(rxClipZone, rxClipInput, loadClip, "clip");
+wireLibraryButton(rxClipZone, loadClip);
 function loadClip(file) {
   rxClipFile = file;
-  rxVideo.src = URL.createObjectURL(file);
+  rxVideo.src = previewSrcFor(file);
   rxClipName.textContent = file.name;
   rxClipZone.classList.add("hidden");   // ya no hace falta el input; se cambia con el nombre
   rxEditor.classList.remove("hidden");
@@ -440,7 +441,7 @@ rxProcessBtn.addEventListener("click", () => {
   if (!rxClipFile || !audioReady) return;
 
   const form = new FormData();
-  form.append("clip", rxClipFile);
+  appendClip(form, "clip", rxClipFile);
   form.append("audio_source", rxSource);
   if (rxSource === "url") {
     form.append("url", rxUrl.value.trim());

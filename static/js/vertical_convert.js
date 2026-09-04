@@ -30,6 +30,7 @@ let selectedFile = null;
 
 // --- Upload: click + drag & drop ---
 dropZone.addEventListener("click", () => openFilePicker("clip", fileInput, loadFile));
+wireLibraryButton(dropZone, loadFile);
 fileInput.addEventListener("change", (e) => {
   if (e.target.files.length) loadFile(e.target.files[0]);
 });
@@ -53,7 +54,7 @@ dropZone.addEventListener("drop", (e) => {
 
 function loadFile(file) {
   selectedFile = file;
-  preview.src = URL.createObjectURL(file);
+  preview.src = previewSrcFor(file);
   fileName.textContent = file.name;
   editor.classList.remove("hidden");
   resetOutputs();
@@ -154,7 +155,7 @@ processBtn.addEventListener("click", () => {
   if (!selectedFile) return;
 
   const form = new FormData();
-  form.append("video", selectedFile);
+  appendClip(form, "video", selectedFile);
   form.append("blur_intensity", el("blur_intensity").value);
   form.append("bg_brightness", el("bg_brightness").value);
   form.append("main_clip_scale", el("main_clip_scale").value);
