@@ -567,7 +567,7 @@ a:hover { color: var(--text); }
               border-color var(--dur-fast) var(--ease-out),
               background var(--dur-fast) var(--ease-out);
 }
-.btn-restart:hover { color: var(--err); border-color: var(--err); background: #fff; }
+.btn-restart:hover { color: var(--err); border-color: var(--err); background: var(--card-hover); }
 .btn-restart .icon { width: 15px; height: 15px; }
 .link { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 2px; }
 .hint { font-size: 11.5px; color: var(--muted); }
@@ -1609,3 +1609,71 @@ a:focus:not(:focus-visible) { outline: none; }
 }
 .lib-name { padding: 8px 10px 2px; font-weight: 600; font-size: .85rem; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .lib-meta { padding: 0 10px; font-size: .74rem; color: var(--muted); }
+
+/* Reel Express: bloques colapsables del panel de ajustes */
+.rx-block {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card-2);
+  margin-bottom: 10px;
+}
+.rx-block summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--r-md);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.rx-block summary::-webkit-details-marker { display: none; }
+.rx-block summary:hover { background: var(--card-hover); }
+.rx-block[open] > summary { border-bottom: 1px solid var(--border); border-radius: var(--r-md) var(--r-md) 0 0; }
+.rx-block-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--text);
+  white-space: nowrap;
+}
+.rx-block-status {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.rx-block-status.on { color: var(--accent-strong); }
+.rx-block-status.warn { color: var(--err); }
+.rx-block-chevron {
+  width: 14px; height: 14px;
+  color: var(--muted);
+  transform: rotate(90deg);
+  transition: transform var(--dur) var(--ease-out);
+  flex-shrink: 0;
+}
+.rx-block[open] > summary .rx-block-chevron { transform: rotate(-90deg); }
+.rx-block-body { padding: 16px 14px 4px; }
+.rx-block-body > .control-check:first-child { margin-top: 2px; }
+.rx-subgroup {
+  margin: 4px 0 14px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--tertiary);
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--divider);
+}
+.rx-subgroup + .control, .rx-subgroup ~ .rx-subgroup { margin-top: 18px; }

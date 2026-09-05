@@ -141,6 +141,68 @@ function setSource(src) {
 function updateReady() {
   const audioReady = rxSource === "url" ? !!rxUrl.value.trim() : !!rxAudioFile;
   rxProcessBtn.disabled = !(rxClipFile && audioReady);
+  updateBlockStatus();
+}
+
+// --- Bloques colapsables del panel de ajustes ---
+// Cada bloque recuerda si lo dejaste abierto o cerrado (localStorage) y su
+// cabecera muestra un resumen del estado, así se puede plegar lo que no se
+// usa sin perder de vista qué va a hacer el pipeline.
+const RX_BLOCKS_KEY = "reelforge-rx-blocks";
+const RX_BLOCKS_DEFAULT_OPEN = { video: true, hud: false, audio: true, text: false, subs: true, advanced: false };
+const rxBlocks = [...document.querySelectorAll("#rx-editor .rx-block")];
+(function initBlocks() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(RX_BLOCKS_KEY) || "{}"); } catch (_) {}
+  rxBlocks.forEach((d) => {
+    const key = d.dataset.block;
+    d.open = key in saved ? !!saved[key] : !!RX_BLOCKS_DEFAULT_OPEN[key];
+    d.addEventListener("toggle", () => {
+      const state = {};
+      rxBlocks.forEach((b) => (state[b.dataset.block] = b.open));
+      try { localStorage.setItem(RX_BLOCKS_KEY, JSON.stringify(state)); } catch (_) {}
+    });
+  });
+  // Cualquier cambio en el panel refresca los resúmenes.
+  const panel = document.querySelector("#rx-editor .controls-panel");
+  panel.addEventListener("input", updateBlockStatus);
+  panel.addEventListener("change", updateBlockStatus);
+  updateBlockStatus();
+})();
+function setBlockStatus(key, text, tone) {
+  const s = el("rx-status-" + key);
+  if (!s) return;
+  s.textContent = text;
+  s.className = "rx-block-status" + (tone ? " " + tone : "");
+}
+function updateBlockStatus() {
+  const pos = { center: "centro", top: "arriba", bottom: "abajo" }[el("rx-main_clip_position").value];
+  const off = +el("rx-main_clip_offset").value;
+  setBlockStatus("video", el("rx-convert-vertical").checked
+    ? `Vertical · ${pos}${off ? ` ${off > 0 ? "+" : ""}${off}%` : ""}` : "Sin convertir (ya es 9:16)");
+
+  const hudOn = el("rx-hud-enabled").checked && el("rx-convert-vertical").checked;
+  setBlockStatus("hud", hudOn ? "Placa activa" : "Apagado", hudOn ? "on" : "");
+
+  if (rxSource === "url") {
+    const url = rxUrl.value.trim();
+    setBlockStatus("audio", url ? "Link listo" : "Falta el link", url ? "on" : "warn");
+  } else {
+    setBlockStatus("audio", rxAudioFile ? rxAudioFile.name : "Falta el archivo", rxAudioFile ? "on" : "warn");
+  }
+
+  const hasText = !!(el("rx-primary-text").value.trim() || el("rx-secondary-text").value.trim());
+  const hasWm = typeof rxSelectedWm === "string" && rxSelectedWm !== "";
+  const textParts = [hasText && "texto", hasWm && "marca"].filter(Boolean);
+  setBlockStatus("text", textParts.length ? textParts.join(" + ") : "Nada", textParts.length ? "on" : "");
+
+  if (!rxAddSubs.checked) setBlockStatus("subs", "Sin subtítulos");
+  else setBlockStatus("subs", el("rx-skip-review").checked ? "Karaoke · sin revisar" : "Karaoke · revisás antes", "on");
+
+  const adv = [["rx-blur_intensity", "50"], ["rx-bg_brightness", "0.5"], ["rx-main_clip_scale", "1.55"],
+    ["rx-enhance_intensity", "85"], ["rx-original_volume", "0"], ["rx-new_volume", "100"]]
+    .some(([id, def]) => el(id).value !== def) || !el("rx-fade").checked || !el("rx-speed_match").checked;
+  setBlockStatus("advanced", adv ? "Modificados" : "Por defecto", adv ? "on" : "");
 }
 rxUrl.addEventListener("input", updateReady);
 
@@ -365,6 +427,7 @@ function selectWatermark(name, img) {
   rxSelectedWm = name;
   rxWmImg = img;
   loadWatermarks();
+  updateBlockStatus();
 }
 
 el("rx-wm-upload-btn").addEventListener("click", () => el("rx-wm-upload-input").click());

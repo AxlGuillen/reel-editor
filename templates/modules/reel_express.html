@@ -42,8 +42,13 @@
     <div class="card controls-panel">
       <h2>Ajustes</h2>
 
-      <!-- Formato del clip -->
-      <h3 class="rx-group">Video</h3>
+      <details class="rx-block" data-block="video">
+        <summary>
+          <span class="rx-block-title">Video</span>
+          <span class="rx-block-status" id="rx-status-video"></span>
+          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
+        </summary>
+        <div class="rx-block-body">
       <label class="control-check">
         <input type="checkbox" id="rx-convert-vertical" checked>
         <span>Convertir a vertical (fondo blur)</span>
@@ -64,8 +69,16 @@
         <span>Ajuste fino vertical <em id="rx-offset-val">0</em>%</span>
         <input type="range" id="rx-main_clip_offset" min="-50" max="50" value="0">
       </label>
+        </div>
+      </details>
 
-      <h3 class="rx-group">Marcador (HUD)</h3>
+      <details class="rx-block" data-block="hud">
+        <summary>
+          <span class="rx-block-title">Marcador (HUD)</span>
+          <span class="rx-block-status" id="rx-status-hud"></span>
+          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
+        </summary>
+        <div class="rx-block-body">
       <label class="control-check">
         <input type="checkbox" id="rx-hud-enabled" checked>
         <span>Recortar el marcador del juego y flotarlo como placa</span>
@@ -103,7 +116,16 @@
 
 
       <!-- Fuente de audio -->
-      <h3 class="rx-group">Audio</h3>
+        </div>
+      </details>
+
+      <details class="rx-block" data-block="audio">
+        <summary>
+          <span class="rx-block-title">Audio</span>
+          <span class="rx-block-status" id="rx-status-audio"></span>
+          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
+        </summary>
+        <div class="rx-block-body">
       <div class="rx-source-tabs">
         <button type="button" id="rx-tab-url" class="rx-tab active" data-source="url"><svg class="icon"><use href="#i-link"/></svg> Link</button>
         <button type="button" id="rx-tab-file" class="rx-tab" data-source="file"><svg class="icon"><use href="#i-folder"/></svg> Archivo</button>
@@ -137,7 +159,16 @@
       </div>
 
       <!-- Texto y marca (opcional) -->
-      <h3 class="rx-group">Texto y marca <span class="rx-optional">opcional</span></h3>
+        </div>
+      </details>
+
+      <details class="rx-block" data-block="text">
+        <summary>
+          <span class="rx-block-title">Texto y marca <span class="rx-optional">opcional</span></span>
+          <span class="rx-block-status" id="rx-status-text"></span>
+          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
+        </summary>
+        <div class="rx-block-body">
       <label class="control">
         <span>Texto principal (blanco)</span>
         <textarea id="rx-primary-text" class="text-input" rows="2" placeholder="opcional"></textarea>
@@ -176,7 +207,16 @@
       </label>
 
       <!-- Subtítulos (karaoke) -->
-      <h3 class="rx-group">Subtítulos</h3>
+        </div>
+      </details>
+
+      <details class="rx-block" data-block="subs">
+        <summary>
+          <span class="rx-block-title">Subtítulos</span>
+          <span class="rx-block-status" id="rx-status-subs"></span>
+          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
+        </summary>
+        <div class="rx-block-body">
       <label class="control-check">
         <input type="checkbox" id="rx-add-subs" checked>
         <span>Agregar subtítulos automáticos (karaoke)</span>
@@ -241,11 +281,17 @@
       <!-- El "fondo dinámico" (caídas) se quitó de acá: se trabaja en el módulo
            Insert, que soporta varios clips con marcas propias. El backend del
            pipeline sigue soportándolo (dynamic_bg queda en False sin la UI). -->
+        </div>
+      </details>
 
-      <details class="rx-advanced">
-        <summary>Ajustes avanzados de video y mezcla</summary>
-
-        <h3 class="rx-group">Video vertical</h3>
+      <details class="rx-block" data-block="advanced">
+        <summary>
+          <span class="rx-block-title">Ajustes avanzados</span>
+          <span class="rx-block-status" id="rx-status-advanced"></span>
+          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
+        </summary>
+        <div class="rx-block-body">
+        <h4 class="rx-subgroup">Video vertical</h4>
         <label class="control">
           <span>Blur del fondo <em id="rx-blur-val">50</em></span>
           <input type="range" id="rx-blur_intensity" min="0" max="50" value="50">
@@ -262,7 +308,7 @@
           <span>Realce de imagen <em id="rx-enhance-val">85</em></span>
           <input type="range" id="rx-enhance_intensity" min="0" max="100" value="85">
         </label>
-        <h3 class="rx-group">Mezcla de audio</h3>
+        <h4 class="rx-subgroup">Mezcla de audio</h4>
         <label class="control">
           <span>Volumen original <em id="rx-vo-val">0</em></span>
           <input type="range" id="rx-original_volume" min="0" max="100" value="0">
@@ -279,6 +325,7 @@
           <input type="checkbox" id="rx-speed_match" checked>
           <span>Ajustar velocidad del video al audio</span>
         </label>
+        </div>
       </details>
 
       <label class="control" style="margin-top:16px;">
