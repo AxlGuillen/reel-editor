@@ -1,0 +1,48 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-history"/></svg> Historial</h1>
+  <p class="subtitle">
+    Todo lo que se fue agregando, arreglando y optimizando en ReelForge.
+    Se lee del historial del proyecto: es solo informativo.
+  </p>
+</div>
+
+<p id="tl-loading" class="hint" style="padding:16px 0;">Leyendo el historial…</p>
+
+<div id="tl-body" class="hidden">
+  <div class="tl-stats">
+    <div class="card card-solid tl-stat">
+      <span class="tl-stat-num" id="tl-n-total">—</span>
+      <span class="tl-stat-label">hitos</span>
+      <span class="tl-stat-sub" id="tl-range"></span>
+    </div>
+    <div class="card tl-stat">
+      <span class="tl-stat-num" id="tl-n-feat">—</span>
+      <span class="tl-stat-label">features</span>
+    </div>
+    <div class="card tl-stat">
+      <span class="tl-stat-num" id="tl-n-fix">—</span>
+      <span class="tl-stat-label">arreglos</span>
+    </div>
+    <div class="card tl-stat tl-stat-accent">
+      <span class="tl-stat-num" id="tl-n-perf">—</span>
+      <span class="tl-stat-label">optimizaciones</span>
+    </div>
+  </div>
+
+  <div class="card tl-toolbar">
+    <div class="tl-filters" id="tl-filters">
+      <button type="button" class="tl-chip active" data-kind="all">Todo</button>
+      <button type="button" class="tl-chip" data-kind="feat">Features</button>
+      <button type="button" class="tl-chip" data-kind="fix">Arreglos</button>
+      <button type="button" class="tl-chip" data-kind="perf">Optimizaciones</button>
+      <button type="button" class="tl-chip" data-kind="otro">Internos</button>
+    </div>
+    <input type="search" id="tl-search" class="text-input tl-search"
+           placeholder="Buscar (subtítulos, GPU, HUD…)" aria-label="Buscar en el historial">
+  </div>
+
+  <div id="tl-list" class="tl-list"></div>
+  <p id="tl-empty" class="hint hidden" style="padding:20px 0;text-align:center;">
+    Nada coincide con el filtro.
+  </p>
+</div>

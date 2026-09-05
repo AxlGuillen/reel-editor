@@ -19,6 +19,7 @@ from modules.reel_express.routes import bp as reel_express_bp
 from modules.hook_reel.routes import bp as hook_reel_bp
 from modules.assets.routes import bp as assets_bp
 from modules.library.routes import bp as library_bp
+from modules.timeline.routes import bp as timeline_bp
 from modules.watermark.routes import bp as watermark_bp
 from modules.subtitles.routes import bp as subtitles_bp
 
@@ -42,6 +43,7 @@ def create_app() -> Flask:
     app.register_blueprint(hook_reel_bp)
     app.register_blueprint(assets_bp)
     app.register_blueprint(library_bp)
+    app.register_blueprint(timeline_bp)
     app.register_blueprint(watermark_bp)
     app.register_blueprint(subtitles_bp)
 

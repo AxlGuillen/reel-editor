@@ -41,7 +41,8 @@ reel-editor/
 │   ├── downloader/             ← Descargar assets (YouTube/TikTok/IG) con yt-dlp
 │   ├── audio_merge/            ← Unir varios audios + capar pausas
 │   ├── assets/                 ← CRUD de watermarks + fuente (blueprint, no procesa video)
-│   └── library/                ← Librería de clips: lista la carpeta local de capturas (sin upload)
+│   ├── library/                ← Librería de clips: lista la carpeta local de capturas (sin upload)
+│   └── timeline/               ← Historial del proyecto leído de git (vista informativa)
 │       ├── routes.py           ← Blueprint Flask con sus endpoints
 │       ├── processor.py        ← Lógica del módulo (FFmpeg / yt-dlp / whisper)
 │       └── schema.py           ← Parámetros y validación del módulo
@@ -225,6 +226,15 @@ GET /api/library/clips/<name>/thumb   → miniatura JPG (cache en cache/thumbs/;
 ```
 `ok=false` = ffprobe no lo pudo leer (grabación cortada sin `moov`): se lista como dañado, no elegible. **UI:** botón "Elegir de mis capturas" en la drop zone → galería modal (`openClipLibrary` en `shared.js`); el clip elegido es `{name, url, fromLibrary:true}` y `appendClip()` manda `library_clip` en vez del archivo.
 
+### timeline — historial del proyecto
+
+No procesa nada ni toca archivos: corre `git log` sobre el propio repo y devuelve los commits **convencionales** (`feat|fix|perf|refactor|docs|chore`) ya clasificados, para la vista **Historial**. Lo que no matchea el prefijo (assets sueltos, merges) queda afuera: no es un hito. El cuerpo del mensaje se desarma en párrafos y viñetas (se reunen las líneas cortadas a 72 columnas y se descartan los trailers). Cache por HEAD: el log solo se relee cuando hay un commit nuevo.
+
+```
+GET /api/timeline → { available, entries:[{hash,date,type,kind,scopes,title,detail}], stats }
+```
+`kind` ∈ `feat | fix | perf | otro` (lo que la UI colorea) y `detail` es una lista de bloques `{type:"p",text}` / `{type:"ul",items}`. Sin git (o sin repo) responde `available:false` con el motivo, no un error. **UI:** KPIs, chips de filtro por tipo, buscador (título, scope, hash y cuerpo) y línea del tiempo agrupada por mes. Al leerse de git se mantiene sola: cada commit nuevo aparece sin tocar código.
+
 ### Endpoints (contrato común)
 
 ```
@@ -290,7 +300,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 10 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 11 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
@@ -298,7 +308,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## UI
 
-`index.html` es un **app shell**: una **sidebar dividida en secciones** (`.nav-section`: Automático / Módulos / Tools Specific videos / Tools) con un nav item por módulo, y un `<section class="module-view">` por módulo (parciales con `{% include %}`). `app.js` muestra una vista a la vez (busca `.nav-item`). La vista por defecto es **Reel Express**.
+`index.html` es un **app shell**: una **sidebar dividida en secciones** (`.nav-section`: Automático / Módulos / Tools Specific videos / Tools / Sistema) con un nav item por módulo, y un `<section class="module-view">` por módulo (parciales con `{% include %}`). `app.js` muestra una vista a la vez (busca `.nav-item`). La vista por defecto es **Reel Express**.
 
 Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onDone, onError})` de `shared.js` (POST + polling). Los flujos de dos fases (subtitles, reel_express) usan un poller propio porque el status trae `segments`. El **editor de segmentos** (`SubtitleEditor` en `subtitle_editor.js`) es compartido por subtitles y reel_express. Sin librerías frontend externas (solo Vanilla JS).
 
