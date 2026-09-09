@@ -42,6 +42,47 @@
     <div class="card controls-panel">
       <h2>Ajustes</h2>
 
+      <details class="rx-block" data-block="audio">
+        <summary>
+          <span class="rx-block-title">Audio</span>
+          <span class="rx-block-status" id="rx-status-audio"></span>
+          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
+        </summary>
+        <div class="rx-block-body">
+      <div class="rx-source-tabs">
+        <button type="button" id="rx-tab-url" class="rx-tab active" data-source="url"><svg class="icon"><use href="#i-link"/></svg> Link</button>
+        <button type="button" id="rx-tab-file" class="rx-tab" data-source="file"><svg class="icon"><use href="#i-folder"/></svg> Archivo</button>
+      </div>
+
+      <div id="rx-source-url">
+        <label class="control">
+          <span>Link del audio</span>
+          <input type="text" id="rx-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
+        </label>
+        <label class="control">
+          <span>Calidad del audio</span>
+          <select id="rx-quality">
+            <option value="320">320 kbps</option>
+            <option value="192" selected>192 kbps</option>
+            <option value="128">128 kbps</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="rx-source-file" class="hidden">
+        <section id="rx-audio-zone" class="card drop-zone rx-audio-zone">
+          <input type="file" id="rx-audio-input" accept="audio/*,video/*" hidden>
+          <div class="drop-inner">
+            <p class="drop-icon"><svg class="icon"><use href="#i-mic"/></svg></p>
+            <p>Arrastra tu <strong>narración</strong> o <span class="link">haz click</span></p>
+            <p class="hint">mp3, wav, m4a, aac, ogg, mp4…</p>
+          </div>
+        </section>
+        <p id="rx-audio-name" class="file-name"></p>
+      </div>
+        </div>
+      </details>
+
       <details class="rx-block" data-block="video">
         <summary>
           <span class="rx-block-title">Video</span>
@@ -113,52 +154,6 @@
           <input type="range" id="rx-hud_pos_y" min="0" max="100" value="23">
         </label>
       </div>
-
-
-      <!-- Fuente de audio -->
-        </div>
-      </details>
-
-      <details class="rx-block" data-block="audio">
-        <summary>
-          <span class="rx-block-title">Audio</span>
-          <span class="rx-block-status" id="rx-status-audio"></span>
-          <svg class="icon rx-block-chevron"><use href="#i-chevrons"/></svg>
-        </summary>
-        <div class="rx-block-body">
-      <div class="rx-source-tabs">
-        <button type="button" id="rx-tab-url" class="rx-tab active" data-source="url"><svg class="icon"><use href="#i-link"/></svg> Link</button>
-        <button type="button" id="rx-tab-file" class="rx-tab" data-source="file"><svg class="icon"><use href="#i-folder"/></svg> Archivo</button>
-      </div>
-
-      <div id="rx-source-url">
-        <label class="control">
-          <span>Link del audio</span>
-          <input type="text" id="rx-url" class="text-input" placeholder="https://youtube.com/... o tiktok, etc.">
-        </label>
-        <label class="control">
-          <span>Calidad del audio</span>
-          <select id="rx-quality">
-            <option value="320">320 kbps</option>
-            <option value="192" selected>192 kbps</option>
-            <option value="128">128 kbps</option>
-          </select>
-        </label>
-      </div>
-
-      <div id="rx-source-file" class="hidden">
-        <section id="rx-audio-zone" class="card drop-zone rx-audio-zone">
-          <input type="file" id="rx-audio-input" accept="audio/*,video/*" hidden>
-          <div class="drop-inner">
-            <p class="drop-icon"><svg class="icon"><use href="#i-mic"/></svg></p>
-            <p>Arrastra tu <strong>narración</strong> o <span class="link">haz click</span></p>
-            <p class="hint">mp3, wav, m4a, aac, ogg, mp4…</p>
-          </div>
-        </section>
-        <p id="rx-audio-name" class="file-name"></p>
-      </div>
-
-      <!-- Texto y marca (opcional) -->
         </div>
       </details>
 
@@ -205,8 +200,6 @@
         <span>Posición vertical del watermark <em id="rx-wm-y-val">100</em>%</span>
         <input type="range" id="rx-wm-y" min="-50" max="200" value="100">
       </label>
-
-      <!-- Subtítulos (karaoke) -->
         </div>
       </details>
 
@@ -277,10 +270,6 @@
           Si lo dejás desmarcado, tras transcribir vas a poder revisar y corregir el texto antes del render final.
         </p>
       </div>
-
-      <!-- El "fondo dinámico" (caídas) se quitó de acá: se trabaja en el módulo
-           Insert, que soporta varios clips con marcas propias. El backend del
-           pipeline sigue soportándolo (dynamic_bg queda en False sin la UI). -->
         </div>
       </details>
 
@@ -327,6 +316,10 @@
         </label>
         </div>
       </details>
+
+      <!-- El "fondo dinámico" (caídas) se quitó de acá: se trabaja en el módulo
+           Insert, que soporta varios clips con marcas propias. El backend del
+           pipeline sigue soportándolo (dynamic_bg queda en False sin la UI). -->
 
       <label class="control" style="margin-top:16px;">
         <span>Nombre del archivo final <span class="rx-optional">opcional</span></span>

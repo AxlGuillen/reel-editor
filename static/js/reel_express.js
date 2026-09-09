@@ -149,7 +149,7 @@ function updateReady() {
 // cabecera muestra un resumen del estado, así se puede plegar lo que no se
 // usa sin perder de vista qué va a hacer el pipeline.
 const RX_BLOCKS_KEY = "reelforge-rx-blocks";
-const RX_BLOCKS_DEFAULT_OPEN = { video: true, hud: false, audio: true, text: false, subs: true, advanced: false };
+const RX_BLOCKS_DEFAULT_OPEN = { audio: true, video: true, hud: false, text: false, subs: true, advanced: false };
 const rxBlocks = [...document.querySelectorAll("#rx-editor .rx-block")];
 (function initBlocks() {
   let saved = {};
