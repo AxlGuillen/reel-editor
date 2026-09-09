@@ -132,7 +132,7 @@ Compone sobre un video vertical un bloque de texto (principal blanco + secundari
 | `text_y` | int | 20 | 0–100 (% del alto) |
 | `watermark` | string | "" | nombre del PNG en `assets/watermarks/` |
 | `watermark_x` | string | "center" | left / center / right |
-| `watermark_size` | int | 50 | 10–100 (% del ancho) |
+| `watermark_size` | int | 50 | 10–200 (% del ancho; >100 desborda el cuadro) |
 | `watermark_y` | int | 100 | 0–100 (% del alto) |
 
 **Input:** `video`. Requiere texto **o** watermark. Usa la fuente de `assets/fonts/`. **Escaping:** rutas relativas a `BASE_DIR` + `cwd=BASE_DIR` (el `:` del drive en Windows rompe el parser de filtros). **UI:** preview en canvas + galería de watermarks (CRUD).

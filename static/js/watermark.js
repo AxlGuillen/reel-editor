@@ -149,7 +149,7 @@ function drawWatermark() {
   if (wx === "left") x = m;
   else if (wx === "right") x = WM_W - ww - m;
   else x = (WM_W - ww) / 2;
-  const y = (wy / 100) * Math.max(0, WM_H - wh);
+  const y = (wy / 100) * (WM_H - wh);
   wmCtx.drawImage(wmImg, x, y, ww, wh);
 }
 
