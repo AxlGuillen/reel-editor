@@ -30,9 +30,25 @@ if not defined PY (
 if not defined PY (
   echo   [FALTA] Python no esta instalado ^(o no quedo en el PATH^).
   echo.
-  echo   Instalalo con:   winget install Python.Python.3.13
-  echo   o desde python.org, tildando "Add python.exe to PATH".
-  echo.
+  rem Python es lo unico que tiene que estar SI o SI antes: sin el no se puede
+  rem crear el entorno virtual. Si hay winget, se ofrece instalarlo aca mismo.
+  where winget >nul 2>&1
+  if errorlevel 1 (
+    echo   Instalalo desde python.org, tildando "Add python.exe to PATH",
+    echo   y volve a correr este archivo.
+    goto :fin
+  )
+  choice /c SN /n /m "   Instalar Python ahora con winget? [S/N] "
+  if !errorlevel! equ 1 (
+    echo.
+    winget install --id Python.Python.3.13 -e --accept-package-agreements --accept-source-agreements
+    echo.
+    echo   Ahora CERRA esta ventana y hace doble click en setup.bat de nuevo:
+    echo   hace falta una ventana nueva para que el PATH tome Python.
+  ) else (
+    echo.
+    echo   Cuando quieras:  winget install Python.Python.3.13
+  )
   goto :fin
 )
 

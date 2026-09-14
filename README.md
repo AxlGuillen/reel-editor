@@ -61,7 +61,8 @@ ffprobe -version
 
 ### Windows: doble click
 
-Cloná el repo y hacé **doble click en `setup.bat`**. Crea el entorno virtual en
+Cloná el repo y hacé **doble click en `setup.bat`**. Lo único que tenés que tener de antes es
+**Python** (y si falta, el propio `setup.bat` te lo ofrece instalar con winget). Crea el entorno virtual en
 `venv\` e instala ahí todo lo de `requirements.txt`; al final chequea los
 programas del sistema (FFmpeg, ffprobe, Node, Git) y ofrece instalar con winget
 los que falten. Se puede volver a correr cuando quieras: si el venv ya existe lo
