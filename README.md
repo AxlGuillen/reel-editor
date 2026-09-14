@@ -67,7 +67,9 @@ programas del sistema (FFmpeg, ffprobe, Node, Git) y ofrece instalar con winget
 los que falten. Se puede volver a correr cuando quieras: si el venv ya existe lo
 reutiliza y solo actualiza los paquetes.
 
-Después, para usar la app: `venv\Scripts\python.exe app.py`
+Después, para usar la app, **doble click en `iniciar.bat`**: levanta el servidor y abre el
+navegador solo. Esa ventana *es* el servidor — mientras siga abierta la app funciona, y se
+apaga cerrándola. Si ya había una instancia corriendo no levanta otra, solo abre el navegador.
 
 ### A mano (o en Mac/Linux)
 
