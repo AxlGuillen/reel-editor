@@ -44,6 +44,9 @@ Cada módulo sirve por separado o **en cadena** — y **Reel Express** ya hace e
 
 - **Python 3.11+**
 - **FFmpeg** y **ffprobe** instalados ([ffmpeg.org](https://ffmpeg.org/download.html) o `brew install ffmpeg` en Mac, que trae ambos)
+- **Node** (o deno), solo para el Downloader: yt-dlp lo usa para resolver los desafíos JS de YouTube
+- **Git**, para actualizar y para la vista Historial (lee el `git log` del repo)
+- **GPU NVIDIA** opcional: acelera el encode (NVENC) y la transcripción. No hace falta instalar CUDA ni cuDNN — vienen como paquetes de pip dentro del entorno virtual; alcanza con el driver.
 
 Verificá que estén:
 
@@ -55,6 +58,18 @@ ffprobe -version
 ---
 
 ## 📦 Instalación
+
+### Windows: doble click
+
+Cloná el repo y hacé **doble click en `setup.bat`**. Crea el entorno virtual en
+`venv\` e instala ahí todo lo de `requirements.txt`; al final chequea los
+programas del sistema (FFmpeg, ffprobe, Node, Git) y ofrece instalar con winget
+los que falten. Se puede volver a correr cuando quieras: si el venv ya existe lo
+reutiliza y solo actualiza los paquetes.
+
+Después, para usar la app: `venv\Scripts\python.exe app.py`
+
+### A mano (o en Mac/Linux)
 
 ```bash
 git clone <este-repo>
