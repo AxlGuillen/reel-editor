@@ -26,6 +26,8 @@ reel-editor/
 ├── app.py                      ← Entry point Flask: registra blueprints, /api/cleanup, errores JSON
 ├── config.py                   ← Config global (paths, FFmpeg/ffprobe, extensiones, fuente)
 ├── requirements.txt            ← Flask, yt-dlp, faster-whisper
+├── setup.bat                   ← Windows: crea el venv e instala todo (doble click)
+├── Iniciar ReelForge.bat       ← Windows: levanta el server y abre el browser
 │
 ├── assets/                     ← Assets PERSISTENTES (versionados, NO los toca "Limpiar archivos")
 │   ├── watermarks/             ← librería de PNG con transparencia (overlay)
@@ -33,19 +35,26 @@ reel-editor/
 │
 ├── modules/                    ← Cada feature es un módulo independiente
 │   ├── reel_express/           ← PIPELINE: encadena vertical+audio+mezcla+watermark+subs
+│   ├── hook_reel/              ← PIPELINE "Reel Frase": 2 videos + música con ducking
 │   ├── vertical_convert/       ← 16:9 → 9:16 con fondo blur + realce
 │   ├── sound_drop/             ← Audio de fondo sobre un video vertical
 │   ├── watermark/              ← Texto + marca PNG sobre un video vertical
 │   ├── subtitles/              ← Subtítulos karaoke (faster-whisper), en 2 fases
-│   ├── insert/                 ← Insertar un mini-clip en marcadores
+│   ├── insert/                 ← Insertar mini-clips en marcadores (corte / progresivo / PiP)
 │   ├── downloader/             ← Descargar assets (YouTube/TikTok/IG) con yt-dlp
 │   ├── audio_merge/            ← Unir varios audios + capar pausas
 │   ├── assets/                 ← CRUD de watermarks + fuente (blueprint, no procesa video)
 │   ├── library/                ← Librería de clips: lista la carpeta local de capturas (sin upload)
 │   └── timeline/               ← Historial del proyecto leído de git (vista informativa)
-│       ├── routes.py           ← Blueprint Flask con sus endpoints
-│       ├── processor.py        ← Lógica del módulo (FFmpeg / yt-dlp / whisper)
-│       └── schema.py           ← Parámetros y validación del módulo
+│
+│   Cada módulo que procesa video tiene los mismos tres archivos:
+│       routes.py      ← Blueprint Flask con sus endpoints
+│       processor.py   ← Lógica del módulo (FFmpeg / yt-dlp / whisper)
+│       schema.py      ← Parámetros y validación del módulo
+│   assets, library y timeline son solo routes.py: no procesan nada.
+│
+├── cookies/                    ← cookies.txt de yt-dlp. SENSIBLE: gitignored
+├── cache/thumbs/               ← miniaturas de la librería de clips (temporal)
 │
 ├── core/
 │   ├── ffmpeg_runner.py        ← Único lugar que ejecuta FFmpeg + helpers ffprobe
@@ -133,7 +142,7 @@ Compone sobre un video vertical un bloque de texto (principal blanco + secundari
 | `watermark` | string | "" | nombre del PNG en `assets/watermarks/` |
 | `watermark_x` | string | "center" | left / center / right |
 | `watermark_size` | int | 50 | 10–200 (% del ancho; >100 desborda el cuadro) |
-| `watermark_y` | int | 100 | 0–100 (% del alto) |
+| `watermark_y` | int | 100 | −50–200 (% del alto; permite desbordar el cuadro) |
 
 **Input:** `video`. Requiere texto **o** watermark. Usa la fuente de `assets/fonts/`. **Escaping:** rutas relativas a `BASE_DIR` + `cwd=BASE_DIR` (el `:` del drive en Windows rompe el parser de filtros). **UI:** preview en canvas + galería de watermarks (CRUD).
 
@@ -159,11 +168,22 @@ Device automático: intenta cuda/float16, cae a cpu/int8 (en Mac es CPU). La 1ª
 
 Inserta un mini-clip completo (corte seco) en cada marcador del timeline del original. Automatiza "partir el timeline y duplicar el asset" de CapCut.
 
-| Parámetro | Tipo | Notas |
-|---|---|---|
-| `markers` | list[float] | segundos; JSON `[1.5, 12]` o CSV `1.5,12`. Máx 50 |
+Tres modos, y **varios mini-clips**: cada uno trae SUS marcadores, así se reparten distintas caídas a lo largo del video (clip A en 0:05 y 0:30, clip B en 1:10).
 
-**Inputs:** `video` (original) + `clip` (mini-clip). Audio y video se cortan juntos. Se arma con el `concat` filter; solo se normaliza lo invisible que concat exige (fps, SAR, pixfmt, audio). **Valida que las resoluciones coincidan** (si no, error claro apuntando a Vertical). **UI:** timeline clicable con marcadores por click / punto actual / `mm:ss`.
+| Parámetro | Tipo | Default | Notas |
+|---|---|---|---|
+| `clips` | JSON | — | `[{"markers":[1.5,12],"vertical":true}, …]` — uno por mini-clip subido. Máx 10 clips y 50 marcadores en total. Se acepta el formato viejo (`markers` JSON/CSV + `clip_vertical`) |
+| `mode` | string | "full" | `full` (corte seco) / `progressive` / `overlay` |
+| `slice_durations` | list[float] | auto | **progressive**: cuánto dura cada adelanto. Auto = reparto parejo |
+| `reveal_enabled` / `reveal_at` / `reveal_speed` | bool / float / float | true / final / 1.0 | **progressive**: mostrar el mini-clip entero al final o en un segundo dado, con opción de acelerarlo (1.0 / 1.2 / 1.3 / 1.5 / 2.0) |
+| `clip_audio` | string | "clip" | audio del mini-clip o `mute` |
+| `overlay_position` / `overlay_size` | string / int | center / 70 | **overlay**: dónde y qué tamaño (% del ancho) va el PiP |
+
+- **full:** inserta cada mini-clip completo en sus marcadores.
+- **progressive** ("caída progresiva"): trocea UN mini-clip y mete el pedazo siguiente en cada marcador (0–2 s, 2–4 s, …); al final muestra el clip completo.
+- **overlay:** el original se **congela** y el mini-clip va superpuesto como PiP.
+
+**Inputs:** `video` (original) + `clips` (uno o varios mini-clips). Audio y video se cortan juntos. Se arma con el `concat` filter; solo se normaliza lo invisible que concat exige (fps, SAR, pixfmt, audio). **Valida que las resoluciones coincidan** (si no, error claro apuntando a Vertical), salvo que el clip venga marcado `vertical`, que lo convierte solo. **UI:** timeline clicable con marcadores por click / punto actual / `mm:ss`.
 
 ### 6. downloader — `/api/downloader`
 
@@ -174,8 +194,19 @@ Descarga un asset desde un link (YouTube, TikTok, Instagram, …) con yt-dlp. Re
 | `url` | string | http(s) |
 | `format` | string | `audio` (mp3) o `video` (mp4) |
 | `quality` | string | audio: 320/192/128 kbps · video: max/1080/720/480 |
+| `cookies_browser` | string | `""` (sin cookies), un navegador, o `file` (el cookies.txt subido) |
 
 **Sin upload** (es un link). Usa el FFmpeg configurado para extraer audio / hacer merge. Captura el título para nombrar la descarga. YouTube y TikTok públicos son sólidos; Instagram es best-effort.
+
+**Cookies (bot-check de YouTube).** En Windows los navegadores basados en Chrome cifran sus cookies (App-Bound Encryption) y yt-dlp no puede leerlas: por eso existe el `cookies.txt` subido a mano (formato Netscape). Al guardarlo se **filtran** las cookies que no son de YouTube/Google y queda en `cookies/`, **fuera de git** — es material sensible, jamás se commitea ni se copia a otra máquina.
+
+```
+GET    /api/downloader/cookies   → { exists, mtime, size }
+POST   /api/downloader/cookies   → sube/reemplaza el cookies.txt (campo `cookies`)
+DELETE /api/downloader/cookies   → lo borra
+```
+
+Para que YouTube entregue formatos de video hace falta además un **runtime de JS** (node/deno) y el paquete `yt-dlp-ejs`; sin eso solo ofrece imágenes.
 
 ### 7. audio_merge — `/api/audio-merge`
 
@@ -200,7 +231,35 @@ audio (link│file) ──┘
 - `vertical` y la descarga (si el audio es link) corren **en paralelo**.
 - Reúne los `from_form` de vertical/sound_drop/watermark/subtitles (los nombres de campo no se solapan).
 - **Watermark** opcional (si hay texto o marca). **Subtítulos** opcional (`add_subtitles`, default ON); su `position_y` default acá es **1601**.
+- `convert_vertical` (default ON) se apaga cuando el clip ya viene 9:16.
+- `skip_review` ("No revisar"): sin pausa de edición, el backend puede transcribir antes y quemar los subs **en la misma pasada visual** (un encode en vez de dos).
+- `dynamic_bg` / `dynamic_markers` siguen en el schema pero **no tienen UI**: esa función se trabaja en el módulo Insert, que soporta varios clips. Sin la UI quedan en False.
 - Con subtítulos es **dos fases**: `POST /process` produce el video base y lo transcribe (status done + `segments`); `POST /finish` quema los subs editados → reel final. Sin subs, es un solo paso como antes.
+- **UI:** el panel de ajustes son bloques colapsables (`<details class="rx-block">`: audio, video, hud, text, subs, advanced) que recuerdan si los dejaste abiertos y muestran un resumen de su estado aunque estén plegados.
+
+### 9. hook_reel — `/api/hook-reel` (pipeline, dos fases con subs)
+
+"Reel Frase": dos videos encadenados con música de fondo.
+
+```
+Video 1 (avatar, trae la voz) ──→ segmento 1 (dura lo que dura el video)
+Video 2 (clip de cierre)      ──→ segmento 2 (dura `seg2_duration`; el clip se
+                                   acelera o frena con setpts para cubrirla)
+Música (link o archivo)       ──→ baja mientras habla el avatar, sube a tope en
+                                   el corte. Se recorta al total; NO se acelera.
+```
+
+| Parámetro | Tipo | Default | Rango |
+|---|---|---|---|
+| `seg2_duration` | float | 6.0 | 0.5–300 (s) |
+| `music_start` | float | 0 | 0–3600 (desde qué segundo de la música arrancar) |
+| `music_low_volume` | int | 25 | 0–100 (%, mientras habla el avatar) |
+| `music_full_volume` | int | 100 | 0–150 (%, después del corte) |
+| `ramp` | float | 0.4 | 0–2 (s de la rampa de volumen; 0 = golpe seco) |
+| `seg1_vertical` / `seg2_vertical` | bool | false / true | convertir cada clip a 9:16 |
+| `add_subtitles` | bool | true | karaoke sobre el segmento 1; `position_y` default 1601 |
+
+**Inputs:** `video1` + `video2` + música: `music` (archivo) o un link, según `audio_source` (`url` \| `file`). Reusa `VerticalConvertParams` y `SubtitlesParams`. Con subtítulos es **dos fases** (`/process` + `/finish`), igual que reel_express.
 
 ### assets — blueprint de assets persistentes
 
@@ -242,7 +301,7 @@ POST /api/<modulo>/process       → 202 { job_id }   (corre en thread)
 GET  /api/<modulo>/status/<id>   → { status, progress, error, [stage], [segments], [title] }
 GET  /api/<modulo>/download/<id> → archivo (mimetype correcto, as_attachment)
 ```
-`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express` usa `/process` + `/finish`. Global: `POST /api/cleanup` vacía las carpetas temporales.
+`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express` y `hook_reel` usan `/process` + `/finish`. Global: `POST /api/cleanup` vacía las carpetas temporales.
 
 ---
 
@@ -262,7 +321,15 @@ probe_duration(path) -> float | None      # duración en segundos (ffprobe)
 has_audio_stream(path) -> bool            # ¿tiene pista de audio?
 probe_resolution(path) -> tuple | None    # (width, height)
 probe_fps(path) -> float | None           # fps del primer stream de video
+
+video_encode_flags(crf=18) -> list[str]   # flags del encoder: h264_nvenc si la
+                                          # GPU está (probe cacheado), si no libx264
+encoder_info() -> str                     # "GPU NVENC" / "CPU" (lo muestra Info)
+atempo_chain(tempo) -> str                # cadena de atempo para tempos > 2.0
 ```
+
+**Todo módulo que encodea usa `video_encode_flags()`**: es lo que hace que la GPU
+se use en todos lados sin repetir la detección.
 
 Si `total_duration` es None, se intenta sacar de la línea `Duration:` que imprime FFmpeg.
 
@@ -283,6 +350,9 @@ Resuelve FFmpeg y ffprobe de forma robusta (PATH → ubicaciones típicas de Mac
 ```python
 UPLOAD_FOLDER / OUTPUT_FOLDER / DOWNLOAD_FOLDER        # temporales
 ASSETS_FOLDER / WATERMARKS_FOLDER / FONTS_FOLDER        # persistentes
+COOKIES_FOLDER / COOKIES_FILE      # cookies.txt de yt-dlp (sensible, gitignored)
+CLIPS_LIBRARY_FOLDER               # carpeta de capturas (env REELFORGE_CLIPS_FOLDER)
+THUMBS_FOLDER                      # cache/thumbs/ (miniaturas de la librería)
 MAX_UPLOAD_SIZE_MB = 2000
 FFMPEG_PATH   = os.environ.get("FFMPEG_PATH")  or _resolve_ffmpeg()
 FFPROBE_PATH  = os.environ.get("FFPROBE_PATH") or _resolve_ffprobe()
@@ -300,7 +370,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 11 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 12 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
@@ -310,7 +380,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 `index.html` es un **app shell**: una **sidebar dividida en secciones** (`.nav-section`: Automático / Módulos / Tools Specific videos / Tools / Sistema) con un nav item por módulo, y un `<section class="module-view">` por módulo (parciales con `{% include %}`). `app.js` muestra una vista a la vez (busca `.nav-item`). La vista por defecto es **Reel Express**.
 
-Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onDone, onError})` de `shared.js` (POST + polling). Los flujos de dos fases (subtitles, reel_express) usan un poller propio porque el status trae `segments`. El **editor de segmentos** (`SubtitleEditor` en `subtitle_editor.js`) es compartido por subtitles y reel_express. Sin librerías frontend externas (solo Vanilla JS).
+Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onDone, onError})` de `shared.js` (POST + polling). Los flujos de dos fases (subtitles, reel_express, hook_reel) usan un poller propio porque el status trae `segments`. `shared.js` además concentra lo compartido entre módulos: el preview de la placa del HUD en canvas (`drawHudPlate`), el selector de archivos (`openFilePicker`) y la galería de la librería de clips (`openClipLibrary` / `appendClip`). Las vistas **Info** e **Historial** no procesan nada: solo leen su endpoint y pintan. El **editor de segmentos** (`SubtitleEditor` en `subtitle_editor.js`) es compartido por subtitles y reel_express. Sin librerías frontend externas (solo Vanilla JS).
 
 ---
 
@@ -332,6 +402,19 @@ python3 app.py                    # ojo: python3, no python (en macOS)
 # http://localhost:5001           # puerto 5001 (el 5000 lo ocupa AirPlay en Mac)
 ```
 
+**En Windows** hay dos .bat pensados para doble click, y son la vía recomendada
+para instalar en una máquina nueva:
+
+- `setup.bat` — crea `venv\` e instala `requirements.txt`; después chequea
+  FFmpeg, ffprobe, Node y Git y ofrece instalar con winget los que falten
+  (Python incluido). Idempotente: se puede correr de nuevo para actualizar.
+- `Iniciar ReelForge.bat` — levanta el server y abre el browser cuando el
+  puerto contesta. La ventana ES el server. Detecta si ya hay una instancia.
+
+El venv **no se copia entre máquinas** (rutas absolutas adentro): se crea en cada
+una. Para llevar el proyecto, `git clone` o `git archive` (nunca un zip de la
+carpeta entera: arrastraría `venv/` y, peor, `cookies/`).
+
 ---
 
 ## Convenciones de desarrollo
@@ -346,7 +429,7 @@ python3 app.py                    # ojo: python3, no python (en macOS)
 
 - **Trim** como módulo o paso previo (rango start/end).
 - **insert:** preview reproducible del resultado ensamblado, transiciones (flash/crossfade), marcadores arrastrables.
-- **downloader:** preview de título/miniatura antes de bajar, cookies para contenido privado, preferir H.264 para máxima compatibilidad.
+- **downloader:** preview de título/miniatura antes de bajar, preferir H.264 para máxima compatibilidad.
 - **subtitles:** wrappers que usen la GPU del Mac (mlx-whisper / whisper.cpp) si la CPU queda corta.
 - **Endurecimiento de dependencias:** pin + hashes, `pip-audit`, venv.
 - **Limpieza automática** de temporales (TTL), en vez de solo el botón manual.
