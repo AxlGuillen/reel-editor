@@ -144,13 +144,19 @@ def build_filter_complex(params: VerticalConvertParams,
         parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}[vmain]")
         parts.extend(_hud_plate(params, src))
         hud_y = params.hud_pos_y / 100
+        # La placa viaja con el ajuste fino del clip: el mismo desplazamiento
+        # en px. Así mover el video no obliga a reacomodar el marcador, que es
+        # lo que se quiere el 99% de las veces; `hud_pos_y` sigue estando para
+        # moverlo por separado. El preset (top/center/bottom) no lo arrastra.
+        hud_off = f"{off_px:+d}" if off_px else ""
         # La sombra es más grande que la placa (margen de blur) y va desplazada
         # hacia abajo; la placa queda centrada dentro de ese margen.
         m = HUD_SHADOW_MARGIN
         parts.append(
             f"[vmain][hud_shadow]overlay="
-            f"(W-w)/2:(H-h+{2 * m})*{hud_y:.4f}-{m}+{HUD_SHADOW_DY}[vsh]")
-        parts.append(f"[vsh][hud_plate]overlay=(W-w)/2:(H-h)*{hud_y:.4f}{out}")
+            f"(W-w)/2:(H-h+{2 * m})*{hud_y:.4f}-{m}+{HUD_SHADOW_DY}{hud_off}[vsh]")
+        parts.append(
+            f"[vsh][hud_plate]overlay=(W-w)/2:(H-h)*{hud_y:.4f}{hud_off}{out}")
     else:
         parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}{out}")
     return ";".join(parts)

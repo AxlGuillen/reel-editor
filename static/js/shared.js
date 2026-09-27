@@ -60,7 +60,11 @@ function drawHudPlate(ctx, video, vw, vh, cw, ch, get, pfx = "") {
   const dw = cw * (+get(pfx + "hud_scale").value / 100);
   const dh = dw * (sh / sw);
   const px = (cw - dw - 2 * border) / 2;
-  const py = (ch - dh - 2 * border) * (+get(pfx + "hud_pos_y").value / 100);
+  // La placa acompaña el ajuste fino del clip (mismo desplazamiento que en el
+  // processor), para que mover el video no obligue a reacomodar el marcador.
+  const offEl = get(pfx + "main_clip_offset");
+  const offPx = offEl ? (+offEl.value / 100) * ch : 0;
+  const py = (ch - dh - 2 * border) * (+get(pfx + "hud_pos_y").value / 100) + offPx;
   ctx.save();
   // Placa blanca (borde) con sombra suave desplazada hacia abajo.
   ctx.shadowColor = "rgba(0,0,0,0.55)";

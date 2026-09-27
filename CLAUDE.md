@@ -115,6 +115,8 @@ Convierte 16:9 → 9:16 con efecto "split blur background": fondo = el clip esca
 | `hud_left` / `hud_right` / `hud_top` / `hud_bottom` | float | 80 / 99.5 / 0 / 3 | bordes de la región (% del clip fuente; defaults = marcador de LoL 1080p) |
 | `hud_scale` / `hud_pos_y` | int | 91 / 23 | ancho de la placa (% del lienzo) / posición vertical (%) |
 
+La placa **acompaña al `main_clip_offset`**: se le suma el mismo desplazamiento en px que al clip principal, así el ajuste fino mueve video y marcador juntos y no hay que reacomodar la placa cada vez. El preset (top/center/bottom) **no** la arrastra, y `hud_pos_y` sigue moviéndola por separado. El preview en canvas aplica la misma suma (`drawHudPlate` en `shared.js`).
+
 **Input:** `video`. **UI:** preview vertical en vivo en un `<canvas>` que replica el efecto mientras movés los sliders. La placa del HUD se arma en el mismo filter_complex (máscara redondeada y sombra calculadas sobre UN frame con `trim=end_frame=1`, reutilizadas vía `repeatlast`): costo extra nulo. Reel Express hereda todo esto vía `VerticalConvertParams`.
 
 ### 2. sound_drop — `/api/sound-drop`
