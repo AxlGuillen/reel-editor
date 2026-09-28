@@ -9,7 +9,7 @@ _INT_PARAMS = {
     # a la posición elegida (top/center/bottom). Negativo = más arriba.
     "main_clip_offset": (0, -50, 50),
     # Marcador (HUD) recortado del clip fuente y superpuesto como placa.
-    "hud_scale": (91, 10, 100),      # ancho de la placa (% del lienzo)
+    "hud_scale": (80, 10, 100),      # ancho de la placa (% del lienzo)
     "hud_pos_y": (23, 0, 100),       # posición vertical (% del alto libre)
 }
 _FLOAT_PARAMS = {
@@ -41,7 +41,7 @@ class VerticalConvertParams:
     hud_right: float = 99.5
     hud_top: float = 0.0
     hud_bottom: float = 3.0
-    hud_scale: int = 91
+    hud_scale: int = 80
     hud_pos_y: int = 23
 
     @classmethod
