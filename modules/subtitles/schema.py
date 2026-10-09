@@ -31,6 +31,7 @@ ROTATE_PALETTE = ("#FFE600", "#3DFF6E", "#FF4FD8", "#3DE8FF", "#FF9F1C")
 # Disposición de cada frase y tamaños de sus palabras (ver processor._group_style).
 LAYOUTS = {"line", "stairs", "mixed"}       # en línea / en escalera / variada
 SIZE_MODES = {"same", "grow", "random"}     # iguales / crecientes / variados
+NEON_MODES = {"off", "soft", "strong"}      # brillo del color de la palabra que se dice
 _HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
 
 
@@ -49,6 +50,7 @@ class SubtitlesParams:
     outline_size:   int = OUTLINE_DEFAULT
     layout:         str = "line"      # line | stairs | mixed
     sizes:          str = "same"      # same | grow | random
+    neon:           str = "off"       # off | soft | strong
 
     @classmethod
     def from_form(cls, form) -> "SubtitlesParams":
@@ -115,6 +117,12 @@ class SubtitlesParams:
             raise ValueError(f"Tamaño de palabras inválido: {sizes!r}. Opciones: same (iguales), "
                              "grow (crecientes) o random (variados).")
         values["sizes"] = sizes
+
+        neon = str(form.get("sub_neon") or "off").strip().lower()
+        if neon not in NEON_MODES:
+            raise ValueError(f"Brillo neón inválido: {neon!r}. Opciones: off (sin brillo), "
+                             "soft (suave) o strong (intenso).")
+        values["neon"] = neon
 
         return cls(**values)
 

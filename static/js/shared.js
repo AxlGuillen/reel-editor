@@ -274,6 +274,7 @@ const SubStyle = (() => {
     if (s.outline_size != null) el(p + "outline-size").value = s.outline_size;
     setOption(p + "layout", s.layout);
     setOption(p + "sizes", s.sizes);
+    setOption(p + "neon", s.neon);
     sync(p);
     // Los módulos que muestran un resumen del estilo (Reel Express) se enteran
     // aunque el cambio venga de otro módulo.
@@ -289,6 +290,7 @@ const SubStyle = (() => {
       outline_size: el(p + "outline-size").value,
       layout: el(p + "layout").value,
       sizes: el(p + "sizes").value,
+      neon: el(p + "neon").value,
     };
   }
 
@@ -334,7 +336,7 @@ const SubStyle = (() => {
 
   function init(p) {
     prefixes.push(p);
-    ["font", "uppercase", "color-mode", "outline-color", "layout", "sizes"].forEach((id) =>
+    ["font", "uppercase", "color-mode", "outline-color", "layout", "sizes", "neon"].forEach((id) =>
       el(p + id).addEventListener("change", () => { sync(p); save(p); }));
     el(p + "outline-size").addEventListener("input", () => { sync(p); save(p); });
     el(p + "highlight-color").addEventListener("input", () => sync(p));
@@ -356,6 +358,7 @@ const SubStyle = (() => {
       sub_outline_size: el(p + "outline-size").value,
       sub_layout: el(p + "layout").value,
       sub_sizes: el(p + "sizes").value,
+      sub_neon: el(p + "neon").value,
     };
   }
 
@@ -376,6 +379,26 @@ const SubStyle = (() => {
   const GROW_MIN = 0.85, GROW_MAX = 1.4, EMPHASIS = 1.45;
   const STAIR_DIAG = 0.8, STAIR_GAP = 0.12, MIXED_STAIRS = 2;
   const contentLen = (w) => [...w].filter((ch) => /[\p{L}\p{N}]/u.test(ch)).length;
+
+  // Neón: espejo de NEON en processor.py — [abre (em), difumina (em), opacidad,
+  // factor de blur]. El \blur de libass y el blur() del canvas no son la misma
+  // escala, y libass deja el interior de la letra vacío: opacidad y factor están
+  // calibrados midiendo el brillo VISIBLE (fuera de la letra) en los dos, con
+  // un error de área del 13-16 %.
+  const NEON = { soft: [0.16, 0.22, 0.56, 1.0], strong: [0.28, 0.31, 0.81, 0.8] };
+  // Brillo debajo de la palabra activa: contorno grueso del color, difuminado.
+  function drawGlow(ctx, p, word, x, y, color, emPx, outline) {
+    const mode = NEON[el(p + "neon").value];
+    if (!mode) return;
+    ctx.save();
+    ctx.filter = `blur(${mode[1] * emPx * mode[3]}px)`;
+    ctx.globalAlpha = mode[2];
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2 * (outline + mode[0] * emPx);
+    ctx.strokeStyle = color;
+    ctx.strokeText(word, x, y);
+    ctx.restore();
+  }
   const pick = (n, salt) => ((n + 1) * 2654435761 + salt) % 4294967296;
 
   function groupStyle(p, words, first) {
@@ -480,6 +503,11 @@ const SubStyle = (() => {
       ctx.lineJoin = "round";
       ctx.lineWidth = outline * 2;
       ctx.strokeStyle = white ? "#fff" : "#000";
+      if (placed[active]) {
+        setFont(fs * placed[active].s);
+        drawGlow(ctx, p, group[active], placed[active].x, placed[active].base,
+                 colorOf(first + active), fs * placed[active].s, outline);
+      }
       placed.forEach((at, i) => {
         setFont(fs * at.s);
         if (outline > 0) ctx.strokeText(group[i], at.x, at.base);
@@ -514,6 +542,13 @@ const SubStyle = (() => {
     ctx.lineWidth = outline * 2;   // el trazo es centrado: la mitad queda afuera
     ctx.strokeStyle = white ? "#fff" : "#000";
     let x = (cw - sumW(widths) - gaps * (space + extra)) / 2;
+    {
+      // El brillo va debajo de TODA la línea: se dibuja antes que las palabras.
+      let gx = x;
+      for (let i = 0; i < active; i++) gx += widths[i] + space + extra;
+      const ty = ctx.textBaseline === "alphabetic" ? baseline : y;
+      drawGlow(ctx, p, group[active], gx + widths[active] / 2, ty, accent, fs * fit, outline);
+    }
     group.forEach((word, i) => {
       const cx = x + widths[i] / 2;
       const ty = ctx.textBaseline === "alphabetic" ? baseline : y;

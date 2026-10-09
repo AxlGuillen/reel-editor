@@ -170,6 +170,7 @@ Transcribe el audio con **faster-whisper** y quema subtítulos estilo **karaoke*
 | `sub_outline_size` | int | 6 | 0–20 px |
 | `sub_layout` | string | line | `line` (en línea) / `stairs` (escalera: un renglón por palabra, cada uno más abajo y con el centro 0.8 em más a la derecha) / `mixed` (variada: ~2 de cada 5 frases en escalera) |
 | `sub_sizes` | string | same | `same` / `grow` (crecientes: 0.85→1.4× hasta la última palabra con 3+ letras, que queda grande y a color) / `random` (variados: una palabra de 3+ letras a 1.45× y a color) |
+| `sub_neon` | string | off | `off` / `soft` (una sombra leve) / `strong`: mientras se dice, la palabra brilla con SU color. Capa debajo del texto con la misma palabra sin relleno, `\bord` grueso del color y `\blur`; entra con `\fad`. En línea va como una línea igual con todo invisible salvo la activa (medido: el contorno gigante no corre la alineación, 0 px) |
 | `language` | string | es | auto/es/en/pt/fr/de/it/ja/ko/zh |
 | `model` | string | large-v3-turbo | tiny…large-v3 |
 

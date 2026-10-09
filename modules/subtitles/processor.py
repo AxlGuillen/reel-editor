@@ -82,6 +82,24 @@ STAIR_GAP = 0.12                 # aire entre la tinta de dos renglones, en em
 MIXED_STAIRS = 2                 # "variada": ~2 de cada 5 frases van en escalera
 EMPH_POP = 1.12                  # la destacada "late" al decirse (ya está en color)
 
+# Neón: mientras se dice, la palabra brilla con su color. Es una capa DEBAJO del
+# texto: la misma palabra en la misma posición, sin relleno, con un contorno
+# grueso del color de la palabra y difuminado. Medido en libass: el contorno
+# gigante de una palabra no corre la alineación de la línea (0 px), así que
+# sirve igual en el karaoke en línea. (abre, difumina) en em de la palabra.
+NEON = {"soft": (0.16, 0.22, "&H60&"), "strong": (0.28, 0.31, "&H30&")}
+NEON_FADE = r"\fad(80,60)"       # el brillo "sale" al empezar la palabra
+
+
+def _neon_tags(params: SubtitlesParams, color: str, em_px: float) -> str:
+    """Override de la capa de brillo (sin relleno, contorno de color difuso).
+
+    \\bord y \\blur no los escala \\fscx: se calculan con el em real de la palabra.
+    """
+    spread, blur, alpha = NEON[params.neon]
+    bord = params.outline_size + spread * em_px
+    return f"\\1a&HFF&\\3c{color}\\3a{alpha}\\bord{bord:.1f}\\blur{blur * em_px:.1f}"
+
 
 def _pick(n: int, salt: int) -> int:
     """Entero pseudoaleatorio pero fijo para la palabra n (hash de Knuth).
@@ -481,6 +499,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         pos_tag = f"{{\\an2\\pos({pos_x},{pos_y}){scale}}}"
         sep = f"{{\\fsp{extra:.1f}}} {{\\fsp0}}" if extra else " "
 
+        # Con neón el texto sube a la capa 1 y el brillo va en la 0, debajo.
+        layer = 1 if params.neon != "off" else 0
         for idx, (t_start, t_end) in enumerate(spans):
             parts = []
             for j, raw in enumerate(shown):
@@ -492,8 +512,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     parts.append(wt)
             text = sep.join(parts)
 
+            if layer:
+                # La misma línea con todo invisible salvo el brillo de la activa.
+                glow = sep.join(
+                    f"{{\\alpha&H00&{_neon_tags(params, _active_color(params, word_base + idx), params.font_size * fit)}}}"
+                    f"{_esc_text(raw)}{{\\alpha&HFF&}}" if j == idx else _esc_text(raw)
+                    for j, raw in enumerate(shown))
+                events.append(
+                    f"Dialogue: 0,{_seconds_to_ass(t_start)},{_seconds_to_ass(t_end)},"
+                    f"Sub,,0,0,0,,{pos_tag[:-1]}{NEON_FADE}\\alpha&HFF&}}{glow}")
             events.append(
-                f"Dialogue: 0,{_seconds_to_ass(t_start)},{_seconds_to_ass(t_end)},"
+                f"Dialogue: {layer},{_seconds_to_ass(t_start)},{_seconds_to_ass(t_end)},"
                 f"Sub,,0,0,0,,{pos_tag}{text}"
             )
         word_base += len(group)
@@ -516,10 +545,12 @@ def _word_events(params: SubtitlesParams, font: dict, shown: list[str],
     g_start, g_end = spans[0][0], spans[-1][1]
     events = []
 
-    def add(t0, t1, tags, text):
+    layer = 1 if params.neon != "off" else 0   # con neón, el brillo va debajo (capa 0)
+
+    def add(t0, t1, tags, text, at=None):
         if t1 > t0:
-            events.append(f"Dialogue: 0,{_seconds_to_ass(t0)},{_seconds_to_ass(t1)},"
-                          f"Sub,,0,0,0,,{{{tags}}}{text}")
+            events.append(f"Dialogue: {layer if at is None else at},{_seconds_to_ass(t0)},"
+                          f"{_seconds_to_ass(t1)},Sub,,0,0,0,,{{{tags}}}{text}")
 
     for j, ((x, y, s), raw) in enumerate(zip(placed, shown)):
         size = f"\\fscx{s * 100:.1f}\\fscy{s * 100:.1f}" if abs(s - 1) > 1e-6 else ""
@@ -535,6 +566,8 @@ def _word_events(params: SubtitlesParams, font: dict, shown: list[str],
             pop = (f"\\t(0,90,\\fscx{big:.1f}\\fscy{big:.1f})"
                    f"\\t(90,200,\\fscx{s * 100:.1f}\\fscy{s * 100:.1f})")
         add(t_start, t_end, f"{pos}\\c{active}{pop}", wt)
+        if layer:
+            add(t_start, t_end, f"{pos}{NEON_FADE}{_neon_tags(params, active, params.font_size * s)}", wt, at=0)
         add(t_end, g_end, f"{pos}\\c{base}", wt)
     return events
 

@@ -202,7 +202,8 @@ function updateBlockStatus() {
     const font = fontSel.selectedOptions[0] ? fontSel.selectedOptions[0].text : "Karaoke";
     const layout = { stairs: "escalera", mixed: "variada" }[el("rx-sub-layout").value];
     const sizes = { grow: "crecientes", random: "tamaños variados" }[el("rx-sub-sizes").value];
-    const look = [font, el("rx-sub-uppercase").checked && "MAYÚS", layout, sizes,
+    const neon = el("rx-sub-neon").value !== "off" && "neón";
+    const look = [font, el("rx-sub-uppercase").checked && "MAYÚS", layout, sizes, neon,
       el("rx-sub-color-mode").value === "rotate" && "colores"].filter(Boolean).join(" · ");
     setBlockStatus("subs", `${look} · ${el("rx-skip-review").checked ? "sin revisar" : "revisás antes"}`, "on");
   }
