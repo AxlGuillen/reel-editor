@@ -1,0 +1,47 @@
+{# Estilo de los subtítulos. Es el MISMO bloque en Subtítulos, Reel Express y
+   Reel Frase: solo cambia el prefijo de los ids (`p`). Lo llena y lo maneja
+   SubStyle (static/js/shared.js); las fuentes y la paleta vienen del server. #}
+<div class="sub-style">
+  <label class="control">
+    <span>Fuente</span>
+    <select id="{{ p }}font">
+      <option value="Poppins-Bold.ttf">Poppins Bold</option>
+    </select>
+  </label>
+  <label class="control-check">
+    <input type="checkbox" id="{{ p }}uppercase">
+    <span>Todo en MAYÚSCULAS</span>
+  </label>
+
+  <label class="control">
+    <span>Color de la palabra activa</span>
+    <select id="{{ p }}color-mode">
+      <option value="single">Un color</option>
+      <option value="rotate">Colores que rotan (uno por palabra)</option>
+    </select>
+  </label>
+  <label class="control" id="{{ p }}single-color-row">
+    <span>Color de resalte</span>
+    <div class="sub-color-row">
+      <input type="color" id="{{ p }}highlight-color" value="#fbff00" class="sub-color-picker">
+      <span id="{{ p }}color-preview" class="sub-color-chip" style="background:#fbff00"></span>
+      <span class="sub-color-label">Palabra activa</span>
+    </div>
+  </label>
+  <div class="control hidden" id="{{ p }}palette-row">
+    <span>Paleta que rota</span>
+    <div class="sub-color-row" id="{{ p }}palette"></div>
+  </div>
+
+  <label class="control">
+    <span>Contorno</span>
+    <select id="{{ p }}outline-color">
+      <option value="black">Negro (texto blanco)</option>
+      <option value="white">Blanco (texto negro)</option>
+    </select>
+  </label>
+  <label class="control">
+    <span>Grosor del contorno <em id="{{ p }}outline-size-val">6</em> px</span>
+    <input type="range" id="{{ p }}outline-size" min="0" max="20" value="6">
+  </label>
+</div>

@@ -231,3 +231,185 @@ function appendClip(form, field, file) {
   if (file.fromLibrary) form.append("library_clip", file.name);
   else form.append(field, file);
 }
+
+// --- Estilo de subtítulos (compartido: Subtítulos, Reel Express, Reel Frase) ---
+// Los tres módulos incluyen el mismo bloque (templates/modules/_sub_style.html)
+// con distinto prefijo de ids. SubStyle lo llena con las fuentes y la paleta
+// que manda /api/subtitles/styles (lo mismo que usa build_ass), recuerda la
+// elección entre módulos y sesiones, arma los params que espera
+// SubtitlesParams y dibuja la muestra animada del preview.
+const SubStyle = (() => {
+  const KEY = "reelforge-sub-style";
+  const prefixes = [];
+  const faces = {};   // archivo de fuente -> familia CSS ya cargada en el canvas
+  const descents = {};  // archivo de fuente -> winDescent/UPM (ver drawSample)
+  let opts = null;
+
+  const load = () => {
+    try { return JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (_) { return {}; }
+  };
+
+  // Paleta/picker y la etiqueta del grosor dependen de otros controles.
+  function sync(p) {
+    const rotate = el(p + "color-mode").value === "rotate";
+    el(p + "single-color-row").classList.toggle("hidden", rotate);
+    el(p + "palette-row").classList.toggle("hidden", !rotate);
+    el(p + "outline-size-val").textContent = el(p + "outline-size").value;
+    el(p + "color-preview").style.background = el(p + "highlight-color").value;
+  }
+
+  function apply(p, s) {
+    const font = el(p + "font");
+    if (s.font && [...font.options].some((o) => o.value === s.font)) font.value = s.font;
+    if (typeof s.uppercase === "boolean") el(p + "uppercase").checked = s.uppercase;
+    if (s.color_mode) el(p + "color-mode").value = s.color_mode;
+    if (s.outline_color) el(p + "outline-color").value = s.outline_color;
+    if (s.outline_size != null) el(p + "outline-size").value = s.outline_size;
+    sync(p);
+  }
+
+  function snapshot(p) {
+    return {
+      font: el(p + "font").value,
+      uppercase: el(p + "uppercase").checked,
+      color_mode: el(p + "color-mode").value,
+      outline_color: el(p + "outline-color").value,
+      outline_size: el(p + "outline-size").value,
+    };
+  }
+
+  // El estilo es uno solo: lo que elegís en un módulo queda en los otros.
+  function save(p) {
+    const s = snapshot(p);
+    try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) {}
+    prefixes.filter((q) => q !== p).forEach((q) => apply(q, s));
+  }
+
+  function fill(p) {
+    // Con nodos y no con innerHTML: la etiqueta sale del nombre interno de la
+    // fuente, que podría traer "<" o "&".
+    el(p + "font").replaceChildren(...opts.fonts.map((f) => new Option(f.label, f.file)));
+    el(p + "palette").replaceChildren(...opts.palette.map((c) => {
+      const chip = document.createElement("span");
+      chip.className = "sub-color-chip";
+      chip.style.background = c;
+      chip.title = c;
+      return chip;
+    }));
+    const out = el(p + "outline-size");
+    out.min = opts.outline.min;
+    out.max = opts.outline.max;
+    apply(p, { font: opts.default_font, outline_size: opts.outline.default, ...load() });
+  }
+
+  const ready = fetch("/api/subtitles/styles")
+    .then((r) => r.json())
+    .then((o) => {
+      opts = o;
+      // Una familia CSS por archivo y sin "bold" al dibujar: cada archivo ya
+      // trae su peso (evita la negrita sintética que engordaba el preview).
+      o.fonts.forEach((f, i) => {
+        descents[f.file] = f.descent;
+        const face = new FontFace(`SubFont${i}`, `url("${f.url}")`);
+        face.load().then((ff) => { document.fonts.add(ff); faces[f.file] = `SubFont${i}`; })
+          .catch(() => {});
+      });
+      prefixes.forEach(fill);
+    })
+    .catch(() => {});
+
+  function init(p) {
+    prefixes.push(p);
+    ["font", "uppercase", "color-mode", "outline-color"].forEach((id) =>
+      el(p + id).addEventListener("change", () => { sync(p); save(p); }));
+    el(p + "outline-size").addEventListener("input", () => { sync(p); save(p); });
+    el(p + "highlight-color").addEventListener("input", () => sync(p));
+    sync(p);
+    if (opts) fill(p);
+  }
+
+  // Lo que espera SubtitlesParams.from_form (en un FormData o en un JSON).
+  function params(p) {
+    return {
+      font_size: el(p + "font-size").value,
+      position_y: el(p + "position-y").value,
+      words_per_line: el(p + "words").value,
+      highlight_color: el(p + "highlight-color").value,
+      sub_font: el(p + "font").value,
+      sub_uppercase: el(p + "uppercase").checked ? "on" : "",
+      sub_color_mode: el(p + "color-mode").value,
+      sub_outline_color: el(p + "outline-color").value,
+      sub_outline_size: el(p + "outline-size").value,
+    };
+  }
+
+  function appendTo(form, p) {
+    Object.entries(params(p)).forEach(([k, v]) => form.append(k, v));
+  }
+
+  // Muestra animada, espejo de build_ass: la palabra activa avanza cada 0.6 s
+  // y, con "colores que rotan", cada palabra nueva toma el siguiente color.
+  // Tamaño = em en px (el server convierte el Fontsize del ASS por fuente).
+  // Vertical: libass apoya el borde inferior en baseline + winDescent; el
+  // "bottom" del canvas usa otra métrica, así que se dibuja sobre la baseline.
+  const SAMPLE = ["Ejemplo", "de", "subtítulo", "en", "vivo", "aquí"];
+  function drawSample(ctx, cw, ch, p) {
+    const s = cw / 1080;
+    const fs = +el(p + "font-size").value * s;
+    const y = (+el(p + "position-y").value / 1920) * ch;
+    const upper = el(p + "uppercase").checked;
+    const white = el(p + "outline-color").value === "white";
+    const outline = +el(p + "outline-size").value * s;
+    const file = el(p + "font").value;
+    const fam = faces[file];
+    const group = SAMPLE.slice(0, +el(p + "words").value)
+      .map((w) => (upper ? w.toUpperCase() : w));
+    const tick = Math.floor(performance.now() / 600);
+    const active = tick % group.length;
+    const palette = (opts && opts.palette) || ["#FFE600"];
+    const accent = el(p + "color-mode").value === "rotate"
+      ? palette[tick % palette.length]
+      : el(p + "highlight-color").value;
+
+    ctx.save();
+    const setFont = (size) => {
+      ctx.font = fam ? `${size}px "${fam}"` : `bold ${size}px sans-serif`;
+    };
+    setFont(fs);
+    // Mismo ajuste que _fit_group (processor.py): si el grupo no entra en el
+    // ancho útil se achica (letras y espacios, NO el contorno, como libass), y
+    // entre palabras va el doble del contorno para que no se peguen.
+    const gaps = group.length - 1;
+    const sumW = (ws) => ws.reduce((a, b) => a + b, 0);
+    let widths = group.map((w) => ctx.measureText(w).width);
+    let space = ctx.measureText(" ").width;
+    const fixed = 2 * outline * (gaps + 1);
+    const body = sumW(widths) + gaps * space;
+    const fit = body + fixed > 1000 * s && body > 0
+      ? Math.max(0.3, (1000 * s - fixed) / body) : 1;
+    if (fit < 1) {
+      setFont(fs * fit);
+      widths = group.map((w) => ctx.measureText(w).width);
+      space = ctx.measureText(" ").width;
+    }
+    const extra = 2 * outline;
+    ctx.textAlign = "center";
+    const baseline = y - (descents[file] != null ? descents[file] * fs * fit : 0);
+    ctx.textBaseline = fam && descents[file] != null ? "alphabetic" : "bottom";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = outline * 2;   // el trazo es centrado: la mitad queda afuera
+    ctx.strokeStyle = white ? "#fff" : "#000";
+    let x = (cw - sumW(widths) - gaps * (space + extra)) / 2;
+    group.forEach((word, i) => {
+      const cx = x + widths[i] / 2;
+      const ty = ctx.textBaseline === "alphabetic" ? baseline : y;
+      if (outline > 0) ctx.strokeText(word, cx, ty);
+      ctx.fillStyle = i === active ? accent : (white ? "#000" : "#fff");
+      ctx.fillText(word, cx, ty);
+      x += widths[i] + space + extra;
+    });
+    ctx.restore();
+  }
+
+  return { ready, init, params, appendTo, drawSample };
+})();

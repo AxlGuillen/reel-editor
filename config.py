@@ -119,11 +119,23 @@ def allowed_font_file(filename: str) -> bool:
     return _has_allowed_ext(filename, ALLOWED_FONT_EXTENSIONS)
 
 
+# Fuente por defecto, EXPLÍCITA. Antes se tomaba "la primera de la carpeta" en
+# orden alfabético: con varias fuentes en assets/fonts (las de los subtítulos)
+# el watermark y los subtítulos cambiaban de letra solos al sumar, p. ej.,
+# Anton-Regular.ttf, que ordena antes que Poppins.
+DEFAULT_FONT_FILE = "Poppins-Bold.ttf"
+
+
 def resolve_font_path() -> str | None:
-    """Devuelve el path de la fuente fija del proyecto (el primer .ttf/.otf en
-    assets/fonts/), o None si no hay ninguna."""
+    """Path de la fuente por defecto del proyecto (DEFAULT_FONT_FILE).
+
+    Si no está, cae a la primera .ttf/.otf de assets/fonts/ para no romper en
+    una instalación incompleta; None si la carpeta no tiene ninguna."""
     if not os.path.isdir(FONTS_FOLDER):
         return None
+    preferred = os.path.join(FONTS_FOLDER, DEFAULT_FONT_FILE)
+    if os.path.isfile(preferred):
+        return preferred
     for name in sorted(os.listdir(FONTS_FOLDER)):
         if allowed_font_file(name):
             return os.path.join(FONTS_FOLDER, name)

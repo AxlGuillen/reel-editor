@@ -84,3 +84,13 @@ def serve_font():
     if not path:
         return jsonify(error="No hay fuente en assets/fonts/"), 404
     return send_from_directory(config.FONTS_FOLDER, os.path.basename(path))
+
+
+@bp.get("/assets/fonts/<name>")
+def serve_named_font(name):
+    """Sirve cualquier fuente de assets/fonts (preview de los subtítulos)."""
+    safe = os.path.basename(name)
+    if not config.allowed_font_file(safe) or not os.path.isfile(
+            os.path.join(config.FONTS_FOLDER, safe)):
+        return jsonify(error="Fuente no encontrada."), 404
+    return send_from_directory(config.FONTS_FOLDER, safe)

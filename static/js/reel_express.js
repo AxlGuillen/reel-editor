@@ -197,7 +197,13 @@ function updateBlockStatus() {
   setBlockStatus("text", textParts.length ? textParts.join(" + ") : "Nada", textParts.length ? "on" : "");
 
   if (!rxAddSubs.checked) setBlockStatus("subs", "Sin subtítulos");
-  else setBlockStatus("subs", el("rx-skip-review").checked ? "Karaoke · sin revisar" : "Karaoke · revisás antes", "on");
+  else {
+    const fontSel = el("rx-sub-font");
+    const font = fontSel.selectedOptions[0] ? fontSel.selectedOptions[0].text : "Karaoke";
+    const look = [font, el("rx-sub-uppercase").checked && "MAYÚS",
+      el("rx-sub-color-mode").value === "rotate" && "colores"].filter(Boolean).join(" · ");
+    setBlockStatus("subs", `${look} · ${el("rx-skip-review").checked ? "sin revisar" : "revisás antes"}`, "on");
+  }
 
   const adv = [["rx-blur_intensity", "50"], ["rx-bg_brightness", "0.5"], ["rx-main_clip_scale", "1.55"],
     ["rx-enhance_intensity", "85"], ["rx-original_volume", "0"], ["rx-new_volume", "100"]]
@@ -230,36 +236,7 @@ function drawCanvas() {
 // subtítulos están activos. Sirve para ver la posición/estilo en vivo.
 function drawSampleSubtitle() {
   if (!rxAddSubs.checked) return;
-  const fs = +el("rx-sub-font-size").value;
-  const posY = +el("rx-sub-position-y").value;
-  const color = el("rx-sub-highlight-color").value;
-  const words = +el("rx-sub-words").value;
-
-  const y = (posY / 1920) * RX_H;
-  rxCtx.font = `bold ${fs * RX_SCALE}px ${rxFontFamily}`;
-  rxCtx.textAlign = "center";
-  rxCtx.textBaseline = "bottom";
-  rxCtx.lineJoin = "round";
-
-  const samples = ["Ejemplo", "de", "subtítulo", "en", "vivo", "aquí"];
-  const group = samples.slice(0, words);
-  const activeIdx = Math.min(1, group.length - 1);
-
-  const border = Math.max(2, fs * 0.07) * RX_SCALE;
-  rxCtx.lineWidth = border * 2;
-  rxCtx.strokeStyle = "black";
-
-  const totalW = rxCtx.measureText(group.join(" ")).width;
-  let curX = (RX_W - totalW) / 2;
-  group.forEach((word, i) => {
-    const wordW = rxCtx.measureText(word).width;
-    const spaceW = i < group.length - 1 ? rxCtx.measureText(" ").width : 0;
-    const cx = curX + wordW / 2;
-    rxCtx.fillStyle = i === activeIdx ? color : "white";
-    rxCtx.strokeText(word, cx, y);
-    rxCtx.fillText(word, cx, y);
-    curX += wordW + spaceW;
-  });
+  SubStyle.drawSample(rxCtx, RX_W, RX_H, "rx-sub-");
 }
 
 // Espeja vertical_convert.js: fondo "cover" con blur + brillo, y el clip
@@ -494,9 +471,11 @@ el("rx-sub-position-y").addEventListener("input", () => {
 el("rx-sub-words").addEventListener("input", () => {
   el("rx-sub-words-val").textContent = el("rx-sub-words").value;
 });
-el("rx-sub-highlight-color").addEventListener("input", () => {
-  el("rx-sub-color-preview").style.background = el("rx-sub-highlight-color").value;
-});
+// Estilo (fuente, mayúsculas, colores, contorno): bloque compartido.
+SubStyle.init("rx-sub-");
+// El estilo guardado se aplica cuando llegan las fuentes: recién ahí el
+// resumen del bloque "Subtítulos" puede decir cuál quedó.
+SubStyle.ready.then(() => updateBlockStatus());
 
 // --- Process ---
 rxProcessBtn.addEventListener("click", () => {
@@ -546,10 +525,7 @@ rxProcessBtn.addEventListener("click", () => {
     form.append("skip_review", el("rx-skip-review").checked ? "1" : "0");
     form.append("language", el("rx-sub-language").value);
     form.append("model", el("rx-sub-model").value);
-    form.append("font_size", el("rx-sub-font-size").value);
-    form.append("position_y", el("rx-sub-position-y").value);
-    form.append("words_per_line", el("rx-sub-words").value);
-    form.append("highlight_color", el("rx-sub-highlight-color").value);
+    SubStyle.appendTo(form, "rx-sub-");
   }
   rxResetOutputs();
   rxSubsEditor.classList.add("hidden");
@@ -629,10 +605,7 @@ function rxRunFinish(segments) {
     job_id: rxPrepJobId,
     segments,
     output_name: el("rx-output-name").value,
-    font_size: el("rx-sub-font-size").value,
-    position_y: el("rx-sub-position-y").value,
-    words_per_line: el("rx-sub-words").value,
-    highlight_color: el("rx-sub-highlight-color").value,
+    ...SubStyle.params("rx-sub-"),
   };
 
   rxResetOutputs();

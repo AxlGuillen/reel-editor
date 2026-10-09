@@ -23,14 +23,51 @@ import uuid
 
 import config
 from core import ffmpeg_runner, job_manager
-from modules.subtitles.schema import SubtitlesParams
+from modules.subtitles import fonts
+from modules.subtitles.schema import ROTATE_PALETTE, SubtitlesParams, _css_to_ass
 
 # Resolución del lienzo ASS (debe coincidir con el output vertical).
 ASS_W = config.OUTPUT_WIDTH   # 1080
 ASS_H = config.OUTPUT_HEIGHT  # 1920
 
-COLOR_BASE   = "&H00FFFFFF&"   # blanco
-COLOR_BORDER = "&H00000000&"   # contorno negro
+WHITE = "&H00FFFFFF&"
+BLACK = "&H00000000&"
+# Texto y contorno van siempre en contraste: contorno negro → texto blanco,
+# contorno blanco → texto negro (blanco sobre blanco no se leería).
+_TEXT_FOR_OUTLINE = {"black": WHITE, "white": BLACK}
+_OUTLINE_ASS = {"black": BLACK, "white": WHITE}
+_ROTATE_ASS = tuple(_css_to_ass(c) for c in ROTATE_PALETTE)
+
+# Ancho útil de una línea: el cuadro menos los márgenes laterales del Style.
+SIDE_MARGIN = 40
+MAX_LINE_W = ASS_W - 2 * SIDE_MARGIN   # 1000 px
+MIN_FIT = 0.3                          # nunca achicar más que esto
+
+
+def _fit_group(font: dict, words: list[str], em_px: int, outline: int) -> tuple[float, float]:
+    """(escala, espacio extra en unidades ASS) para un grupo de palabras.
+
+    Dos problemas que aparecieron al usar la letra en su tamaño real:
+    - Grupos largos en mayúsculas no entran en 1080 px (WrapStyle 2 no corta
+      renglones) y se salían del cuadro por los dos lados → se achica SOLO ese
+      grupo con \\fscx/\\fscy.
+    - Con contornos gruesos, el contorno de cada palabra tapa el espacio y
+      "Y AÚN ASÍ" se lee como una sola mancha → entre palabras se agrega el
+      doble del contorno, así el hueco visible entre contornos es el espacio
+      natural de la fuente.
+    Medido en libass: \\fscx escala las letras y el \\fsp, pero NO el contorno.
+    Por eso el extra se divide por la escala y el contorno queda fuera de ella.
+    """
+    gaps = len(words) - 1
+    letters = sum(fonts.text_width(font, w, em_px) for w in words)
+    spaces = gaps * fonts.text_width(font, " ", em_px)
+    fixed = 2 * outline * (gaps + 1)   # contorno de los bordes + extra entre palabras
+    natural = letters + spaces + fixed
+    if natural <= MAX_LINE_W or letters + spaces <= 0:
+        fit = 1.0
+    else:
+        fit = max(MIN_FIT, (MAX_LINE_W - fixed) / (letters + spaces))
+    return fit, (2 * outline / fit if outline else 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -240,16 +277,31 @@ def _esc_text(s: str) -> str:
     return s.replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
-def build_ass(segments: list[list[dict]], params: SubtitlesParams,
-              font_name: str = "Poppins-Bold") -> str:
-    """Genera el contenido del .ass (puro, sin I/O).
+def _active_color(params: SubtitlesParams, word_index: int) -> str:
+    """Color de la palabra que está sonando. En "rotate", cada palabra de la
+    transcripción (índice global, corrido entre grupos) toma el siguiente color
+    de la paleta; en "single", el color de resalte elegido."""
+    if params.color_mode == "rotate":
+        return _ROTATE_ASS[word_index % len(_ROTATE_ASS)]
+    return params.highlight_color
+
+
+def build_ass(segments: list[list[dict]], params: SubtitlesParams) -> str:
+    """Genera el contenido del .ass (puro salvo leer la fuente del registro).
 
     `segments` es una lista de listas de palabras (una por segmento). Dentro de
     cada segmento se chunkea por words_per_line; cada chunk muestra sus palabras
     juntas con la activa coloreada (un evento Dialogue por palabra).
+
+    El tamaño que elige el usuario (font_size) es el em en px, igual que en el
+    preview; el Fontsize del ASS se convierte por fuente (ver fonts.py).
     """
-    fs = params.font_size
-    border = max(2, round(fs * 0.07))
+    font = fonts.font_info(params.font)
+    fs = fonts.ass_font_size(font, params.font_size)
+    bold = -1 if font["bold"] else 0
+    italic = -1 if font["italic"] else 0
+    text_color = _TEXT_FOR_OUTLINE[params.outline_color]
+    outline_color = _OUTLINE_ASS[params.outline_color]
 
     header = f"""\
 [Script Info]
@@ -261,7 +313,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,{font_name},{fs},{COLOR_BASE},&H000000FF&,{COLOR_BORDER},&H80000000&,-1,0,0,0,100,100,0,0,1,{border},0,2,40,40,60,1
+Style: Sub,{font["family"]},{fs},{text_color},&H000000FF&,{outline_color},&H80000000&,{bold},{italic},0,0,100,100,0,0,1,{params.outline_size},0,2,{SIDE_MARGIN},{SIDE_MARGIN},60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -270,7 +322,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     n = params.words_per_line
     pos_x = ASS_W // 2
     pos_y = params.position_y
-    pos_tag = f"{{\\an2\\pos({pos_x},{pos_y})}}"
 
     # Aplanamos todos los grupos (chunks de n palabras) en una sola lista, así
     # cada grupo sabe cuándo arranca el siguiente y podemos evitar que su última
@@ -281,10 +332,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             groups.append(seg_words[gi:gi + n])
 
     events = []
+    word_base = 0   # índice global de la primera palabra del grupo (para rotar colores)
     for g_idx, group in enumerate(groups):
         # Inicio del próximo grupo (None si es el último): tope duro para que
         # nada de este grupo siga vivo cuando el siguiente ya empezó.
         next_start = groups[g_idx + 1][0]["start"] if g_idx + 1 < len(groups) else None
+
+        shown = [w["word"].upper() if params.uppercase else w["word"] for w in group]
+        fit, extra = _fit_group(font, shown, params.font_size, params.outline_size)
+        scale = f"\\fscx{fit * 100:.1f}\\fscy{fit * 100:.1f}" if fit < 1 else ""
+        pos_tag = f"{{\\an2\\pos({pos_x},{pos_y}){scale}}}"
+        sep = f"{{\\fsp{extra:.1f}}} {{\\fsp0}}" if extra else " "
 
         for idx, word in enumerate(group):
             t_start = word["start"]
@@ -301,18 +359,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 t_end = t_start + 0.1
 
             parts = []
-            for j, w in enumerate(group):
-                wt = _esc_text(w["word"])
+            for j, raw in enumerate(shown):
+                wt = _esc_text(raw)
                 if j == idx:
-                    parts.append(f"{{\\c{params.highlight_color}}}{wt}{{\\c{COLOR_BASE}}}")
+                    color = _active_color(params, word_base + idx)
+                    parts.append(f"{{\\c{color}}}{wt}{{\\c{text_color}}}")
                 else:
                     parts.append(wt)
-            text = " ".join(parts)
+            text = sep.join(parts)
 
             events.append(
                 f"Dialogue: 0,{_seconds_to_ass(t_start)},{_seconds_to_ass(t_end)},"
                 f"Sub,,0,0,0,,{pos_tag}{text}"
             )
+        word_base += len(group)
 
     return header + "\n".join(events) + "\n"
 
@@ -350,13 +410,7 @@ def prepare_ass(segments_data: list[dict], params: SubtitlesParams) -> str:
     seg_words = words_from_segments(segments_data)
     if not seg_words:
         raise RuntimeError("No hay texto en los subtítulos para generar.")
-
-    font_name = "Poppins-Bold"
-    font_path = config.resolve_font_path()
-    if font_path:
-        font_name = os.path.splitext(os.path.basename(font_path))[0]
-
-    return _write_ass(build_ass(seg_words, params, font_name=font_name))
+    return _write_ass(build_ass(seg_words, params))
 
 
 def build_command(video_path: str, ass_path: str, output_path: str) -> list[str]:

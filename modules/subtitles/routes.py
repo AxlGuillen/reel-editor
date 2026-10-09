@@ -8,15 +8,34 @@ Flujo en dos fases:
 """
 import os
 import threading
+from urllib.parse import quote
 
 from flask import Blueprint, jsonify, request, send_file
 
 import config
 from core import file_utils, job_manager
-from modules.subtitles import processor
-from modules.subtitles.schema import SubtitlesParams
+from modules.subtitles import fonts, processor
+from modules.subtitles.schema import (OUTLINE_DEFAULT, OUTLINE_MAX, OUTLINE_MIN,
+                                      ROTATE_PALETTE, SubtitlesParams)
 
 bp = Blueprint("subtitles", __name__, url_prefix="/api/subtitles")
+
+
+@bp.get("/styles")
+def styles_route():
+    """Opciones de estilo para la UI y el preview de los tres módulos.
+
+    El preview no inventa nada: la lista de fuentes, la paleta de "colores que
+    rotan" y los rangos salen de acá, que es lo mismo que usa build_ass.
+    """
+    return jsonify(
+        fonts=[{"file": f["file"], "label": f["label"], "descent": f["descent"],
+                # quote(): nombres con espacios o paréntesis ("Bebas Neue.ttf").
+                "url": f"/assets/fonts/{quote(f['file'])}"} for f in fonts.available_fonts()],
+        default_font=config.DEFAULT_FONT_FILE,
+        palette=list(ROTATE_PALETTE),
+        outline={"min": OUTLINE_MIN, "max": OUTLINE_MAX, "default": OUTLINE_DEFAULT},
+    )
 
 
 @bp.post("/transcribe")

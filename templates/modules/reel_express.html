@@ -227,14 +227,7 @@
           <span>Palabras por grupo <em id="rx-sub-words-val">3</em></span>
           <input type="range" id="rx-sub-words" min="1" max="6" value="3">
         </label>
-        <label class="control">
-          <span>Color de resalte</span>
-          <div class="sub-color-row">
-            <input type="color" id="rx-sub-highlight-color" value="#fbff00" class="sub-color-picker">
-            <span id="rx-sub-color-preview" class="sub-color-chip" style="background:#fbff00"></span>
-            <span class="sub-color-label">Palabra activa</span>
-          </div>
-        </label>
+        {% with p="rx-sub-" %}{% include "modules/_sub_style.html" %}{% endwith %}
         <label class="control">
           <span>Idioma del audio</span>
           <select id="rx-sub-language">

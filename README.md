@@ -27,7 +27,7 @@ The sidebar is split into sections.
 | ⬇️ | **Downloader** | Downloads video or audio from a YouTube, TikTok or Instagram link. You pick format (mp3/mp4) and quality. Supports an uploaded `cookies.txt` for YouTube's bot check. |
 | 🔊 | **SoundDrop** | Drops a background audio track onto a vertical video, with volume controls, fade, and speed matching. Live mix preview. |
 | 🖋️ | **Watermark** | Adds text (primary + secondary) and/or a PNG mark over the video. Reusable watermark gallery. |
-| 🗣️ | **Subtitles** | Transcribes the audio (Whisper, running locally) and burns **karaoke** subtitles. You can correct the text before rendering. |
+| 🗣️ | **Subtitles** | Transcribes the audio (Whisper, running locally) and burns **karaoke** subtitles. You can correct the text before rendering. Style: five heavy fonts, ALL CAPS, a single highlight color or **colors that rotate word by word**, and a black or white outline of any thickness — the same style block in Subtitles, Reel Express and Reel Frase, remembered between sessions. |
 
 **Tools Specific videos**
 
@@ -145,7 +145,7 @@ export REELFORGE_CLIPS_FOLDER=/path/to/your/captures
 
 On Windows it usually looks like `C:/ffmpeg/bin/ffmpeg.exe`.
 
-**Text and subtitles** use whatever font you drop in `assets/fonts/` (a `.ttf`/`.otf`). **Watermarks** are PNGs with transparency, uploaded from the app itself.
+**Subtitle fonts** live in `assets/fonts/` (Poppins Bold/ExtraBold/Black, Anton and Archivo Black, all under the SIL Open Font License — see `assets/font_licenses/`). Any `.ttf`/`.otf` you drop there shows up in the font picker; keep only font files in that folder. The watermark text always uses `Poppins-Bold.ttf` (`DEFAULT_FONT_FILE` in `config.py`). **Watermarks** are PNGs with transparency, uploaded from the app itself.
 
 ---
 

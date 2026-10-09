@@ -57,14 +57,7 @@
         <input type="range" id="sub-words" min="1" max="6" value="3">
       </label>
 
-      <label class="control">
-        <span>Color de resalte</span>
-        <div class="sub-color-row">
-          <input type="color" id="sub-highlight-color" value="#fbff00" class="sub-color-picker">
-          <span id="sub-color-preview" class="sub-color-chip" style="background:#fbff00"></span>
-          <span class="sub-color-label">Palabra activa</span>
-        </div>
-      </label>
+      {% with p="sub-" %}{% include "modules/_sub_style.html" %}{% endwith %}
 
       <h3 class="rx-group">Transcripción</h3>
       <label class="control">

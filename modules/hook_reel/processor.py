@@ -301,13 +301,9 @@ def finish(job_id: str, ctx: dict, segments: list[dict], sub_params,
         if not seg_words:
             raise RuntimeError("No hay texto en los subtítulos para generar.")
 
-        font_name = "Poppins-Bold"
-        font_path = config.resolve_font_path()
-        if font_path:
-            font_name = os.path.splitext(os.path.basename(font_path))[0]
-
-        ass_content = subtitles_processor.build_ass(seg_words, sub_params,
-                                                    font_name=font_name)
+        # La fuente (familia que entiende libass + tamaño) la resuelve
+        # build_ass a partir de sub_params.font, igual que en los otros módulos.
+        ass_content = subtitles_processor.build_ass(seg_words, sub_params)
         ass_path = subtitles_processor._write_ass(ass_content)
 
         job_manager.update_job(job_id, progress=10, stage="Ensamblando reel…")

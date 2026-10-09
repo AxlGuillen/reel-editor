@@ -32,16 +32,11 @@ const subErrorMsg = el("sub-error-msg");
 
 let subVideoFile = null;
 let subRafId = null;
-let subFontFamily = "sans-serif";
 let subTranscribeJobId = null;   // job que tiene el video subido en el server
 let subSegments = [];            // segmentos detectados (con words originales)
 
-// --- Cargar fuente custom para el preview ---
-fetch("/api/font").then((r) => r.json()).then((info) => {
-  if (!info.available) return;
-  const ff = new FontFace("WMBrand", "url(/assets/font)");
-  ff.load().then((f) => { document.fonts.add(f); subFontFamily = "WMBrand"; }).catch(() => {});
-});
+// Estilo (fuente, mayúsculas, colores, contorno): bloque compartido.
+SubStyle.init("sub-");
 
 // --- Drop zone ---
 subVideoZone.addEventListener("click", () => subVideoInput.click());
@@ -174,10 +169,7 @@ function subRunRender(segments) {
   const payload = {
     job_id: subTranscribeJobId,
     segments,
-    font_size: el("sub-font-size").value,
-    position_y: el("sub-position-y").value,
-    words_per_line: el("sub-words").value,
-    highlight_color: el("sub-highlight-color").value,
+    ...SubStyle.params("sub-"),
   };
 
   subResetOutputs();
@@ -236,39 +228,7 @@ function drawCanvas() {
 }
 
 function drawSampleCaption() {
-  const fs = +el("sub-font-size").value;
-  const posY = +el("sub-position-y").value;
-  const color = el("sub-highlight-color").value;
-  const words = +el("sub-words").value;
-
-  const y = (posY / 1920) * SUB_H;
-
-  subCtx.font = `bold ${fs * SUB_SCALE}px ${subFontFamily}`;
-  subCtx.textAlign = "center";
-  subCtx.textBaseline = "bottom";
-  subCtx.lineJoin = "round";
-
-  const samples = ["Ejemplo", "de", "subtítulo", "en", "vivo", "aquí"];
-  const group = samples.slice(0, words);
-  const activeIdx = Math.min(1, group.length - 1);
-
-  const border = Math.max(2, fs * 0.07) * SUB_SCALE;
-  subCtx.lineWidth = border * 2;
-  subCtx.strokeStyle = "black";
-
-  const totalText = group.join(" ");
-  const totalW = subCtx.measureText(totalText).width;
-  let curX = (SUB_W - totalW) / 2;
-
-  group.forEach((word, i) => {
-    const wordW = subCtx.measureText(word).width;
-    const spaceW = i < group.length - 1 ? subCtx.measureText(" ").width : 0;
-    const cx = curX + wordW / 2;
-    subCtx.fillStyle = i === activeIdx ? color : "white";
-    subCtx.strokeText(word, cx, y);
-    subCtx.fillText(word, cx, y);
-    curX += wordW + spaceW;
-  });
+  SubStyle.drawSample(subCtx, SUB_W, SUB_H, "sub-");
 }
 
 // --- Sliders: labels en vivo ---
@@ -280,9 +240,6 @@ el("sub-position-y").addEventListener("input", () => {
 });
 el("sub-words").addEventListener("input", () => {
   el("sub-words-val").textContent = el("sub-words").value;
-});
-el("sub-highlight-color").addEventListener("input", () => {
-  el("sub-color-preview").style.background = el("sub-highlight-color").value;
 });
 
 // --- Presets de posición ---

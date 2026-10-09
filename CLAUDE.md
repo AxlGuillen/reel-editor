@@ -31,7 +31,9 @@ reel-editor/
 │
 ├── assets/                     ← Assets PERSISTENTES (versionados, NO los toca "Limpiar archivos")
 │   ├── watermarks/             ← librería de PNG con transparencia (overlay)
-│   └── fonts/                  ← la fuente fija para textos y subtítulos (.ttf/.otf)
+│   ├── fonts/                  ← fuentes de subtítulos (Poppins Bold/ExtraBold/Black, Anton,
+│   │                             Archivo Black); SOLO archivos de fuente (libass los abre todos)
+│   └── font_licenses/          ← licencias OFL de las fuentes (fuera de fonts/ a propósito)
 │
 ├── modules/                    ← Cada feature es un módulo independiente
 │   ├── reel_express/           ← PIPELINE: encadena vertical+audio+mezcla+watermark+subs
@@ -157,12 +159,21 @@ Transcribe el audio con **faster-whisper** y quema subtítulos estilo **karaoke*
 
 | Parámetro | Tipo | Default | Rango |
 |---|---|---|---|
-| `font_size` | int | 64 | 30–140 px |
-| `position_y` | int | 1560 | 0–1920 (px en 1080×1920) |
+| `font_size` | int | 64 | 30–140 px (**em** de la letra, igual que el preview) |
+| `position_y` | int | 1560 | 0–1920 (px en 1080×1920; borde inferior del texto) |
 | `words_per_line` | int | 3 | 1–6 |
-| `highlight_color` | string | #fbff00 | hex CSS → ASS BGR |
+| `highlight_color` | string | #fbff00 | hex CSS → ASS BGR (inválido → 400) |
+| `sub_font` | string | Poppins-Bold.ttf | archivo de `assets/fonts/` |
+| `sub_uppercase` | bool | false | todo en mayúsculas (respeta tildes) |
+| `sub_color_mode` | string | single | `single` (color de resalte) / `rotate` (cada palabra dicha toma el siguiente color de `ROTATE_PALETTE`) |
+| `sub_outline_color` | string | black | `black` (texto blanco) / `white` (texto negro) |
+| `sub_outline_size` | int | 6 | 0–20 px |
 | `language` | string | es | auto/es/en/pt/fr/de/it/ja/ko/zh |
 | `model` | string | large-v3-turbo | tiny…large-v3 |
+
+Los campos de estilo llevan prefijo `sub_` porque reel_express y hook_reel arman todos sus params desde el mismo form. Los tres módulos usan el mismo `build_ass` vía `prepare_ass`.
+
+**Fuentes (`fonts.py`).** libass busca por **familia** (nameID 1) + negrita (nameID 2 dice "Bold"), NO por el nombre del archivo: con "Poppins-Bold" (el nombre PostScript) caía en silencio a Arial Bold. Y libass escala el `Fontsize` del ASS como el alto `winAscent+winDescent`, no como el em: el ASS lleva `font_size * size_ratio` (Poppins 1.762, Anton 1.733, Archivo Black 1.347) para que el em sea `font_size` px como en el canvas. Para verificar qué fuente usó libass: `ffmpeg -v verbose … | grep fontselect`. `GET /api/subtitles/styles` expone fuentes, paleta y rangos al preview (una sola fuente de verdad).
 
 Device automático: intenta cuda/float16, cae a cpu/int8 (en Mac es CPU). La 1ª vez **descarga el modelo** (~1.6 GB para turbo).
 
@@ -272,8 +283,9 @@ GET    /api/watermarks            → lista de watermarks
 POST   /api/watermarks            → subir un PNG
 DELETE /api/watermarks/<name>     → borrar
 GET    /assets/watermarks/<name>  → servir el PNG (galería / preview)
-GET    /api/font                  → ¿hay fuente cargada?
-GET    /assets/font               → servir la fuente (para el @font-face del preview)
+GET    /api/font                  → ¿hay fuente cargada? (la de por defecto)
+GET    /assets/font               → servir la fuente por defecto (preview del watermark)
+GET    /assets/fonts/<name>       → servir cualquier fuente de assets/fonts (preview de subtítulos)
 ```
 
 ### library — librería de clips locales
@@ -363,7 +375,8 @@ ALLOWED_AUDIO_EXTENSIONS  = {"mp3","wav","m4a","aac","ogg"} | ALLOWED_EXTENSIONS
 ALLOWED_WATERMARK_EXTENSIONS = {"png"}
 ALLOWED_FONT_EXTENSIONS      = {"ttf","otf"}
 OUTPUT_WIDTH, OUTPUT_HEIGHT  = 1080, 1920
-resolve_font_path()  # primer .ttf/.otf en assets/fonts/, o None
+DEFAULT_FONT_FILE = "Poppins-Bold.ttf"   # explícita: con varias fuentes, la "primera" era Anton
+resolve_font_path()  # DEFAULT_FONT_FILE (o la primera si falta); la usa el watermark
 ```
 
 En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars.
@@ -382,7 +395,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 `index.html` es un **app shell**: una **sidebar dividida en secciones** (`.nav-section`: Automático / Módulos / Tools Specific videos / Tools / Sistema) con un nav item por módulo, y un `<section class="module-view">` por módulo (parciales con `{% include %}`). `app.js` muestra una vista a la vez (busca `.nav-item`). La vista por defecto es **Reel Express**.
 
-Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onDone, onError})` de `shared.js` (POST + polling). Los flujos de dos fases (subtitles, reel_express, hook_reel) usan un poller propio porque el status trae `segments`. `shared.js` además concentra lo compartido entre módulos: el preview de la placa del HUD en canvas (`drawHudPlate`), el selector de archivos (`openFilePicker`) y la galería de la librería de clips (`openClipLibrary` / `appendClip`). Las vistas **Info** e **Historial** no procesan nada: solo leen su endpoint y pintan. El **editor de segmentos** (`SubtitleEditor` en `subtitle_editor.js`) es compartido por subtitles y reel_express. Sin librerías frontend externas (solo Vanilla JS).
+Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onDone, onError})` de `shared.js` (POST + polling). Los flujos de dos fases (subtitles, reel_express, hook_reel) usan un poller propio porque el status trae `segments`. `shared.js` además concentra lo compartido entre módulos: el estilo de subtítulos (`SubStyle`: llena el parcial `templates/modules/_sub_style.html`, que Subtítulos, Reel Express y Reel Frase incluyen con prefijos `sub-`/`rx-sub-`/`hk-sub-`; arma los params; recuerda el estilo en localStorage y lo sincroniza entre módulos; dibuja la muestra animada apoyada en la misma línea base que libass), el preview de la placa del HUD en canvas (`drawHudPlate`), el selector de archivos (`openFilePicker`) y la galería de la librería de clips (`openClipLibrary` / `appendClip`). Las vistas **Info** e **Historial** no procesan nada: solo leen su endpoint y pintan. El **editor de segmentos** (`SubtitleEditor` en `subtitle_editor.js`) es compartido por subtitles y reel_express. Sin librerías frontend externas (solo Vanilla JS).
 
 ---
 
@@ -390,6 +403,7 @@ Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onD
 
 - **FFmpeg** y **ffprobe** en el PATH (o resueltos por `config.py`). ffprobe es necesario para el speed match, resoluciones y duración exacta; sin él, varias features degradan en vez de crashear.
 - **yt-dlp** (pip) para el downloader. Se actualiza seguido: `pip install -U yt-dlp`.
+- **fonttools** (pip) para leer familia y métricas de las fuentes de subtítulos.
 - **faster-whisper** (pip) para subtitles. La 1ª transcripción descarga el modelo (~1.6 GB turbo). En Mac corre en **CPU** (CTranslate2 no usa Metal/GPU); modelos chicos (small/medium) son más livianos.
 
 ---

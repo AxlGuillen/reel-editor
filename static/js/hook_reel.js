@@ -96,9 +96,8 @@ Object.entries(hkLabels).forEach(([inputId, labelId]) => {
 hkAddSubs.addEventListener("change", () => {
   hkSubsControls.classList.toggle("hidden", !hkAddSubs.checked);
 });
-el("hk-sub-highlight-color").addEventListener("input", () => {
-  el("hk-sub-color-preview").style.background = el("hk-sub-highlight-color").value;
-});
+// Estilo (fuente, mayúsculas, colores, contorno): bloque compartido.
+SubStyle.init("hk-sub-");
 
 // --- Fase 1: generar ---
 hkProcessBtn.addEventListener("click", () => {
@@ -134,10 +133,7 @@ hkProcessBtn.addEventListener("click", () => {
   if (hkAddSubs.checked) {
     form.append("language", el("hk-sub-language").value);
     form.append("model", el("hk-sub-model").value);
-    form.append("font_size", el("hk-sub-font-size").value);
-    form.append("position_y", el("hk-sub-position-y").value);
-    form.append("words_per_line", el("hk-sub-words").value);
-    form.append("highlight_color", el("hk-sub-highlight-color").value);
+    SubStyle.appendTo(form, "hk-sub-");
   }
 
   hkResetOutputs();
@@ -210,10 +206,7 @@ function hkRunFinish(segments) {
     job_id: hkPrepJobId,
     segments,
     output_name: el("hk-output-name").value,
-    font_size: el("hk-sub-font-size").value,
-    position_y: el("hk-sub-position-y").value,
-    words_per_line: el("hk-sub-words").value,
-    highlight_color: el("hk-sub-highlight-color").value,
+    ...SubStyle.params("hk-sub-"),
   };
 
   hkResetOutputs();
