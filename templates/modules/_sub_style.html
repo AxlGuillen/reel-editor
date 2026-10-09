@@ -14,6 +14,27 @@
   </label>
 
   <label class="control">
+    <span>Disposición de la frase</span>
+    <select id="{{ p }}layout">
+      <option value="line">En línea</option>
+      <option value="stairs">En escalera (va bajando)</option>
+      <option value="mixed">Variada (a veces en línea, a veces en escalera)</option>
+    </select>
+  </label>
+  <p class="hint hidden" id="{{ p }}layout-hint">
+    La escalera es más alta que una línea: si tapa el HUD del juego, subí la
+    posición vertical o achicá la letra (el preview muestra dónde cae).
+  </p>
+  <label class="control">
+    <span>Tamaño de las palabras</span>
+    <select id="{{ p }}sizes">
+      <option value="same">Todas iguales</option>
+      <option value="grow">Crecientes (la frase crece; la última, grande y a color)</option>
+      <option value="random">Variados (alguna palabra grande y a color)</option>
+    </select>
+  </label>
+
+  <label class="control">
     <span>Color de la palabra activa</span>
     <select id="{{ p }}color-mode">
       <option value="single">Un color</option>

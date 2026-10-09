@@ -28,6 +28,9 @@ OUTLINE_MIN, OUTLINE_MAX, OUTLINE_DEFAULT = 0, 20, 6   # px en el lienzo 1080x19
 # paleta (sólidos y saturados, para que se lean sobre el gameplay). El preview
 # la recibe por GET /api/subtitles/styles: esta es la única definición.
 ROTATE_PALETTE = ("#FFE600", "#3DFF6E", "#FF4FD8", "#3DE8FF", "#FF9F1C")
+# Disposición de cada frase y tamaños de sus palabras (ver processor._group_style).
+LAYOUTS = {"line", "stairs", "mixed"}       # en línea / en escalera / variada
+SIZE_MODES = {"same", "grow", "random"}     # iguales / crecientes / variados
 _HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
 
 
@@ -44,6 +47,8 @@ class SubtitlesParams:
     color_mode:     str = "single"    # single | rotate
     outline_color:  str = "black"     # black | white (con blanco, el texto va negro)
     outline_size:   int = OUTLINE_DEFAULT
+    layout:         str = "line"      # line | stairs | mixed
+    sizes:          str = "same"      # same | grow | random
 
     @classmethod
     def from_form(cls, form) -> "SubtitlesParams":
@@ -98,6 +103,18 @@ class SubtitlesParams:
         raw = form.get("sub_outline_size")
         size = OUTLINE_DEFAULT if raw in (None, "") else _to_int("El grosor del contorno", raw)
         values["outline_size"] = _clamp("El grosor del contorno", size, OUTLINE_MIN, OUTLINE_MAX)
+
+        layout = str(form.get("sub_layout") or "line").strip().lower()
+        if layout not in LAYOUTS:
+            raise ValueError(f"Disposición inválida: {layout!r}. Opciones: line (en línea), "
+                             "stairs (en escalera) o mixed (variada).")
+        values["layout"] = layout
+
+        sizes = str(form.get("sub_sizes") or "same").strip().lower()
+        if sizes not in SIZE_MODES:
+            raise ValueError(f"Tamaño de palabras inválido: {sizes!r}. Opciones: same (iguales), "
+                             "grow (crecientes) o random (variados).")
+        values["sizes"] = sizes
 
         return cls(**values)
 

@@ -255,17 +255,29 @@ const SubStyle = (() => {
     el(p + "single-color-row").classList.toggle("hidden", rotate);
     el(p + "palette-row").classList.toggle("hidden", !rotate);
     el(p + "outline-size-val").textContent = el(p + "outline-size").value;
+    el(p + "layout-hint").classList.toggle("hidden", el(p + "layout").value === "line");
     el(p + "color-preview").style.background = el(p + "highlight-color").value;
   }
 
+  // Solo valores que existen como opción: un localStorage viejo o corrupto
+  // dejaría un <select> vacío, que el server lee distinto que el preview.
+  function setOption(id, v) {
+    const sel = el(id);
+    if (v != null && [...sel.options].some((o) => o.value === String(v))) sel.value = v;
+  }
+
   function apply(p, s) {
-    const font = el(p + "font");
-    if (s.font && [...font.options].some((o) => o.value === s.font)) font.value = s.font;
+    setOption(p + "font", s.font);
     if (typeof s.uppercase === "boolean") el(p + "uppercase").checked = s.uppercase;
-    if (s.color_mode) el(p + "color-mode").value = s.color_mode;
-    if (s.outline_color) el(p + "outline-color").value = s.outline_color;
+    setOption(p + "color-mode", s.color_mode);
+    setOption(p + "outline-color", s.outline_color);
     if (s.outline_size != null) el(p + "outline-size").value = s.outline_size;
+    setOption(p + "layout", s.layout);
+    setOption(p + "sizes", s.sizes);
     sync(p);
+    // Los módulos que muestran un resumen del estilo (Reel Express) se enteran
+    // aunque el cambio venga de otro módulo.
+    document.dispatchEvent(new CustomEvent("substyle:change", { detail: { prefix: p } }));
   }
 
   function snapshot(p) {
@@ -275,6 +287,8 @@ const SubStyle = (() => {
       color_mode: el(p + "color-mode").value,
       outline_color: el(p + "outline-color").value,
       outline_size: el(p + "outline-size").value,
+      layout: el(p + "layout").value,
+      sizes: el(p + "sizes").value,
     };
   }
 
@@ -320,7 +334,7 @@ const SubStyle = (() => {
 
   function init(p) {
     prefixes.push(p);
-    ["font", "uppercase", "color-mode", "outline-color"].forEach((id) =>
+    ["font", "uppercase", "color-mode", "outline-color", "layout", "sizes"].forEach((id) =>
       el(p + id).addEventListener("change", () => { sync(p); save(p); }));
     el(p + "outline-size").addEventListener("input", () => { sync(p); save(p); });
     el(p + "highlight-color").addEventListener("input", () => sync(p));
@@ -340,6 +354,8 @@ const SubStyle = (() => {
       sub_color_mode: el(p + "color-mode").value,
       sub_outline_color: el(p + "outline-color").value,
       sub_outline_size: el(p + "outline-size").value,
+      sub_layout: el(p + "layout").value,
+      sub_sizes: el(p + "sizes").value,
     };
   }
 
@@ -353,6 +369,82 @@ const SubStyle = (() => {
   // Vertical: libass apoya el borde inferior en baseline + winDescent; el
   // "bottom" del canvas usa otra métrica, así que se dibuja sobre la baseline.
   const SAMPLE = ["Ejemplo", "de", "subtítulo", "en", "vivo", "aquí"];
+
+  // Disposición y tamaños: espejo EXACTO de _group_style y _place_words
+  // (processor.py). Mismas constantes y el mismo hash, para que el preview
+  // elija la misma escalera y la misma palabra destacada que el video.
+  const GROW_MIN = 0.85, GROW_MAX = 1.4, EMPHASIS = 1.45;
+  const STAIR_DIAG = 0.8, STAIR_GAP = 0.12, MIXED_STAIRS = 2;
+  const contentLen = (w) => [...w].filter((ch) => /[\p{L}\p{N}]/u.test(ch)).length;
+  const pick = (n, salt) => ((n + 1) * 2654435761 + salt) % 4294967296;
+
+  function groupStyle(p, words, first) {
+    const n = words.length;
+    let layout = el(p + "layout").value;
+    if (layout === "mixed") layout = pick(first, 0) % 5 < MIXED_STAIRS ? "stairs" : "line";
+    const same = { layout, scales: words.map(() => 1), emph: new Set() };
+    if (n < 2) return { ...same, layout: "line" };
+    const sizes = el(p + "sizes").value;
+    const content = words.map((_, i) => i).filter((i) => contentLen(words[i]) >= 3);
+    if (sizes === "grow") {
+      const e = content.length ? content[content.length - 1] : n - 1;
+      const scales = words.map((_, i) => (i <= e && e ? GROW_MIN + (GROW_MAX - GROW_MIN) * i / e : 1));
+      if (e === 0) scales[0] = GROW_MAX;
+      return { layout, scales, emph: new Set([e]) };
+    }
+    if (sizes === "random") {
+      const cands = content.length ? content : words.map((_, i) => i);
+      const e = cands[pick(first, 7919) % cands.length];
+      return { layout, scales: words.map((_, i) => (i === e ? EMPHASIS : 1)), emph: new Set([e]) };
+    }
+    return same;
+  }
+
+  // Devuelve { x, base, s } por palabra: x = origen, base = línea base, s = escala.
+  function placeWords(ctx, setFont, words, scales, em, outline, layout, y, desc, cw) {
+    setFont(em);
+    const widths = words.map((w, i) => ctx.measureText(w).width * scales[i]);
+    const n = words.length;
+    const maxW = 1000 * (cw / 1080);
+    if (layout === "line") {
+      const space = ctx.measureText(" ").width;
+      const body = widths.reduce((a, b) => a + b, 0) + (n - 1) * space;
+      const fixed = 2 * outline * n;
+      const fit = body + fixed <= maxW ? 1 : Math.max(0.3, (maxW - fixed) / body);
+      const baseline = y - desc * em * Math.max(...scales) * fit;
+      let x = cw / 2 - (body * fit + fixed) / 2 + outline;
+      return widths.map((w, i) => {
+        const at = { x, base: baseline, s: scales[i] * fit };
+        x += (w + space) * fit + 2 * outline;
+        return at;
+      });
+    }
+    // Escalera: corre el CENTRO de cada renglón y separa los renglones por la
+    // tinta real (acentos arriba, descendentes abajo), igual que _place_words.
+    const offs = words.map((_, i) => (i - (n - 1) / 2) * STAIR_DIAG * em);
+    const half = maxW / 2 - outline;
+    let fit = 1;
+    offs.forEach((off, i) => {
+      const need = Math.abs(off) + widths[i] / 2;
+      if (need > half) fit = Math.min(fit, half / need);
+    });
+    fit = Math.max(0.3, fit);
+    const ink = words.map((w) => {
+      const m = ctx.measureText(w);   // medido con el font a `em` (setFont arriba)
+      return [m.actualBoundingBoxAscent / em, Math.max(0, m.actualBoundingBoxDescent) / em];
+    });
+    const out = new Array(n);
+    let baseline = y - desc * em * scales[n - 1] * fit;
+    for (let i = n - 1; i >= 0; i--) {
+      if (i < n - 1) {
+        const rise = ink[i + 1][0] * scales[i + 1] + ink[i][1] * scales[i] + STAIR_GAP;
+        baseline -= rise * em * fit + 2 * outline;
+      }
+      out[i] = { x: cw / 2 + offs[i] * fit - widths[i] * fit / 2, base: baseline, s: scales[i] * fit };
+    }
+    return out;
+  }
+
   function drawSample(ctx, cw, ch, p) {
     const s = cw / 1080;
     const fs = +el(p + "font-size").value * s;
@@ -364,17 +456,39 @@ const SubStyle = (() => {
     const fam = faces[file];
     const group = SAMPLE.slice(0, +el(p + "words").value)
       .map((w) => (upper ? w.toUpperCase() : w));
+    // La muestra simula frases que se suceden: cada n palabras arranca otra
+    // (otro índice global), así "variada" y "variados" muestran su variedad.
     const tick = Math.floor(performance.now() / 600);
-    const active = tick % group.length;
+    const first = Math.floor(tick / group.length) * group.length;
+    const active = tick - first;
     const palette = (opts && opts.palette) || ["#FFE600"];
-    const accent = el(p + "color-mode").value === "rotate"
-      ? palette[tick % palette.length]
-      : el(p + "highlight-color").value;
+    const rotate = el(p + "color-mode").value === "rotate";
+    const colorOf = (g) => (rotate ? palette[g % palette.length] : el(p + "highlight-color").value);
+    const accent = colorOf(tick);
 
     ctx.save();
     const setFont = (size) => {
       ctx.font = fam ? `${size}px "${fam}"` : `bold ${size}px sans-serif`;
     };
+    const st = groupStyle(p, group, first);
+    if (fam && descents[file] != null && (st.layout !== "line" || st.emph.size)) {
+      // Cada palabra en su lugar (escalera y/o tamaños distintos).
+      const placed = placeWords(ctx, setFont, group, st.scales, fs, outline, st.layout,
+                                y, descents[file], cw);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = outline * 2;
+      ctx.strokeStyle = white ? "#fff" : "#000";
+      placed.forEach((at, i) => {
+        setFont(fs * at.s);
+        if (outline > 0) ctx.strokeText(group[i], at.x, at.base);
+        ctx.fillStyle = i === active || st.emph.has(i) ? colorOf(first + i) : (white ? "#000" : "#fff");
+        ctx.fillText(group[i], at.x, at.base);
+      });
+      ctx.restore();
+      return;
+    }
     setFont(fs);
     // Mismo ajuste que _fit_group (processor.py): si el grupo no entra en el
     // ancho útil se achica (letras y espacios, NO el contorno, como libass), y

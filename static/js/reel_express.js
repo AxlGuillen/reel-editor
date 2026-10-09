@@ -200,7 +200,9 @@ function updateBlockStatus() {
   else {
     const fontSel = el("rx-sub-font");
     const font = fontSel.selectedOptions[0] ? fontSel.selectedOptions[0].text : "Karaoke";
-    const look = [font, el("rx-sub-uppercase").checked && "MAYÚS",
+    const layout = { stairs: "escalera", mixed: "variada" }[el("rx-sub-layout").value];
+    const sizes = { grow: "crecientes", random: "tamaños variados" }[el("rx-sub-sizes").value];
+    const look = [font, el("rx-sub-uppercase").checked && "MAYÚS", layout, sizes,
       el("rx-sub-color-mode").value === "rotate" && "colores"].filter(Boolean).join(" · ");
     setBlockStatus("subs", `${look} · ${el("rx-skip-review").checked ? "sin revisar" : "revisás antes"}`, "on");
   }
@@ -476,6 +478,7 @@ SubStyle.init("rx-sub-");
 // El estilo guardado se aplica cuando llegan las fuentes: recién ahí el
 // resumen del bloque "Subtítulos" puede decir cuál quedó.
 SubStyle.ready.then(() => updateBlockStatus());
+document.addEventListener("substyle:change", () => updateBlockStatus());
 
 // --- Process ---
 rxProcessBtn.addEventListener("click", () => {

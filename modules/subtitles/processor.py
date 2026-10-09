@@ -70,6 +70,118 @@ def _fit_group(font: dict, words: list[str], em_px: int, outline: int) -> tuple[
     return fit, (2 * outline / fit if outline else 0.0)
 
 
+# --- Disposición y tamaños por palabra --------------------------------------
+# Para que la frase no sea siempre una línea recta: en escalera (cada palabra
+# un renglón más abajo y más a la derecha), con palabras de distinto tamaño, y
+# las grandes en color vivo. Todo determinista (la misma transcripción da el
+# mismo video) y espejado en el preview (SubStyle.drawSample en shared.js).
+GROW_MIN, GROW_MAX = 0.85, 1.4   # "crecientes": hasta la última palabra con contenido
+EMPHASIS = 1.45                  # "variados": la palabra destacada
+STAIR_DIAG = 0.8                 # cada renglón corre su CENTRO 0.8 em a la derecha
+STAIR_GAP = 0.12                 # aire entre la tinta de dos renglones, en em
+MIXED_STAIRS = 2                 # "variada": ~2 de cada 5 frases van en escalera
+EMPH_POP = 1.12                  # la destacada "late" al decirse (ya está en color)
+
+
+def _pick(n: int, salt: int) -> int:
+    """Entero pseudoaleatorio pero fijo para la palabra n (hash de Knuth).
+
+    El preview hace la misma cuenta en JS: con n de hasta ~10^5 el producto
+    entra en los 53 bits exactos de un double, así que da lo mismo.
+    """
+    return ((n + 1) * 2654435761 + salt) % 4294967296
+
+
+def _content_len(word: str) -> int:
+    """Letras y números de la palabra (la puntuación no cuenta)."""
+    return sum(ch.isalnum() for ch in word)
+
+
+def _group_style(params: SubtitlesParams, words: list[str], first: int):
+    """(disposición, escalas, palabras destacadas) de una frase.
+
+    `first` es el índice global de su primera palabra: decide qué frases van
+    en escalera ("variada") y qué palabra se destaca ("variados"). Nunca se
+    destaca una palabra de menos de 3 letras ("de", "en", "y" no lucen
+    grandes) salvo que la frase no tenga otra.
+    """
+    n = len(words)
+    layout = params.layout
+    if layout == "mixed":
+        layout = "stairs" if _pick(first, 0) % 5 < MIXED_STAIRS else "line"
+    if n < 2:
+        return "line", [1.0] * n, set()
+    content = [i for i, w in enumerate(words) if _content_len(w) >= 3]
+    if params.sizes == "grow":
+        # Crescendo hasta la ÚLTIMA palabra con contenido; lo que venga
+        # después ("…olvidarte DE") vuelve al tamaño normal.
+        e = content[-1] if content else n - 1
+        scales = [GROW_MIN + (GROW_MAX - GROW_MIN) * i / e if i <= e and e else 1.0
+                  for i in range(n)]
+        if e == 0:
+            scales[0] = GROW_MAX
+        return layout, scales, {e}
+    if params.sizes == "random":
+        cands = content or list(range(n))
+        e = cands[_pick(first, 7919) % len(cands)]
+        return layout, [EMPHASIS if i == e else 1.0 for i in range(n)], {e}
+    return layout, [1.0] * n, set()
+
+
+def _place_words(font: dict, words: list[str], scales: list[float], em: int,
+                 outline: int, layout: str, pos_y: int) -> list[tuple[float, float, float]]:
+    """(x, y, escala) de cada palabra para \\an1\\pos(x,y) (abajo a la izquierda).
+
+    Medido en libass: con \\an1 el origen horizontal es x y el borde inferior
+    es la línea base + winDescent·em·escala; \\fscx/\\fscy escalan letras y
+    descendente pero NO el contorno. `position_y` sigue siendo el borde
+    inferior del texto, y si no entra en el ancho útil se achica todo junto.
+    """
+    desc = font["descent"]
+    widths = [fonts.text_width(font, w, em * s) for w, s in zip(words, scales)]
+    n = len(words)
+    if layout == "line":
+        # Una línea con las palabras sobre una MISMA línea base: la palabra con
+        # el descendente más bajo apoya en position_y.
+        space = fonts.text_width(font, " ", em)
+        body = sum(widths) + (n - 1) * space
+        fixed = 2 * outline * n       # contornos de los bordes + aire extra entre palabras
+        fit = 1.0 if body + fixed <= MAX_LINE_W else max(MIN_FIT, (MAX_LINE_W - fixed) / body)
+        baseline = pos_y - desc * em * max(scales) * fit
+        x = ASS_W / 2 - (body * fit + fixed) / 2 + outline
+        placed = []
+        for w, s in zip(widths, scales):
+            placed.append((x, baseline + desc * em * s * fit, s * fit))
+            x += (w + space) * fit + 2 * outline
+        return placed
+
+    # Escalera: un renglón por palabra; cada uno corre su CENTRO hacia la
+    # derecha (corriendo el borde izquierdo, una primera palabra larga se
+    # "comía" el escalón y se leía como una lista). La última apoya en
+    # position_y y la escalera crece hacia arriba.
+    offs = [(i - (n - 1) / 2) * STAIR_DIAG * em for i in range(n)]
+    half = MAX_LINE_W / 2 - outline
+    fit = 1.0
+    for off, w in zip(offs, widths):
+        need = abs(off) + w / 2
+        if need > half:
+            fit = min(fit, half / need)
+    fit = max(MIN_FIT, fit)
+    # Entre renglones va lo que sube la tinta de abajo (acentos, puntos) más lo
+    # que baja la de arriba (g, y, p, comas), cada una con SU escala: un
+    # espaciado fijo hacía que se tocaran, y en mayúsculas sin acentos sobraba.
+    ink = [fonts.ink_extent(font, w) for w in words]
+    placed = [None] * n
+    baseline = pos_y - desc * em * scales[-1] * fit
+    for i in range(n - 1, -1, -1):
+        if i < n - 1:
+            rise = ink[i + 1][0] * scales[i + 1] + ink[i][1] * scales[i] + STAIR_GAP
+            baseline -= rise * em * fit + 2 * outline
+        x = ASS_W / 2 + offs[i] * fit - widths[i] * fit / 2
+        placed[i] = (x, baseline + desc * em * scales[i] * fit, scales[i] * fit)
+    return placed
+
+
 # ---------------------------------------------------------------------------
 # Transcripción
 # ---------------------------------------------------------------------------
@@ -339,25 +451,37 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         next_start = groups[g_idx + 1][0]["start"] if g_idx + 1 < len(groups) else None
 
         shown = [w["word"].upper() if params.uppercase else w["word"] for w in group]
-        fit, extra = _fit_group(font, shown, params.font_size, params.outline_size)
-        scale = f"\\fscx{fit * 100:.1f}\\fscy{fit * 100:.1f}" if fit < 1 else ""
-        pos_tag = f"{{\\an2\\pos({pos_x},{pos_y}){scale}}}"
-        sep = f"{{\\fsp{extra:.1f}}} {{\\fsp0}}" if extra else " "
 
+        # Tramo de cada palabra: desde que se dice hasta que arranca la
+        # siguiente. La última dura hasta su fin (+ un respiro) sin pisar el
+        # arranque del grupo que sigue: si hay silencio real limpia pantalla,
+        # y si el siguiente arranca pegado calza exacto.
+        spans = []
         for idx, word in enumerate(group):
             t_start = word["start"]
             if idx + 1 < len(group):
                 t_end = group[idx + 1]["start"]
             else:
-                # Última palabra del grupo: dura hasta su fin (+ un respiro), pero
-                # sin pisar el arranque del siguiente grupo. Si hay silencio real,
-                # limpia pantalla; si el siguiente arranca pegado, calza exacto.
                 t_end = word["end"] + 0.15
                 if next_start is not None:
                     t_end = min(t_end, next_start)
             if t_end <= t_start:
                 t_end = t_start + 0.1
+            spans.append((t_start, t_end))
 
+        layout, scales, emph = _group_style(params, shown, word_base)
+        if layout != "line" or emph:
+            events.extend(_word_events(params, font, shown, spans, word_base, text_color,
+                                       layout, scales, emph))
+            word_base += len(group)
+            continue
+
+        fit, extra = _fit_group(font, shown, params.font_size, params.outline_size)
+        scale = f"\\fscx{fit * 100:.1f}\\fscy{fit * 100:.1f}" if fit < 1 else ""
+        pos_tag = f"{{\\an2\\pos({pos_x},{pos_y}){scale}}}"
+        sep = f"{{\\fsp{extra:.1f}}} {{\\fsp0}}" if extra else " "
+
+        for idx, (t_start, t_end) in enumerate(spans):
             parts = []
             for j, raw in enumerate(shown):
                 wt = _esc_text(raw)
@@ -375,6 +499,44 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         word_base += len(group)
 
     return header + "\n".join(events) + "\n"
+
+
+def _word_events(params: SubtitlesParams, font: dict, shown: list[str],
+                 spans: list[tuple[float, float]], word_base: int, text_color: str,
+                 layout: str, scales: list[float], emph: set) -> list[str]:
+    """Eventos de una frase con cada palabra en su propio lugar.
+
+    Cada palabra es una sucesión SIN superposición: base hasta que se dice,
+    resaltada mientras se dice, base de nuevo hasta que termina la frase.
+    (Dibujar el resaltado encima de la base dejaba un halo blanco con contorno
+    0.) Las destacadas ya están en su color vivo, así que al decirse "laten".
+    """
+    placed = _place_words(font, shown, scales, params.font_size, params.outline_size,
+                          layout, params.position_y)
+    g_start, g_end = spans[0][0], spans[-1][1]
+    events = []
+
+    def add(t0, t1, tags, text):
+        if t1 > t0:
+            events.append(f"Dialogue: 0,{_seconds_to_ass(t0)},{_seconds_to_ass(t1)},"
+                          f"Sub,,0,0,0,,{{{tags}}}{text}")
+
+    for j, ((x, y, s), raw) in enumerate(zip(placed, shown)):
+        size = f"\\fscx{s * 100:.1f}\\fscy{s * 100:.1f}" if abs(s - 1) > 1e-6 else ""
+        pos = f"\\an1\\pos({x:.1f},{y:.1f}){size}"
+        active = _active_color(params, word_base + j)
+        base = active if j in emph else text_color
+        wt = _esc_text(raw)
+        t_start, t_end = spans[j]
+        add(g_start, t_start, f"{pos}\\c{base}", wt)
+        pop = ""
+        if j in emph:
+            big = s * EMPH_POP * 100
+            pop = (f"\\t(0,90,\\fscx{big:.1f}\\fscy{big:.1f})"
+                   f"\\t(90,200,\\fscx{s * 100:.1f}\\fscy{s * 100:.1f})")
+        add(t_start, t_end, f"{pos}\\c{active}{pop}", wt)
+        add(t_end, g_end, f"{pos}\\c{base}", wt)
+    return events
 
 
 def _write_ass(content: str) -> str:

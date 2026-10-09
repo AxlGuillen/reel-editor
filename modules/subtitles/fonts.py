@@ -44,8 +44,18 @@ def _read(path: str) -> dict:
     # quemarlo (ver text_width). Sin kerning: mide apenas de más, del lado
     # seguro (HarfBuzz lo aplica y el texto real sale un poco más angosto).
     hmtx = font["hmtx"]
-    adv = {cp: hmtx[gname][0] for cp, gname in font.getBestCmap().items()}
+    cmap = font.getBestCmap()
+    adv = {cp: hmtx[gname][0] for cp, gname in cmap.items()}
     notdef = hmtx[".notdef"][0] if ".notdef" in hmtx.metrics else upm // 2
+    # Alto y profundidad de tinta de cada glifo (acentos, puntos de la i,
+    # descendentes): la escalera separa sus renglones con esto (ink_extent).
+    ink = {}
+    if "glyf" in font:
+        glyf = font["glyf"]
+        for cp, gname in cmap.items():
+            g = glyf[gname]
+            if getattr(g, "numberOfContours", 0) and hasattr(g, "yMax"):
+                ink[cp] = (g.yMin, g.yMax)
     font.close()
     label = full[: -len(" Regular")] if full.endswith(" Regular") else full
     return {
@@ -64,6 +74,8 @@ def _read(path: str) -> dict:
         "upm": upm,
         "adv": adv,
         "notdef": notdef,
+        "ink": ink,
+        "cap": getattr(os2, "sCapHeight", 0) or round(upm * 0.7),
     }
 
 
@@ -129,6 +141,17 @@ def text_width(info: dict, text: str, em_px: float) -> float:
     """Ancho de avance de `text` en px con un em de `em_px` (sin contorno)."""
     adv, notdef = info["adv"], info["notdef"]
     return sum(adv.get(ord(ch), notdef) for ch in text) * em_px / info["upm"]
+
+
+def ink_extent(info: dict, text: str) -> tuple[float, float]:
+    """(alto, profundidad) de la tinta de `text`, en em: cuánto sube sobre la
+    línea base (acentos incluidos) y cuánto baja (descendentes, comas)."""
+    ink = info["ink"]
+    tops = [ink[ord(ch)][1] for ch in text if ord(ch) in ink]
+    bottoms = [ink[ord(ch)][0] for ch in text if ord(ch) in ink]
+    top = max(tops) if tops else info["cap"]
+    depth = max(0, -min(bottoms)) if bottoms else 0
+    return top / info["upm"], depth / info["upm"]
 
 
 def ass_font_size(info: dict, em_px: int) -> int:
