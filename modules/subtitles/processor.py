@@ -433,6 +433,10 @@ def build_ass(segments: list[list[dict]], params: SubtitlesParams) -> str:
     text_color = _TEXT_FOR_OUTLINE[params.outline_color]
     outline_color = _OUTLINE_ASS[params.outline_color]
 
+    # YCbCr Matrix: None → libass convierte los colores con la matriz y el
+    # rango del PROPIO video. Sin la línea asume BT.601: sobre un reel bt709
+    # el amarillo #fbff00 salía (252,238,0), anaranjado; medido con None:
+    # (249-251, 253-254, 0) en bt709, bt601 y rango completo.
     header = f"""\
 [Script Info]
 ScriptType: v4.00+
@@ -440,6 +444,7 @@ PlayResX: {ASS_W}
 PlayResY: {ASS_H}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
+YCbCr Matrix: None
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
