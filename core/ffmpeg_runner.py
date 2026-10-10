@@ -15,6 +15,14 @@ from core import job_manager
 _TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)")
 
+# FFmpeg y ffprobe escriben UTF-8 (rutas, títulos y tags ID3 incluidos). Sin
+# encoding explícito, Python decodifica con la codificación del sistema (cp1252
+# en Windows) y una "Á" (bytes C3 81: el 0x81 no existe en cp1252) tiraba
+# UnicodeDecodeError: el job fallaba con FFmpeg huérfano, y en los probes la
+# duración salía None en silencio (sin speed match). errors="replace": un byte
+# raro en el log no puede tumbar un render.
+_TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
 
 def probe_duration(input_path: str) -> float | None:
     """Retorna la duración del video en segundos usando ffprobe, o None."""
@@ -26,7 +34,7 @@ def probe_duration(input_path: str) -> float | None:
         input_path,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, timeout=30, **_TEXT)
         data = json.loads(result.stdout or "{}")
         return float(data.get("format", {}).get("duration"))
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
@@ -46,7 +54,7 @@ def has_audio_stream(input_path: str) -> bool:
         input_path,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, timeout=30, **_TEXT)
         data = json.loads(result.stdout or "{}")
         return bool(data.get("streams"))
     except (OSError, subprocess.SubprocessError, ValueError, TypeError):
@@ -65,7 +73,7 @@ def probe_resolution(input_path: str) -> tuple[int, int] | None:
         input_path,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, timeout=30, **_TEXT)
         streams = json.loads(result.stdout or "{}").get("streams", [])
         if not streams:
             return None
@@ -85,7 +93,7 @@ def probe_fps(input_path: str) -> float | None:
         input_path,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, timeout=30, **_TEXT)
         streams = json.loads(result.stdout or "{}").get("streams", [])
         num, den = streams[0]["r_frame_rate"].split("/")
         den = float(den)
@@ -182,30 +190,37 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
         command,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
-        text=True,
         bufsize=1,
         cwd=cwd,
+        **_TEXT,
     )
 
     stderr_tail: list[str] = []
-    for line in process.stderr:
-        stderr_tail.append(line)
-        if len(stderr_tail) > 40:
-            stderr_tail.pop(0)
+    try:
+        for line in process.stderr:
+            stderr_tail.append(line)
+            if len(stderr_tail) > 40:
+                stderr_tail.pop(0)
 
-        # Fallback: si no nos pasaron duración (p.ej. ffprobe ausente), la
-        # tomamos de la línea "Duration:" que FFmpeg imprime al inicio.
-        if not total_duration:
-            total_duration = _parse_duration_seconds(line) or total_duration
+            # Fallback: si no nos pasaron duración (p.ej. ffprobe ausente), la
+            # tomamos de la línea "Duration:" que FFmpeg imprime al inicio.
+            if not total_duration:
+                total_duration = _parse_duration_seconds(line) or total_duration
 
-        if total_duration and total_duration > 0:
-            current = _parse_time_seconds(line)
-            if current is not None:
-                frac = current / total_duration
-                pct = int(lo + frac * (hi - lo))
-                job_manager.set_progress(job_id, min(pct, hi - 1))
+            if total_duration and total_duration > 0:
+                current = _parse_time_seconds(line)
+                if current is not None:
+                    frac = current / total_duration
+                    pct = int(lo + frac * (hi - lo))
+                    job_manager.set_progress(job_id, min(pct, hi - 1))
 
-    process.wait()
+        process.wait()
+    finally:
+        # Si algo cortó la lectura (una excepción acá adentro), FFmpeg seguía
+        # encodeando huérfano, con el archivo de salida abierto.
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
     if process.returncode != 0:
         detail = "".join(stderr_tail).strip()
