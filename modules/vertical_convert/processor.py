@@ -68,19 +68,53 @@ def _hud_plate(params: VerticalConvertParams, src: str) -> list[str]:
 
 
 def build_filter_complex(params: VerticalConvertParams,
-                         src: str = "[0:v]", out: str = "[out]") -> str:
+                         src: str = "[0:v]", out: str = "[out]",
+                         head: str = "") -> str:
     """Arma el filter_complex a partir de los parámetros validados.
 
     `src`/`out` permiten encadenar esta cadena dentro de un filter_complex
     mayor (lo usa reel_express para fusionar vertical + watermark en una sola
-    pasada). OJO: `src` se consume dos veces (fondo y clip principal), así que
-    debe ser un stream de entrada (p. ej. "[0:v]"), no un label intermedio.
+    pasada). El clip se consume dos o tres veces (fondo, clip principal y
+    marcador). Sin `head`, `src` se lee directo cada vez, así que debe ser un
+    stream de entrada (p. ej. "[0:v]"), no un label intermedio. Con `head`
+    (filtros que van UNA vez, antes de repartir: reel_express pone ahí el
+    retime) la cadena arranca con `{src}{head},split` y cada consumidor lee
+    su propia copia.
+
+    El lienzo va en YUV 4:2:0 rango limitado (tv), como sale del decoder y
+    como lo toma el encoder. Por RGB pasan solo el recorte visible del clip
+    principal (`curves`, el realce) y la placa chica del HUD. Antes el fondo
+    se pasaba entero a RGB para el brillo, el overlay lo devolvía a YUVA y
+    NVENC lo recibía en RGBA: tres conversiones de 1080×1920 por frame, y el
+    reel salía etiquetado como RGB (gbr/pc). Medido: pasada visual −41 %.
+    Las fuentes de rango completo (celulares) se pasan a tv dentro de cada
+    cadena (out_range=tv en el primer scale; con yuvj420p la conversión la
+    completa el format=yuv420p del final, y lutyuv calcula con el rango que
+    trae el frame): el reel sale siempre yuv420p/tv.
     """
+    n_src = 3 if params.hud else 2
+    parts: list[str] = []
+    if head:
+        labels = [f"[vsrc{k}]" for k in range(n_src)]
+        parts.append(f"{src}{head},split={n_src}{''.join(labels)}")
+    else:
+        labels = [src] * n_src
+    bg_src, fg_src = labels[0], labels[1]
+
     sigma = params.blur_intensity
-    # bg_brightness es un multiplicador (0.3-1.0); colorchannelmixer lo aplica
-    # de forma multiplicativa igual que CSS brightness(), evitando el clipping
-    # negro que produce eq=brightness (que es aditivo).
+    # bg_brightness es un multiplicador (0.3-1.0), como CSS brightness() y sin
+    # el clipping negro de eq=brightness (que es aditivo). Se aplica en YUV:
+    # escalar la luma sobre el negro y el croma sobre el neutro ES multiplicar
+    # R, G y B (la conversión es lineal), sin pasar el fondo a RGB.
+    # minval/maxval lo hacen valer en rango limitado, completo y en 10 bits.
     bm = round(params.bg_brightness, 3)
+    mid = "(minval+maxval)/2"
+    bright = (f"lutyuv=y='(val-minval)*{bm}+minval+0.5':"   # +0.5: redondea
+              f"u='(val-{mid})*{bm}+{mid}+0.5':v='(val-{mid})*{bm}+{mid}+0.5'")
+    # Recorte 9:16 centrado ANTES de escalar: escalar el cuadro entero para
+    # después tirar los costados era trabajo perdido. Con min() vale para
+    # cualquier aspecto (horizontal o ya vertical).
+    crop916 = "crop='min(iw,ih*9/16)':'min(ih,iw*16/9)'"
 
     # Capa principal: escalada por ancho del lienzo y zoom configurable.
     fg_width = _even(W * params.main_clip_scale)
@@ -99,23 +133,34 @@ def build_filter_complex(params: VerticalConvertParams,
         # píxeles. Con blur fuerte, blurear a 1/4 de resolución (sigma/4) y
         # reescalar da un resultado indistinguible (SSIM ~0.994 medido) por una
         # fracción del costo. Con blur suave no se usa: el reescalado se vería.
+        # El brillo va a 1/4 de resolución también: es por píxel.
         w4, h4 = _even(W / 4), _even(H / 4)
         bg = (
-            f"{src}scale={w4}:{h4}:force_original_aspect_ratio=increase,"
-            f"crop={w4}:{h4},"
+            f"{bg_src}{crop916},scale={w4}:{h4}:out_range=tv,"
             f"gblur=sigma={sigma / 4:.2f},"
-            f"scale={W}:{H}:flags=bilinear,"
-            f"colorchannelmixer=rr={bm}:gg={bm}:bb={bm}[bg]"
+            f"{bright},"
+            f"scale={W}:{H}:flags=bilinear,format=yuv420p,setsar=1[bg]"
         )
     else:
         bg = (
-            f"{src}scale={W}:{H}:force_original_aspect_ratio=increase,"
-            f"crop={W}:{H},"
+            f"{bg_src}{crop916},scale={W}:{H}:out_range=tv,"
             f"gblur=sigma={sigma},"
-            f"colorchannelmixer=rr={bm}:gg={bm}:bb={bm}[bg]"
+            f"{bright},format=yuv420p,setsar=1[bg]"
         )
+    # setsar=1: el recorte 9:16 no da justo 9:16 (607.5 px), y sin esto el
+    # overlay (que hereda el SAR del fondo) marcaba píxeles no cuadrados.
 
-    parts = [bg]
+    parts.append(bg)
+
+    # Clip principal. Con zoom (>1) sale más ancho que el lienzo y los costados
+    # quedan afuera: se recorta a los W px visibles ANTES del realce, que es lo
+    # más caro por frame (con el zoom por defecto, un 35 % menos de píxeles).
+    # La x replica el redondeo del overlay en 4:2:0, que baja (W-w)/2 al par
+    # de abajo (-297 → -298): con 297 el clip se corría 1 px. El overlay sigue
+    # centrando con (W-w)/2, que con el recorte da 0.
+    fg = f"{fg_src}scale={fg_width}:-2:out_range=tv"
+    if fg_width > W:
+        fg += f",crop={W}:ih:{-(((W - fg_width) // 2) & ~1)}:0"
 
     if params.enhance_intensity > 0:
         i = params.enhance_intensity / 100
@@ -126,14 +171,16 @@ def build_filter_complex(params: VerticalConvertParams,
         brightness = round(i * 0.04, 3)          # boost general de exposición
         sat       = round(1.0 + i * 0.5, 3)
         sharp     = round(i * 0.5, 3)
-        parts.append(f"{src}scale={fg_width}:-2[fg_raw]")
+        parts.append(f"{fg}[fg_raw]")
+        # curves trabaja en RGB: volver a 4:2:0 enseguida deja que eq y
+        # unsharp corran en YUV y que el overlay no convierta nada.
         parts.append(
             f"[fg_raw]curves=all='0/0 0.25/{shadow} 0.5/{midtone} 0.75/{highlight} 1/1',"
-            f"eq=brightness={brightness}:saturation={sat},"
+            f"format=yuv420p,eq=brightness={brightness}:saturation={sat},"
             f"unsharp=lx=3:ly=3:la={sharp}:cx=3:cy=3:ca=0[fg]"
         )
     else:
-        parts.append(f"{src}scale={fg_width}:-2[fg]")
+        parts.append(f"{fg}[fg]")
 
     if params.hud:
         # Marcador (HUD): tercer consumo del clip fuente. Se recorta la región
@@ -142,7 +189,7 @@ def build_filter_complex(params: VerticalConvertParams,
         # borde blanco y sombra suave (ver _hud_plate). Va ENCIMA del clip
         # principal, centrada.
         parts.append(f"[bg][fg]overlay=(W-w)/2:{overlay_y}[vmain]")
-        parts.extend(_hud_plate(params, src))
+        parts.extend(_hud_plate(params, labels[2]))
         hud_y = params.hud_pos_y / 100
         # La placa viaja con el ajuste fino del clip: el mismo desplazamiento
         # en px. Así mover el video no obliga a reacomodar el marcador, que es
