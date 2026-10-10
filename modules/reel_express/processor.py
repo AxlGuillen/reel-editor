@@ -52,6 +52,50 @@ def _check_subjob(sub_id: str, etapa: str) -> dict:
     return sub
 
 
+# Tolerancia para tratar un clip como de frame rate constante: el promedio
+# real puede quedar un poco abajo del nominal (un frame perdido) sin que fps
+# duplique más que un puñado de frames.
+_CFR_TOLERANCE = 0.02
+
+
+def _decimates(speed_factor: float | None, stream: dict | None) -> bool:
+    """¿El retime puede descartar los frames sobrantes al principio del grafo?
+
+    Solo con sf < 1 (sobran frames) y un clip de frame rate constante:
+    fps=source_fps usa el nominal (r_frame_rate), y en un clip VFR (celulares)
+    el promedio real es menor, así que fps DUPLICARÍA frames en vez de tirarlos
+    (medido: 130 → 191 frames). Ahí el retime va sin fps, como antes.
+    """
+    if speed_factor is None or speed_factor >= 1 or not stream:
+        return False
+    fps, avg = stream["fps"], stream["avg_fps"]
+    return bool(fps and avg and abs(fps - avg) <= _CFR_TOLERANCE * fps)
+
+
+def _retime_head(speed_factor: float, decimate: bool, gpu: bool) -> str:
+    """Retime al PRINCIPIO del grafo, antes de repartir el clip.
+
+    Con sf < 1 (narración más corta que el clip: el caso normal) sobran frames,
+    y fps=source_fps los descarta acá, antes de los filtros caros (`decimate`,
+    ver _decimates). Con el setpts al final, el grafo procesaba TODOS los
+    frames del clip y la salida tiraba después el (1 − sf): el 45 % en un
+    clip típico, el 92.5 % en una captura de 9 min. Medido: pasada visual
+    39.4 → 13.4 s y 287 → 31.6 s. Además los subtítulos caen en el frame
+    exacto: con el descarte al final llegaban 1-2 frames tarde.
+    Con sf ≥ 1 no sobra nada (fps duplicaría frames ANTES de los filtros): va
+    sin fps, y la salida queda con frame rate variable, igual que antes.
+
+    `gpu`: el clip se decodifica en la GPU (ffmpeg_runner.CUDA_DECODE_FLAGS) y
+    el descarte se hace ahí; solo los frames que quedan bajan a la RAM.
+    """
+    head = f"setpts={speed_factor:.6f}*PTS"
+    if decimate:
+        head += ",fps=source_fps"
+    if gpu:
+        head += ",hwdownload,format=nv12,format=yuv420p"
+    return head
+
+
 def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
                         params: ReelExpressParams,
                         speed_factor: float | None = None,
@@ -60,15 +104,21 @@ def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
 
     Todo lo que exija re-encodear el clip se fusiona en UN solo filter_complex
     (un decode+encode, una sola generación de pérdida):
+      - speed match, si llega `speed_factor`: el MISMO retime que aplicaría
+        sound_drop, pero dentro de esta pasada que ya encodea, y al PRINCIPIO
+        del grafo (ver _retime_head). El audio del clip se retima con atempo
+        para que el resultado sea consistente, y la mezcla posterior puede ir
+        en -c:v copy (un encode completo menos).
       - conversión a vertical (build_filter_complex de vertical_convert)
       - texto/marca (build_filters de watermark)
-      - speed match, si llega `speed_factor`: el MISMO setpts que aplicaría
-        sound_drop, pero dentro de esta pasada que ya encodea. El audio del
-        clip se retima con atempo para que el resultado sea consistente, y la
-        mezcla posterior puede ir en -c:v copy (un encode completo menos).
       - subtítulos, si llega `ass_path` (camino rápido de "No revisar"): el
-        filtro ass va al FINAL de la cadena, después del retime, porque sus
-        timestamps viven en el timeline del audio (= el timeline retimado).
+        filtro ass va al FINAL de la cadena; sus timestamps viven en el
+        timeline del audio (= el timeline retimado).
+
+    Si el retime descarta frames y el clip lo permite, se decodifica en la GPU
+    (NVDEC): en capturas largas es mucho menos tiempo (medido 31.6 → 19.3 s en
+    una de 531 s) y en las cortas no pierde, y siempre le saca trabajo a la
+    CPU. Si esa corrida falla, se repite entera en la CPU.
 
     Sin speed_factor ni ass y con una sola tarea, delega en el process() del
     módulo. Corre como sub-job (thread de la fase prep).
@@ -88,54 +138,88 @@ def _prepare_visual_job(job_id: str, clip_path: str, output_path: str,
     watermark_path = None
     try:
         duration = ffmpeg_runner.probe_duration(clip_path)
-
-        filters: list[str] = []
-        cur = "[0:v]"
-        if do_vertical:
-            filters.append(
-                vertical_processor.build_filter_complex(params.vertical, out="[vc]"))
-            cur = "[vc]"
+        out_duration = duration
+        has_audio = False
+        if speed_factor is not None:
+            has_audio = ffmpeg_runner.has_audio_stream(clip_path)
+            if duration:
+                out_duration = duration * speed_factor
         if do_wm:
             (font_path, primary_files, secondary_files,
              watermark_path, temp_files) = watermark_processor.prepare_assets(params.watermark)
-            filters += watermark_processor.build_filters(
-                params.watermark, font_path=font_path, primary_files=primary_files,
-                secondary_files=secondary_files, watermark_path=watermark_path,
-                src=cur, out="[vw]", wm_index=1,
-            )
-            cur = "[vw]"
 
-        out_duration = duration
-        if speed_factor is not None:
-            filters.append(f"{cur}setpts={speed_factor:.6f}*PTS[vsp]")
-            cur = "[vsp]"
-            if duration:
-                out_duration = duration * speed_factor
+        def build(gpu: bool) -> list[str]:
+            filters: list[str] = []
+            head = ("" if speed_factor is None
+                    else _retime_head(speed_factor, decimate, gpu))
+            cur = "[0:v]"
+            if do_vertical:
+                filters.append(vertical_processor.build_filter_complex(
+                    params.vertical, out="[vc]", head=head))
+                cur = "[vc]"
+            elif head:
+                filters.append(f"[0:v]{head}[vsp]")
+                cur = "[vsp]"
+            if do_wm:
+                filters += watermark_processor.build_filters(
+                    params.watermark, font_path=font_path, primary_files=primary_files,
+                    secondary_files=secondary_files, watermark_path=watermark_path,
+                    src=cur, out="[vw]", wm_index=1,
+                )
+                cur = "[vw]"
+            if ass_path is not None:
+                filters.append(f"{cur}{subtitles_processor.ass_filter(ass_path)}[vsub]")
+                cur = "[vsub]"
+            if speed_factor is not None and has_audio:
+                tempo = 1.0 / speed_factor
+                filters.append(f"[0:a]{ffmpeg_runner.atempo_chain(tempo)}[asp]")
+                audio_maps = ["-map", "[asp]"]
+            else:
+                audio_maps = ["-map", "0:a?"]
 
-        if ass_path is not None:
-            filters.append(f"{cur}{subtitles_processor.ass_filter(ass_path)}[vsub]")
-            cur = "[vsub]"
+            cmd = [config.FFMPEG_PATH, "-y"]
+            if gpu:
+                cmd += ffmpeg_runner.CUDA_DECODE_FLAGS
+            cmd += ["-i", clip_path]
+            if watermark_path:
+                cmd += ["-i", watermark_path]
+            return cmd + [
+                "-filter_complex", ";".join(filters),
+                "-map", cur,
+                *audio_maps,
+                *ffmpeg_runner.video_encode_flags(),
+                "-c:a", "aac",
+                output_path,
+            ]
 
-        if speed_factor is not None and ffmpeg_runner.has_audio_stream(clip_path):
-            tempo = 1.0 / speed_factor
-            filters.append(f"[0:a]{ffmpeg_runner.atempo_chain(tempo)}[asp]")
-            audio_maps = ["-map", "[asp]"]
-        else:
-            audio_maps = ["-map", "0:a?"]
-
-        cmd = [config.FFMPEG_PATH, "-y", "-i", clip_path]
-        if watermark_path:
-            cmd += ["-i", watermark_path]
-        cmd += [
-            "-filter_complex", ";".join(filters),
-            "-map", cur,
-            *audio_maps,
-            *ffmpeg_runner.video_encode_flags(),
-            "-c:a", "aac",
-            output_path,
-        ]
+        stream = (ffmpeg_runner.probe_video_stream(clip_path)
+                  if speed_factor is not None else None)
+        decimate = _decimates(speed_factor, stream)
+        gpu = decimate and ffmpeg_runner.cuda_decode_supported(stream)
         # cwd=BASE_DIR: los drawtext usan rutas relativas (ver watermark._esc).
-        ffmpeg_runner.run(cmd, job_id, total_duration=out_duration, cwd=config.BASE_DIR)
+        try:
+            ffmpeg_runner.run(build(gpu), job_id, total_duration=out_duration,
+                              cwd=config.BASE_DIR)
+        except RuntimeError as exc:
+            if not gpu:
+                raise
+            # NVDEC no pudo con este clip (perfil raro, VRAM llena…): la
+            # misma pasada, decodificando en la CPU.
+            # El motivo: la primera línea de error del stderr (la última suele
+            # ser el genérico "Conversion failed!"). ASCII y protegido: un
+            # print que no se puede codificar no puede impedir el reintento.
+            lines = [ln.strip() for ln in str(exc).splitlines()[1:] if ln.strip()]
+            reason = next((ln for ln in lines
+                           if any(k in ln for k in ("rror", "nvalid", "ailed"))
+                           and "Conversion failed" not in ln),
+                          lines[-1] if lines else "")
+            try:
+                print(("[reel_express] NVDEC fallo, reintento en CPU: " + reason)
+                      .encode("ascii", "replace").decode("ascii"))
+            except Exception:  # noqa: BLE001
+                pass
+            ffmpeg_runner.run(build(False), job_id, total_duration=out_duration,
+                              cwd=config.BASE_DIR)
         job_manager.update_job(job_id, status="done", progress=100)
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
         job_manager.update_job(job_id, status="error", error=str(exc))

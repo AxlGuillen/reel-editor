@@ -124,6 +124,65 @@ def _nvenc_available() -> bool:
     return available
 
 
+# Códecs que NVDEC decodifica en las GPUs con NVENC (RTX y afines).
+_CUDA_DECODE_CODECS = {"h264", "hevc", "av1", "vp9"}
+
+# Decodificación en la GPU con los frames quedándose en la VRAM. El grafo tiene
+# que bajarlos con hwdownload,format=nv12 (ver cuda_decode_supported).
+CUDA_DECODE_FLAGS = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+
+
+def _rate(text: str | None) -> float | None:
+    """"60/1" → 60.0 (None si falta o es 0/0)."""
+    try:
+        num, den = (text or "").split("/")
+        return float(num) / float(den) if float(den) else None
+    except ValueError:
+        return None
+
+
+def probe_video_stream(input_path: str) -> dict | None:
+    """Códec, pix_fmt y frame rates del primer stream de video, o None.
+
+    `fps` es el nominal (r_frame_rate, el que usa fps=source_fps) y `avg_fps`
+    el promedio real: si difieren, el clip es de frame rate variable.
+    """
+    cmd = [
+        config.FFPROBE_PATH,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name,pix_fmt,r_frame_rate,avg_frame_rate",
+        "-print_format", "json",
+        input_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30, **_TEXT)
+        stream = json.loads(result.stdout or "{}").get("streams", [])[0]
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError):
+        return None
+    return {
+        "codec": stream.get("codec_name"),
+        "pix_fmt": stream.get("pix_fmt"),
+        "fps": _rate(stream.get("r_frame_rate")),
+        "avg_fps": _rate(stream.get("avg_frame_rate")),
+    }
+
+
+def cuda_decode_supported(stream: dict | None) -> bool:
+    """¿Conviene decodificar en la GPU (NVDEC) el clip de `stream`
+    (lo que devuelve probe_video_stream)?
+
+    Solo con NVIDIA (la misma GPU de NVENC) y video 8 bits 4:2:0 de un códec
+    que NVDEC soporta: es el caso en que hwdownload entrega nv12. 10 bits,
+    4:4:4 o yuvj quedan en la CPU. El que lo usa igual tiene que reintentar
+    sin GPU si FFmpeg falla: con -hwaccel_output_format cuda no hay fallback
+    automático a software.
+    """
+    return bool(stream and _nvenc_available()
+                and stream["codec"] in _CUDA_DECODE_CODECS
+                and stream["pix_fmt"] == "yuv420p")
+
+
 def video_encode_flags(crf: int = 18) -> list[str]:
     """Flags de encodeo de video: h264_nvenc (GPU) si está disponible, libx264 si no.
 
