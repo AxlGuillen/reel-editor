@@ -108,7 +108,7 @@ Convierte 16:9 → 9:16 con efecto "split blur background": fondo = el clip esca
 | Parámetro | Tipo | Default | Rango |
 |---|---|---|---|
 | `blur_intensity` | int | 50 | 0–50 (sigma gblur) |
-| `bg_brightness` | float | 0.5 | 0.3–1.0 (multiplicador, vía colorchannelmixer) |
+| `bg_brightness` | float | 0.5 | 0.3–1.0 (multiplicador, vía `lutyuv` en YUV: luma escalada sobre el negro y croma sobre el neutro, que es lo mismo que multiplicar R, G y B) |
 | `main_clip_scale` | float | 1.55 | 0.7–5.0 (zoom del clip principal) |
 | `main_clip_position` | string | "center" | center / top / bottom |
 | `main_clip_offset` | int | 0 | −50–50 (% del alto; se SUMA al preset) |
@@ -120,6 +120,16 @@ Convierte 16:9 → 9:16 con efecto "split blur background": fondo = el clip esca
 La placa **acompaña al `main_clip_offset`**: se le suma el mismo desplazamiento en px que al clip principal, así el ajuste fino mueve video y marcador juntos y no hay que reacomodar la placa cada vez. El preset (top/center/bottom) **no** la arrastra, y `hud_pos_y` sigue moviéndola por separado. El preview en canvas aplica la misma suma (`drawHudPlate` en `shared.js`).
 
 **Input:** `video`. **UI:** preview vertical en vivo en un `<canvas>` que replica el efecto mientras movés los sliders. La placa del HUD se arma en el mismo filter_complex (máscara redondeada y sombra calculadas sobre UN frame con `trim=end_frame=1`, reutilizadas vía `repeatlast`): costo extra nulo. Reel Express hereda todo esto vía `VerticalConvertParams`.
+
+**El grafo va en YUV 4:2:0 tv de punta a punta** (`build_filter_complex`). Lo hace la mitad de caro (−41 % medido) y que el reel salga bt709/tv con píxeles cuadrados; antes salía etiquetado gbr/pc. Así se arma:
+- Brillo del fondo con `lutyuv`, a 1/4 de resolución. Antes era `colorchannelmixer`, que pasaba el fondo entero a RGB, y NVENC terminaba recibiendo RGBA.
+- Recorte 9:16 del fondo ANTES de achicarlo.
+- Clip principal recortado a los 1080 px visibles ANTES del realce. La x replica el redondeo a par del overlay en 4:2:0 (−297 → −298); con 297 se corría 1 px.
+- `out_range=tv` en el primer scale, para las fuentes de rango completo.
+- `setsar=1`, porque el recorte 9:16 da 607.5 px.
+- Por RGB pasan solo `curves` (sobre el recorte) y la placa chica del HUD.
+
+`head=` aplica filtros una sola vez y reparte el clip con `split` a fondo, clip y HUD; Reel Express pone ahí el retime.
 
 ### 2. sound_drop — `/api/sound-drop`
 
@@ -176,7 +186,7 @@ Transcribe el audio con **faster-whisper** y quema subtítulos estilo **karaoke*
 
 Los campos de estilo llevan prefijo `sub_` porque reel_express y hook_reel arman todos sus params desde el mismo form. **Disposición (`_group_style` / `_place_words` / `_word_events`).** Con `line`+`same` se emite el karaoke de siempre (una línea por tramo, byte a byte igual que antes). Si no, cada palabra va en sus propios eventos con `\an1\pos(x,y)` (abajo-izquierda), en sucesión SIN superposición: base hasta que se dice, resaltada mientras se dice, base de nuevo (dibujarla dos veces dejaba un halo blanco con contorno 0). Las destacadas ya están en su color y al decirse \"laten\" (`\t` a 1.12×). Medido en libass: con `\an1` el origen es x y el borde inferior es baseline + winDescent·em·escala; `\fscx`/`\fscy` escalan letras y descendente pero no el contorno. Los renglones de la escalera se separan por la **tinta real** (`fonts.ink_extent`: acentos arriba, descendentes abajo, cada uno con su escala) + 0.12 em + 2·contorno; un espaciado fijo hacía que se tocaran. La escalera crece hacia arriba desde `position_y`: es más alta que una línea y a la altura por defecto puede tapar la barra de habilidades (la UI lo avisa). La elección de escalera/palabra destacada usa un hash fijo (`_pick`, Knuth) que el preview replica en JS: misma transcripción → mismo video, y el preview elige lo mismo (±3 px). Los tres módulos usan el mismo `build_ass` vía `prepare_ass`.
 
-**Fuentes (`fonts.py`).** libass busca por **familia** (nameID 1) + negrita (nameID 2 dice "Bold"), NO por el nombre del archivo: con "Poppins-Bold" (el nombre PostScript) caía en silencio a Arial Bold. Y libass escala el `Fontsize` del ASS como el alto `winAscent+winDescent`, no como el em: el ASS lleva `font_size * size_ratio` (Poppins 1.762, Anton 1.733, Archivo Black 1.347) para que el em sea `font_size` px como en el canvas. Para verificar qué fuente usó libass: `ffmpeg -v verbose … | grep fontselect`. `GET /api/subtitles/styles` expone fuentes, paleta y rangos al preview (una sola fuente de verdad).
+**Fuentes (`fonts.py`).** libass busca por **familia** (nameID 1) + negrita (nameID 2 dice "Bold"), NO por el nombre del archivo: con "Poppins-Bold" (el nombre PostScript) caía en silencio a Arial Bold. Y libass escala el `Fontsize` del ASS como el alto `winAscent+winDescent`, no como el em: el ASS lleva `font_size * size_ratio` (Poppins 1.762, Anton 1.733, Archivo Black 1.347) para que el em sea `font_size` px como en el canvas. Para verificar qué fuente usó libass: `ffmpeg -v verbose … | grep fontselect`. El `.ass` lleva `YCbCr Matrix: None`: libass convierte los colores con la matriz y el rango del propio video. Sin esa línea asume BT.601, y sobre un reel bt709 el amarillo salía anaranjado. `GET /api/subtitles/styles` expone fuentes, paleta y rangos al preview (una sola fuente de verdad).
 
 Device automático: intenta cuda/float16, cae a cpu/int8 (en Mac es CPU). La 1ª vez **descarga el modelo** (~1.6 GB para turbo).
 
@@ -249,6 +259,12 @@ audio (link│file) ──┘
 - **Watermark** opcional (si hay texto o marca). **Subtítulos** opcional (`add_subtitles`, default ON); su `position_y` default acá es **1601**.
 - `convert_vertical` (default ON) se apaga cuando el clip ya viene 9:16.
 - `skip_review` ("No revisar"): sin pausa de edición, el backend puede transcribir antes y quemar los subs **en la misma pasada visual** (un encode en vez de dos).
+- **Retime al principio del grafo** (`_retime_head`). Con speed match y sf < 1, `setpts` + `fps=source_fps` van ANTES de repartir el clip, así los frames que sobran se tiran antes de los filtros caros. Antes se procesaban todos y la salida tiraba el 45 % (clip típico) o el 92 % (captura de 9 min). Detalles:
+  - Además los subtítulos caen en el frame exacto; antes llegaban 1–2 frames tarde.
+  - Solo en clips de frame rate constante (`_decimates`): en un VFR, `fps` usaría el nominal y DUPLICARÍA frames.
+  - Con sf ≥ 1 va solo `setpts` (la salida queda VFR, como siempre).
+  - **NVDEC:** si además hay NVIDIA y el clip es h264/hevc/av1/vp9 8 bits 4:2:0, se decodifica en la GPU, el descarte pasa en la VRAM y bajan solo los frames que quedan (`hwdownload`). Si esa corrida falla, se repite entera en la CPU; la salida es idéntica (mismo md5).
+  - Medido: camino rápido 46.7 → 14.5 s; pasada visual de una captura de 9 min 287 → 20 s.
 - `dynamic_bg` / `dynamic_markers` siguen en el schema pero **no tienen UI**: esa función se trabaja en el módulo Insert, que soporta varios clips. Sin la UI quedan en False.
 - Con subtítulos es **dos fases**: `POST /process` produce el video base y lo transcribe (status done + `segments`); `POST /finish` quema los subs editados → reel final. Sin subs, es un solo paso como antes.
 - **UI:** el panel de ajustes son bloques colapsables (`<details class="rx-block">`: audio, video, hud, text, subs, advanced) que recuerdan si los dejaste abiertos y muestran un resumen de su estado aunque estén plegados.
@@ -338,6 +354,10 @@ probe_duration(path) -> float | None      # duración en segundos (ffprobe)
 has_audio_stream(path) -> bool            # ¿tiene pista de audio?
 probe_resolution(path) -> tuple | None    # (width, height)
 probe_fps(path) -> float | None           # fps del primer stream de video
+probe_video_stream(path) -> dict | None   # codec, pix_fmt, fps (nominal), avg_fps
+cuda_decode_supported(stream) -> bool     # ¿NVDEC? NVIDIA + h264/hevc/av1/vp9 8 bits 4:2:0
+CUDA_DECODE_FLAGS                         # -hwaccel cuda -hwaccel_output_format cuda: el
+                                          # grafo tiene que bajar con hwdownload,format=nv12
 
 video_encode_flags(crf=18) -> list[str]   # flags del encoder: h264_nvenc si la
                                           # GPU está (probe cacheado), si no libx264
@@ -349,6 +369,8 @@ atempo_chain(tempo) -> str                # cadena de atempo para tempos > 2.0
 se use en todos lados sin repetir la detección.
 
 Si `total_duration` es None, se intenta sacar de la línea `Duration:` que imprime FFmpeg.
+
+La salida de FFmpeg y ffprobe se lee como **UTF-8** (`errors="replace"`). Con la codificación de Windows (cp1252), una "Á" en una ruta o en un tag ID3 tiraba UnicodeDecodeError: el job fallaba y FFmpeg quedaba huérfano, y en los probes la duración salía None en silencio, así que no había speed match. Si la lectura se corta por una excepción, `run()` mata a FFmpeg.
 
 ### job_manager.py
 
