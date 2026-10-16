@@ -17,12 +17,16 @@ del día 1 (px en 1920x1080):
 
 Layout, de arriba a abajo (pedido de Axl):
     barra de cámaras + stats   con aire arriba y a los costados, esquinas redondeadas
-    gameplay (zoom)            centrado donde el observador pone la acción; nítido
-                               al centro y fundido hacia los bordes con el mismo
-                               juego desenfocado (con menos zoom, también arriba/abajo)
+    gameplay (zoom)            centrado donde el observador pone la acción, a su alto
+                               natural (con menos zoom es más bajo: ver geometria())
     marcador oficial           a todo el ancho
     cámara del set de Ibai     al 70 % del ancho sobre su propio fondo difuminado
     watermark                  chico, opaco, parado en la esquina inferior derecha
+
+Todo va pegado al gameplay: con menos zoom, la barra baja, el marcador y la
+cámara suben, y lo que sobra queda arriba de todo y abajo de todo (los fondos
+difuminados de la barra y de la cámara se estiran). Son justo las franjas que
+tapa la interfaz de TikTok.
 
 Las repeticiones y transiciones no muestran el marcador: `analizar()` las
 detecta y el clip arranca después (o termina antes) para no mezclar vistas.
@@ -71,38 +75,38 @@ BARRA_H = _even(BARRA_W * BARRA[3] / BARRA[2])
 ARRIBA_H = MARGEN_BARRA + BARRA_H + SEP_BARRA
 MARCADOR_H = _even(W * MARCADOR[3] / MARCADOR[2])
 CAMARA_H_OUT = _even(CAMARA_ANCHO * CAMARA_H / CAMARA_W)
-JUEGO_H = H - ARRIBA_H - MARCADOR_H - CAMARA_H_OUT
-# Con este zoom o más, el gameplay llena su hueco entero. Con menos, el
-# recorte (más campo de visión a lo ancho) no alcanza de alto: la zona limpia
-# mide 712 px, arriba está el marcador y abajo la barra. Ahí el juego nítido
-# va centrado y lo que sobra lo cubre el mismo juego desenfocado ("foco").
-ZOOM_LLENO = JUEGO_H / JUEGO[3]
+JUEGO_H_MAX = H - ARRIBA_H - MARCADOR_H - CAMARA_H_OUT   # 1136: el gameplay más alto posible
+# La zona limpia mide 712 px de alto (arriba el marcador, abajo la barra):
+# con menos zoom que ZOOM_LLENO el recorte gana campo a lo ancho pero no de
+# alto, y el gameplay sale más bajo que JUEGO_H_MAX.
+ZOOM_LLENO = JUEGO_H_MAX / JUEGO[3]
 ZOOM_MIN = W / JUEGO[2]           # el recorte no puede ser más ancho que la zona limpia
-FOCO_BORDE = 0.14                 # fracción de cada semieje donde el juego se funde con el fondo
 
 
-def recorte_juego(zoom: float) -> tuple[int, int, int, int, float, int]:
-    """(w, h, x, y, zoom efectivo, alto en la salida) del recorte del gameplay.
+@dataclass(frozen=True)
+class Geometria:
+    recorte: tuple[int, int, int, int]   # (w, h, x, y) del gameplay en la fuente
+    zoom: float                          # zoom efectivo
+    juego_h: int                         # alto del gameplay en la salida
+    extra_arriba: int                    # lo que sobra, arriba de la barra
+    extra_abajo: int                     # y abajo de la cámara del set
 
-    `zoom` es la ampliación respecto de la fuente. El alto del recorte nunca
-    pasa de la zona limpia: con zoom < ZOOM_LLENO el juego nítido sale más
-    bajo que su hueco (alto en la salida < JUEGO_H)."""
+
+def geometria(zoom: float) -> Geometria:
+    """Recorte del gameplay y reparto del alto para un zoom (ampliación
+    respecto de la fuente). Siempre suma 1920."""
     z = max(zoom, ZOOM_MIN)
     cw = min(_even(W / z), JUEGO[2] // 2 * 2)
-    ch = _even(min(JUEGO_H / z, JUEGO[3]))
+    ch = _even(min(JUEGO_H_MAX / z, JUEGO[3]))
     x0, y0, jw, jh = JUEGO
     cx = min(max(CENTRO[0] - cw / 2, x0), x0 + jw - cw)
     cy = min(max(CENTRO[1] - ch / 2, y0), y0 + jh - ch)
-    return cw, ch, int(cx), int(cy), z, min(_even(ch * W / cw), JUEGO_H)
-
-
-def _mascara_foco(borde: float = FOCO_BORDE) -> str:
-    """Expresión geq (0-255): opaco en el centro y caída suave (smoothstep)
-    hacia los bordes, más marcada en las esquinas (superelipse, p=6)."""
-    u = "abs(X+0.5-W/2)/(W/2)"
-    v = "abs(Y+0.5-H/2)/(H/2)"
-    d = f"pow(pow({u},6)+pow({v},6),1/6)"
-    return f"st(0,clip((1-{d})/{borde},0,1));255*ld(0)*ld(0)*(3-2*ld(0))"
+    # Si el alto no lo limita la zona limpia, el recorte ya tiene la proporción
+    # del hueco: llena JUEGO_H_MAX (sin los 2 px que dejaría el redondeo).
+    juego_h = JUEGO_H_MAX if ch < JUEGO[3] else min(_even(ch * W / cw), JUEGO_H_MAX)
+    sobra = JUEGO_H_MAX - juego_h
+    arriba = sobra // 4 * 2
+    return Geometria((cw, ch, int(cx), int(cy)), z, juego_h, arriba, sobra - arriba)
 
 
 # --- Análisis del tramo ---------------------------------------------------------
@@ -213,54 +217,42 @@ def recorte_marca(png: str) -> tuple[int, int, int, int] | None:
 
 
 # --- Filtro -----------------------------------------------------------------------
-def build_filter_complex(camara_y: int, zoom: float = 1.4, color: str = "vivo",
+def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
                          marca: tuple[int, int, int, int] | None = None,
-                         marca_alto: int = MARCA_ALTO_DEFECTO, foco: bool = True) -> str:
+                         marca_alto: int = MARCA_ALTO_DEFECTO) -> str:
     """filter_complex del layout: entra [0:v] (1920x1080) y, si hay watermark,
-    [1:v] (el PNG); sale [vout] 1080x1920 yuv420p.
-
-    `foco`: el juego nítido se funde con su versión desenfocada hacia los
-    bordes y las esquinas. Sin foco y con zoom < ZOOM_LLENO, lo que sobra
-    arriba y abajo queda desenfocado pero con corte recto."""
-    cw, ch, cx, cy, _, alto = recorte_juego(zoom)
+    [1:v] (el PNG); sale [vout] 1080x1920 yuv420p."""
+    g = geometria(zoom)
+    cw, ch, cx, cy = g.recorte
+    arriba_h = ARRIBA_H + g.extra_arriba
+    camara_h = CAMARA_H_OUT + g.extra_abajo
     bx, by, bw, bh = BARRA
     mx, my, mw, mh = MARCADOR
     color_f = COLOR[color]
     partes = [
-        "[0:v]split=6[s_barra][s_fondo][s_juego][s_juego_f][s_marcador][s_camara]",
+        "[0:v]split=5[s_barra][s_fondo][s_juego][s_marcador][s_camara]",
         # Barra con aire y esquinas redondeadas sobre su propio fondo difuminado.
         f"[s_barra]crop={bw}:{bh}:{bx}:{by},scale={BARRA_W}:{BARRA_H}:flags=lanczos,format=yuva420p[barra_c]",
         f"color=c=white:s={BARRA_W}x{BARRA_H}:d=1,format=gray,"
         f"geq=lum='{_rounded_mask_expr(RADIO_BARRA)}'[barra_m]",
         "[barra_c][barra_m]alphamerge[barra]",
-        f"[s_fondo]crop={bw}:{bh}:{bx}:{by},scale={W // 4}:{_even(ARRIBA_H / 4)},"
-        f"gblur=sigma=6,eq=brightness=-0.32,scale={W}:{ARRIBA_H}:flags=bilinear,format=yuv420p[fondo]",
-        f"[fondo][barra]overlay={MARGEN_BARRA}:{MARGEN_BARRA},format=yuv420p,setsar=1[arriba]",
-        # Gameplay: nítido al centro sobre el mismo recorte desenfocado, que
-        # cubre el hueco entero (lo que sobra arriba/abajo y las esquinas).
-        f"[s_juego]crop={cw}:{ch}:{cx}:{cy},scale={W}:{alto}:flags=lanczos"
-        + (f",{color_f}" if color_f else "") + ",format=yuva420p[juego_c]",
-        f"[s_juego_f]crop={cw}:{ch}:{cx}:{cy},scale={W // 4}:{_even(JUEGO_H / 4)}:"
-        f"force_original_aspect_ratio=increase,crop={W // 4}:{_even(JUEGO_H / 4)},"
-        f"gblur=sigma=7,eq=brightness=-0.12:saturation=1.1,scale={W}:{JUEGO_H}:flags=bilinear[juego_f]",
-    ]
-    if foco:
-        partes += [
-            f"color=c=white:s={W}x{alto}:d=1,format=gray,geq=lum='{_mascara_foco()}'[juego_m]",
-            "[juego_c][juego_m]alphamerge[juego_n]",
-        ]
-    else:
-        partes.append("[juego_c]null[juego_n]")
-    partes += [
-        "[juego_f][juego_n]overlay=0:(H-h)/2,format=yuv420p,setsar=1[juego]",
+        f"[s_fondo]crop={bw}:{bh}:{bx}:{by},scale={W // 4}:{_even(arriba_h / 4)},"
+        f"gblur=sigma=6,eq=brightness=-0.32,scale={W}:{arriba_h}:flags=bilinear,format=yuv420p[fondo]",
+        # Lo que sobra va arriba de la barra: la barra baja.
+        f"[fondo][barra]overlay={MARGEN_BARRA}:{g.extra_arriba + MARGEN_BARRA},"
+        "format=yuv420p,setsar=1[arriba]",
+        # Gameplay a su alto natural.
+        f"[s_juego]crop={cw}:{ch}:{cx}:{cy},scale={W}:{g.juego_h}:flags=lanczos"
+        + (f",{color_f}" if color_f else "") + ",format=yuv420p,setsar=1[juego]",
         # Marcador oficial a todo el ancho.
         f"[s_marcador]crop={mw}:{mh}:{mx}:{my},scale={W}:{MARCADOR_H}:flags=lanczos,"
         "format=yuv420p,setsar=1[marcador]",
         # Cámara del set al 70 % sobre su versión difuminada.
         f"[s_camara]crop={CAMARA_W}:{CAMARA_H}:{CAMARA_X}:{camara_y},split[cam_a][cam_b]",
-        f"[cam_a]scale={W // 4}:{_even(CAMARA_H_OUT / 4)},gblur=sigma=5,eq=brightness=-0.25,"
-        f"scale={W}:{CAMARA_H_OUT}:flags=bilinear[cam_fondo]",
+        f"[cam_a]scale={W // 4}:{_even(camara_h / 4)},gblur=sigma=5,eq=brightness=-0.25,"
+        f"scale={W}:{camara_h}:flags=bilinear[cam_fondo]",
         f"[cam_b]scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos[cam_frente]",
+        # La cámara sube pegada al marcador; lo que sobra queda abajo.
         "[cam_fondo][cam_frente]overlay=(W-w)/2:0,format=yuv420p,setsar=1[camara]",
         "[arriba][juego][marcador][camara]vstack=4" + ("[pila]" if marca else ",format=yuv420p[vout]"),
     ]
@@ -274,15 +266,15 @@ def build_filter_complex(camara_y: int, zoom: float = 1.4, color: str = "vivo",
 
 
 def build_command(src: str, out: str, desde: float, duracion: float, camara_y: int,
-                  zoom: float = 1.4, color: str = "vivo", marca_path: str | None = None,
-                  marca_alto: int = MARCA_ALTO_DEFECTO, foco: bool = True) -> list[str]:
+                  zoom: float = 1.3, color: str = "vivo", marca_path: str | None = None,
+                  marca_alto: int = MARCA_ALTO_DEFECTO) -> list[str]:
     """Un solo encode por clip: recorte exacto del tramo + layout + watermark."""
     marca = recorte_marca(marca_path) if marca_path else None
     cmd = [config.FFMPEG_PATH, "-y", "-ss", f"{desde:.3f}", "-t", f"{duracion:.3f}", "-i", src]
     if marca:
         cmd += ["-i", marca_path]
     cmd += [
-        "-filter_complex", build_filter_complex(camara_y, zoom, color, marca, marca_alto, foco),
+        "-filter_complex", build_filter_complex(camara_y, zoom, color, marca, marca_alto),
         "-map", "[vout]", "-map", "0:a?",
         "-r", "60",
         *ffmpeg_runner.video_encode_flags(),
