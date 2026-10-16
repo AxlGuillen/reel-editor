@@ -71,6 +71,7 @@ def descargar(url: str, destino: str, timeout: float = 20, reintentos: int = 2,
               max_bytes: int | None = None) -> str:
     """Baja `url` a `destino` (urllib). Lanza RuntimeError tras los reintentos."""
     ultimo: Exception | None = None
+    os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
     for intento in range(reintentos + 1):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "ReelForge"})
@@ -294,3 +295,88 @@ def guardar_portada(info: dict, destino_dir: str) -> str:
     """Copia portada.jpg a la carpeta de la serie y devuelve su nombre."""
     shutil.copyfile(info["jpg"], os.path.join(destino_dir, "portada.jpg"))
     return "portada.jpg"
+
+
+# --- Voz ----------------------------------------------------------------------------
+MAX_VOZ_S = 8.0          # tope de la voz
+COLA_S = 0.4             # la intro dura la voz + esta cola
+STING_VOL = 0.35         # el sting (si existe) suena debajo de la voz
+MAX_VOZ_BYTES = 20 * 1024 * 1024
+
+
+@dataclass
+class Voz:
+    path: str
+    duracion: float      # de la voz
+    D: float             # de la intro: voz + cola
+
+
+def preparar_voz(url: str, carpeta: str) -> Voz:
+    """Baja la voz (una vez) y mide su duración. Error claro si no es audio o
+    si dura más de MAX_VOZ_S."""
+    ext = os.path.splitext(url.split("?")[0])[1].lower()
+    path = os.path.join(carpeta, "intro_voz" + (ext if ext in (".mp3", ".wav", ".m4a", ".ogg", ".opus") else ".mp3"))
+    descargar(url, path, timeout=20, reintentos=2, max_bytes=MAX_VOZ_BYTES)
+    dur = ffmpeg_runner.probe_duration(path) if ffmpeg_runner.has_audio_stream(path) else None
+    if not dur:
+        raise RuntimeError("No se pudo leer el audio de la intro: ¿el link es un mp3?")
+    if dur > MAX_VOZ_S:
+        raise RuntimeError(f"La voz de la intro dura {dur:.1f} s; máximo {MAX_VOZ_S:g}.")
+    return Voz(path, round(dur, 3), round(dur + COLA_S, 3))
+
+
+def sting() -> str | None:
+    """assets/competitivo/sting.mp3 si existe (opcional, sin parámetro)."""
+    return STING if os.path.isfile(STING) else None
+
+
+# Mismos parámetros de salida que los clips (layout.build_command): el resumen
+# se une con concat -c copy y toma la cabecera de video del PRIMER archivo,
+# que es la intro. Por eso también va bt709/tv, como los clips: con otra
+# matriz, todo el resumen se vería con los colores corridos.
+COLOR_SALIDA = ("scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+                "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,setsar=1")
+
+
+def salida_video_audio() -> list[str]:
+    return [
+        "-r", "60",
+        *ffmpeg_runner.video_encode_flags(),
+        "-maxrate", "16M", "-bufsize", "32M",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+        "-movflags", "+faststart",
+    ]
+
+
+def _audio_intro(voz_idx: int, sting_idx: int | None, D: float) -> list[str]:
+    """Voz (+ sting al 35 %) de largo exacto D → [aout]."""
+    voz = f"[{voz_idx}:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:{D:.3f}"
+    if sting_idx is None:
+        return [voz + "[aout]"]
+    return [
+        voz + "[voz]",
+        f"[{sting_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={STING_VOL},"
+        f"apad,atrim=0:{D:.3f}[sting]",
+        "[voz][sting]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95[aout]",
+    ]
+
+
+def build_intro_aparte(portada_png: str, voz: Voz, out: str) -> list[str]:
+    """Segmento intro.mp4 de duración D: la portada con un zoom lento
+    (1.00 → 1.06), un fade-in de 0.2 s y la voz encima.
+
+    El zoom se hace sobre la portada al doble de tamaño: zoompan recorta en
+    píxeles enteros, y así cada paso es medio píxel de la salida (sin saltos)."""
+    D = voz.D
+    n = max(1, round(D * 60))
+    s = sting()
+    cmd = [config.FFMPEG_PATH, "-y", "-loop", "1", "-framerate", "60", "-t", f"{D:.3f}",
+           "-i", portada_png, "-i", voz.path]
+    if s:
+        cmd += ["-i", s]
+    video = (f"[0:v]scale=2160:3840:flags=bicubic,"
+             f"zoompan=z='1+0.06*on/{n}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+             f"d=1:s=1080x1920:fps=60,fade=t=in:st=0:d=0.2,{COLOR_SALIDA}[vout]")
+    partes = [video, *_audio_intro(1, 2 if s else None, D)]
+    return cmd + ["-filter_complex", ";".join(partes), "-map", "[vout]", "-map", "[aout]",
+                  "-t", f"{D:.3f}", *salida_video_audio(), out]

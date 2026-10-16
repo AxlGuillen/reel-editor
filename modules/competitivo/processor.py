@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 
 import config
 from core import ffmpeg_runner, job_manager
-from modules.competitivo import fuente, kills, layout
+from modules.competitivo import fuente, intro, kills, layout
 from modules.competitivo.schema import CompetitivoParams, FinishParams
 
 OFFSET_FORMULA_S = 38      # vod ≈ (utc − inicio del directo) + 38 s (medido en KC-C9 G3, día 1)
@@ -189,6 +189,21 @@ def _carpeta_salida(partidas: list[dict]) -> str:
     return destino
 
 
+def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
+    """Datos de la portada: lo que mandó Claude/el usuario y, si falta, el feed
+    (códigos de equipo del mapa, fecha local de la partida)."""
+    d = sesion["partidas"][0]
+    marca = (os.path.join(config.WATERMARKS_FOLDER, fp.watermark)
+             if fp.marca_4xl and fp.watermark else None)
+    return intro.Encuentro(
+        mapa=fp.mapa, codigo_azul=d["azul"], codigo_rojo=d["rojo"],
+        azul=fp.equipo_azul, rojo=fp.equipo_rojo, fase=fp.fase,
+        logo_azul=intro.logo(fp.logo_azul_url), logo_rojo=intro.logo(fp.logo_rojo_url),
+        serie_marcador=fp.serie_marcador,
+        fecha=datetime.fromisoformat(d["inicio_utc"]).astimezone().date(), marca=marca,
+    )
+
+
 def finish(job_id: str, fp: FinishParams) -> None:
     sesion = _SESIONES.get(job_id)
     temp = None
@@ -215,11 +230,30 @@ def finish(job_id: str, fp: FinishParams) -> None:
             raise RuntimeError("No hay clips para renderizar.")
 
         job_manager.update_job(job_id, status="processing", progress=1, finished=False,
-                               stage="Bajando los tramos del VOD…", error=None)
+                               stage="Armando la portada…", error=None)
         temp = os.path.join(sesion["carpeta"], "tramos")
         os.makedirs(temp, exist_ok=True)
+        # Portada (siempre) y voz de la intro (si hay link y el modo no es off),
+        # ANTES de bajar nada: un link roto o una voz larga fallan enseguida.
+        portada = intro.render_portada(_encuentro(fp, sesion), temp)
+        voz = None
+        if fp.intro_modo != "off" and fp.intro_audio_url:
+            job_manager.update_job(job_id, stage="Bajando la voz de la intro…")
+            voz = intro.preparar_voz(fp.intro_audio_url, temp)
+        modo_intro = fp.intro_modo if voz else "off"
+        if modo_intro == "encima":
+            modo_intro = "aparte"        # la placa sobre el clip 1 llega en la fase 3
         salida = _carpeta_salida(sesion["partidas"])
+        intro.guardar_portada(portada, salida)
         marca = os.path.join(config.WATERMARKS_FOLDER, fp.watermark) if fp.watermark else None
+        intro_mp4 = None
+        if modo_intro == "aparte":
+            # Segmento propio, primero en el resumen. Los clips sueltos no llevan intro.
+            job_manager.update_job(job_id, stage="Renderizando la intro…")
+            intro_mp4 = os.path.join(temp, "intro.mp4")
+            ffmpeg_runner.run(intro.build_intro_aparte(portada["png"], voz, intro_mp4), job_id,
+                              total_duration=voz.D, progress_range=(1, 5))
+        job_manager.update_job(job_id, status="processing", stage="Bajando los tramos del VOD…")
 
         def ventana(c):
             off = offsets[c["game_id"]]
@@ -272,14 +306,15 @@ def finish(job_id: str, fp: FinishParams) -> None:
 
         job_manager.update_job(job_id, stage="Uniendo el resumen…", progress=92)
         lista = os.path.join(temp, "lista.txt")
+        partes = ([intro_mp4] if intro_mp4 else []) + [os.path.join(salida, h["archivo"]) for h in hechos]
         with open(lista, "w", encoding="utf-8") as fh:
-            for h in hechos:
-                ruta = os.path.join(salida, h["archivo"]).replace("\\", "/").replace("'", "'\\''")
+            for ruta in partes:
+                ruta = ruta.replace("\\", "/").replace("'", "'\\''")
                 fh.write(f"file '{ruta}'\n")
         resumen = os.path.join(salida, "resumen.mp4")
         ffmpeg_runner.run([config.FFMPEG_PATH, "-y", "-f", "concat", "-safe", "0", "-i", lista,
                            "-c", "copy", "-movflags", "+faststart", resumen],
-                          job_id, total_duration=sum(h["duracion"] for h in hechos),
+                          job_id, total_duration=sum(h["duracion"] for h in hechos) + (voz.D if intro_mp4 else 0),
                           progress_range=(92, 99))
         info = {
             "creado": datetime.now(timezone.utc).isoformat(),

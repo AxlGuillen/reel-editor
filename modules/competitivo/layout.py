@@ -58,6 +58,11 @@ CAMARA_ANCHO = 756                    # 70 % del ancho
 MARCA_ALTO_DEFECTO = 190              # watermark: alto en px
 MARCA_MARGEN = 14                     # distancia del watermark al borde derecho
 
+# Salida etiquetada bt709/tv explícitamente (el VOD de YouTube HD lo es). El
+# resumen se une con concat -c copy y hereda la cabecera del primer archivo:
+# la intro y los clips tienen que llevar exactamente las mismas etiquetas.
+SALIDA = "format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
+
 COLOR = {
     "off": "",
     "vivo": "eq=contrast=1.08:saturation=1.25:gamma=0.98,unsharp=5:5:0.6",
@@ -331,13 +336,13 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
         f"[cam_b]scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos[cam_frente]",
         # La cámara sube pegada al marcador; lo que sobra queda abajo.
         "[cam_fondo][cam_frente]overlay=(W-w)/2:0,format=yuv420p,setsar=1[camara]",
-        "[arriba][juego][marcador][camara]vstack=4" + ("[pila]" if marca else ",format=yuv420p[vout]"),
+        "[arriba][juego][marcador][camara]vstack=4" + ("[pila]" if marca else f",{SALIDA}[vout]"),
     ]
     if marca:
         pw, ph, px, py = marca
         partes += [
             f"[1:v]crop={pw}:{ph}:{px}:{py},scale=-2:{marca_alto}:flags=lanczos,format=rgba[marca]",
-            f"[pila][marca]overlay=W-w-{MARCA_MARGEN}:H-h,format=yuv420p[vout]",
+            f"[pila][marca]overlay=W-w-{MARCA_MARGEN}:H-h,{SALIDA}[vout]",
         ]
     return ";".join(partes)
 

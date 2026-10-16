@@ -157,5 +157,101 @@ class Portada(unittest.TestCase):
             self.assertLessEqual(I.fonts.text_width(info, linea, tam), 300)
 
 
+def _ffprobe(path: str) -> dict:
+    import json
+    out = subprocess.run([config.FFPROBE_PATH, "-v", "error", "-show_entries",
+                          "stream=codec_type,codec_name,profile,level,width,height,pix_fmt,r_frame_rate,"
+                          "sample_aspect_ratio,color_range,color_space,color_transfer,color_primaries,"
+                          "time_base,sample_rate,channels,channel_layout:format=duration",
+                          "-of", "json", path], capture_output=True, text=True, check=True).stdout
+    d = json.loads(out)
+    s = {x["codec_type"]: x for x in d["streams"]}
+    return {"video": s["video"], "audio": s["audio"], "duracion": float(d["format"]["duration"])}
+
+
+def _sinteticos(carpeta: str, voz_s: float = 3.0) -> tuple[str, str]:
+    """Una voz (seno) y un tramo 1920x1080@60 etiquetado bt709/tv como el VOD de Ibai."""
+    voz = os.path.join(carpeta, "voz.mp3")
+    subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi",
+                    "-i", f"sine=f=330:d={voz_s}", "-c:a", "libmp3lame", voz], check=True)
+    tramo = os.path.join(carpeta, "tramo.mp4")
+    subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error",
+                    "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=60:d=12",
+                    "-f", "lavfi", "-i", "sine=f=440:d=12", "-shortest",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                    "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-color_range", "tv", "-c:a", "aac", tramo], check=True)
+    return voz, tramo
+
+
+class IntroAparte(unittest.TestCase):
+    """intro.mp4 tiene que poder ir primera en un concat -c copy con los clips."""
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        from modules.competitivo import layout
+        cls.tmp = tempfile.TemporaryDirectory()
+        d = cls.tmp.name
+        voz_src, tramo = _sinteticos(d)
+        # La voz entra por URL, como en producción (file:// para no usar internet).
+        cls.voz = I.preparar_voz(Path(voz_src).as_uri(), d)
+        portada = I.render_portada(I.Encuentro(mapa=1, codigo_azul="KC", codigo_rojo="C9"),
+                                   os.path.join(d, "portada"), fondo=None)
+        cls.intro = os.path.join(d, "intro.mp4")
+        ffmpeg_runner.capture(I.build_intro_aparte(portada["png"], cls.voz, cls.intro))
+        cls.clip = os.path.join(d, "clip.mp4")
+        ffmpeg_runner.capture(layout.build_command(tramo, cls.clip, 1.0, 6.0, layout.CAMARA_Y_DEFECTO))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_dura_la_voz_mas_la_cola(self):
+        self.assertAlmostEqual(self.voz.duracion, 3.0, delta=0.1)
+        self.assertAlmostEqual(self.voz.D, self.voz.duracion + I.COLA_S, places=3)
+        self.assertAlmostEqual(_ffprobe(self.intro)["duracion"], self.voz.D, delta=0.05)
+
+    def test_mismos_parametros_que_un_clip(self):
+        a, b = _ffprobe(self.intro), _ffprobe(self.clip)
+        for k in ("codec_name", "profile", "level", "width", "height", "pix_fmt", "r_frame_rate",
+                  "sample_aspect_ratio", "color_range", "color_space", "color_transfer",
+                  "color_primaries", "time_base"):
+            self.assertEqual(a["video"].get(k), b["video"].get(k), f"video {k}")
+        for k in ("codec_name", "profile", "sample_rate", "channels", "channel_layout"):
+            self.assertEqual(a["audio"].get(k), b["audio"].get(k), f"audio {k}")
+        self.assertEqual(a["video"]["color_space"], "bt709")
+
+    def test_concat_copy_sin_errores(self):
+        d = self.tmp.name
+        lista = os.path.join(d, "lista.txt")
+        with open(lista, "w", encoding="utf-8") as fh:
+            for p in (self.intro, self.clip):
+                fh.write(f"file '{p.replace(os.sep, '/')}'\n")
+        resumen = os.path.join(d, "resumen.mp4")
+        ffmpeg_runner.capture([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                               "-i", lista, "-c", "copy", resumen])
+        esperado = _ffprobe(self.intro)["duracion"] + _ffprobe(self.clip)["duracion"]
+        self.assertAlmostEqual(_ffprobe(resumen)["duracion"], esperado, delta=0.15)
+        # Se decodifica entero sin errores (cabeceras compatibles).
+        err = subprocess.run([config.FFMPEG_PATH, "-v", "error", "-i", resumen, "-f", "null", "-"],
+                             capture_output=True, text=True).stderr.strip()
+        self.assertEqual(err, "")
+
+    def test_voz_larga_o_rota(self):
+        from pathlib import Path
+        d = self.tmp.name
+        larga = os.path.join(d, "larga.mp3")
+        subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=d=9",
+                        "-c:a", "libmp3lame", larga], check=True)
+        with self.assertRaisesRegex(RuntimeError, r"dura 9\.0 s; máximo 8"):
+            I.preparar_voz(Path(larga).as_uri(), os.path.join(d, "x1"))
+        rota = os.path.join(d, "rota.mp3")
+        with open(rota, "w") as fh:
+            fh.write("<html>not found</html>")
+        with self.assertRaisesRegex(RuntimeError, "audio de la intro"):
+            I.preparar_voz(Path(rota).as_uri(), os.path.join(d, "x2"))
+
+
 if __name__ == "__main__":
     unittest.main()
