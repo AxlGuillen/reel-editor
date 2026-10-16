@@ -349,7 +349,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                         tramo, con, an.vivo_desde, dur, an.camara_y, **render,
                         intro=layout.IntroEncima(placa=placa, voz=voz.path, D=voz.D, sting=intro.sting(),
                                                  sting_vol=intro.STING_VOL, voz_filtro=intro.cadena_voz(voz),
-                                                 sting_filtro=intro.cadena_sting(voz.D)),
+                                                 sting_filtro=intro.cadena_sting(voz.D),
+                                                 volumen_juego=fp.intro_volumen_juego / 100),
                         con_audio=ffmpeg_runner.has_audio_stream(tramo))
                     ffmpeg_runner.run(cmd, job_id, total_duration=dur, progress_range=((lo + hi) // 2, hi))
                     en_resumen[-1] = con

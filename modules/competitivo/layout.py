@@ -64,7 +64,7 @@ MARCA_MARGEN = 14                     # distancia del watermark al borde derecho
 SALIDA = "format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
 
 # Intro "encima" (la placa sobre el gameplay del clip 1, ver intro.py).
-DUCK_VOL = 0.25           # el audio del juego mientras habla la voz
+DUCK_VOL = 0.17           # el audio del juego mientras habla la voz (default de intro_volumen_juego)
 DUCK_RAMPA = 0.4          # y vuelve al 100 % con esta rampa en t = D
 PLACA_FADE_IN, PLACA_FADE_OUT = 0.2, 0.3
 
@@ -80,6 +80,7 @@ class IntroEncima:
     # normalizada y sin su silencio final; el sting con fade. Vacío = sin tocar.
     voz_filtro: str = ""
     sting_filtro: str = ""
+    volumen_juego: float = DUCK_VOL    # 0–1: el juego mientras habla la voz
 
 
 # Limitador de la mezcla: ≈ −1 dBTP, sin subir el nivel (level=0: el default lo
@@ -87,10 +88,10 @@ class IntroEncima:
 LIMITADOR = "alimiter=limit=0.89:level=0:latency=1"
 
 
-def ducking(D: float) -> str:
-    """volume con eval=frame: DUCK_VOL hasta D y rampa lineal al 100 %, la
+def ducking(D: float, vol: float = DUCK_VOL) -> str:
+    """volume con eval=frame: `vol` hasta D y rampa lineal al 100 %, la
     misma idea que el ducking de la música en hook_reel."""
-    return (f"volume='{DUCK_VOL}+{1 - DUCK_VOL}*min(max((t-{D:.3f})/{DUCK_RAMPA},0),1)'"
+    return (f"volume='{vol:g}+{1 - vol:g}*min(max((t-{D:.3f})/{DUCK_RAMPA},0),1)'"
             ":eval=frame")
 
 
@@ -433,7 +434,7 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
         fmt = "aresample=48000,aformat=channel_layouts=stereo"
         audio, fuentes = [], []
         if con_audio:
-            audio.append(f"[0:a]{fmt},{ducking(D)}[juego]")
+            audio.append(f"[0:a]{fmt},{ducking(D, intro.volumen_juego)}[juego]")
             fuentes.append("[juego]")
         audio.append(f"[{voz_idx}:a]{intro.voz_filtro or fmt}[voz]")
         fuentes.append("[voz]")

@@ -32,6 +32,18 @@ class ValidacionIntro(unittest.TestCase):
         p = _base()
         self.assertEqual((p.intro_modo, p.intro_audio_url, p.mapa, p.fase), ("encima", "", 1, ""))
         self.assertEqual((p.equipo_azul, p.logo_azul_url, p.serie_marcador, p.marca_4xl), ("", "", "", False))
+        self.assertEqual(p.intro_volumen_juego, 17)
+
+    def test_volumen_del_juego(self):
+        self.assertEqual(_base(intro_volumen_juego="0").intro_volumen_juego, 0)
+        self.assertEqual(_base(intro_volumen_juego="100").intro_volumen_juego, 100)
+        for malo in ("-1", "101", "mucho"):
+            with self.assertRaises(ValueError, msg=malo):
+                _base(intro_volumen_juego=malo)
+        base = _base(intro_volumen_juego="30")
+        self.assertEqual(FinishParams.from_form({}, base).intro_volumen_juego, 30)          # se hereda
+        self.assertEqual(FinishParams.from_form({"intro_volumen_juego": "10"}, base).intro_volumen_juego, 10)
+        self.assertEqual(FinishParams.desde(base).intro_volumen_juego, 30)
 
     def test_valores(self):
         p = _base(**INTRO)
@@ -417,6 +429,10 @@ class IntroEncima(unittest.TestCase):
         ffmpeg_runner.capture(layout.build_command(
             cls.tramo, cls.con, 1.0, 8.0, layout.CAMARA_Y_DEFECTO,
             intro=layout.IntroEncima(placa=cls.placa, voz=cls.silencio, D=cls.D)))
+        cls.con_40 = os.path.join(d, "con_intro_40.mp4")
+        ffmpeg_runner.capture(layout.build_command(
+            cls.tramo, cls.con_40, 1.0, 8.0, layout.CAMARA_Y_DEFECTO,
+            intro=layout.IntroEncima(placa=cls.placa, voz=cls.silencio, D=cls.D, volumen_juego=0.4)))
 
     @classmethod
     def tearDownClass(cls):
@@ -433,7 +449,10 @@ class IntroEncima(unittest.TestCase):
         self.assertIn("s.mp3", cmd)
         fc = cmd[cmd.index("-filter_complex") + 1]
         self.assertIn("enable='between(t,0,3.400)'", fc)
-        self.assertIn("volume='0.25+0.75*min(max((t-3.400)/0.4,0),1)':eval=frame", fc)
+        self.assertIn("volume='0.17+0.83*min(max((t-3.400)/0.4,0),1)':eval=frame", fc)
+        cmd = L.build_command(self.tramo, "x.mp4", 1.0, 8.0, L.CAMARA_Y_DEFECTO,
+                              intro=L.IntroEncima(placa=self.placa, voz=self.voz_src, D=3.4, volumen_juego=0.3))
+        self.assertIn("volume='0.3+0.7*min(", cmd[cmd.index("-filter_complex") + 1])
         self.assertIn("amix=inputs=3:normalize=0", fc)
         self.assertEqual(cmd[cmd.index("-map", cmd.index("-map") + 1) + 1], "[aout]")
         # sin intro: el comando de siempre
@@ -464,12 +483,14 @@ class IntroEncima(unittest.TestCase):
                               "-f", "null", "-"], capture_output=True, text=True).stderr
         return float(re.findall(r"RMS level dB: (-?[\d.]+)", err)[-1])
 
-    def test_ducking_baja_el_juego_12_db(self):
+    def test_ducking_baja_el_juego_al_17(self):
         durante = self._rms(self.con, 0.5, self.D - 1.0)
         despues = self._rms(self.con, self.D + 1.0, 2.0)
         limpio = self._rms(self.limpio, self.D + 1.0, 2.0)
-        self.assertAlmostEqual(durante - despues, -12.04, delta=1.0)   # 25 % = −12 dB
+        self.assertAlmostEqual(durante - despues, -15.39, delta=1.0)   # 17 % = −15.4 dB
         self.assertAlmostEqual(despues, limpio, delta=0.5)             # después, el juego al 100 %
+        # con intro_volumen_juego = 40: −8 dB
+        self.assertAlmostEqual(self._rms(self.con_40, 0.5, self.D - 1.0) - despues, -7.96, delta=1.0)
 
     def test_caida_a_aparte(self):
         self.assertEqual(I.modo_para_clip1(4.0, 20.0, 8.0), ("encima", None))

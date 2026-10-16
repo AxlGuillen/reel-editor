@@ -13,10 +13,11 @@ from modules.competitivo import engine, kills, layout
 COLORES = set(layout.COLOR)
 MODOS = {"revisar", "auto"}
 INTRO_MODOS = {"encima", "aparte", "off"}
+VOLUMEN_JUEGO_DEFECTO = round(layout.DUCK_VOL * 100)   # % del juego mientras habla la voz
 # Campos que /finish hereda de la fase 1 si no llegan (render e intro).
 CAMPOS_RENDER = ("zoom", "color", "watermark", "marca_alto")
 CAMPOS_INTRO = ("intro_modo", "intro_audio_url", "mapa", "fase", "equipo_azul", "equipo_rojo",
-                "logo_azul_url", "logo_rojo_url", "serie_marcador", "marca_4xl")
+                "logo_azul_url", "logo_rojo_url", "serie_marcador", "marca_4xl", "intro_volumen_juego")
 _GAME_ID = re.compile(r"^\d{15,20}$")
 
 
@@ -103,6 +104,8 @@ def _intro(form, base=None) -> dict:
         "logo_rojo_url": _url(form, "logo_rojo_url", b("logo_rojo_url", "")),
         "serie_marcador": _texto(form, "serie_marcador", 12, b("serie_marcador", "")),
         "marca_4xl": _bool(form, "marca_4xl", b("marca_4xl", False)),
+        "intro_volumen_juego": _num(form, "intro_volumen_juego",
+                                    b("intro_volumen_juego", VOLUMEN_JUEGO_DEFECTO), 0, 100),
     }
 
 
@@ -141,6 +144,7 @@ class CompetitivoParams:
     logo_rojo_url: str = ""
     serie_marcador: str = ""           # "1-0"
     marca_4xl: bool = False            # el watermark, chico y translúcido, en la portada
+    intro_volumen_juego: int = VOLUMEN_JUEGO_DEFECTO   # "encima": el juego (%) mientras habla la voz
 
     @classmethod
     def from_form(cls, form) -> "CompetitivoParams":
@@ -206,6 +210,7 @@ class FinishParams:
     logo_rojo_url: str = ""
     serie_marcador: str = ""
     marca_4xl: bool = False
+    intro_volumen_juego: int = VOLUMEN_JUEGO_DEFECTO
 
     @classmethod
     def desde(cls, base: CompetitivoParams) -> "FinishParams":
