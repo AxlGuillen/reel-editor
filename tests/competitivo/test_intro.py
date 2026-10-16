@@ -93,6 +93,8 @@ class ModoAutoPasaLaIntro(unittest.TestCase):
                                   return_value={"inicio_utc": partida.t0, "duracion": 1, "titulo": "t"}), \
                 mock.patch.object(processor.kills, "fetch_partida", return_value=partida), \
                 mock.patch.object(processor, "_ancla", return_value=ancla), \
+                mock.patch.object(processor.intro, "preparar_voz",
+                                  return_value=I.Voz("voz.mp3", 4.0, 4.4)) as voz, \
                 mock.patch.object(processor, "finish") as fin:
             processor.process(job, params)
         self.assertEqual(job_manager.get_job(job)["error"], None)
@@ -101,6 +103,7 @@ class ModoAutoPasaLaIntro(unittest.TestCase):
         self.assertIsInstance(fp, FinishParams)
         for campo in CAMPOS_INTRO:
             self.assertEqual(getattr(fp, campo), getattr(params, campo), campo)
+        voz.assert_called_once()                     # la voz se valida en la fase 1
         processor._SESIONES.pop(job, None)
 
 
@@ -155,6 +158,117 @@ class Portada(unittest.TestCase):
         info = I.fonts.font_info("Anton-Regular.ttf")
         for linea in lineas:
             self.assertLessEqual(I.fonts.text_width(info, linea, tam), 300)
+
+
+class Robustez(unittest.TestCase):
+    """Descargas que fallan, logos que no son imágenes, textos raros: nada de eso
+    puede tumbar el job (y no tiene que quedar basura en el cache)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import http.server
+        import threading
+
+        png = subprocess.run([config.FFMPEG_PATH, "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1",
+                              "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
+                             capture_output=True, check=True).stdout
+        cls.pedidos = {}
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                cls.pedidos[self.path] = cls.pedidos.get(self.path, 0) + 1
+                if self.path == "/ok.png":
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(png)))
+                    self.end_headers()
+                    self.wfile.write(png)
+                elif self.path == "/cortado.png":            # anuncia todo, manda la mitad
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(png)))
+                    self.end_headers()
+                    self.wfile.write(png[: len(png) // 2])
+                elif self.path == "/pagina.png":             # un HTML con nombre de imagen
+                    body = b"<html><body>404 bonito</body></html>"
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self.send_error(404)
+
+        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.tmp = tempfile.TemporaryDirectory()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+        cls.tmp.cleanup()
+
+    def test_descarga_cortada_es_error(self):
+        with self.assertRaisesRegex(RuntimeError, "No se pudo descargar"):
+            I.descargar(self.base + "/cortado.png", os.path.join(self.tmp.name, "c.png"), reintentos=0)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "c.png")))
+
+    def test_404_no_se_reintenta(self):
+        import time
+        t = time.monotonic()
+        with self.assertRaises(RuntimeError):
+            I.descargar(self.base + "/no.png", os.path.join(self.tmp.name, "n.png"), reintentos=2)
+        self.assertEqual(self.pedidos.get("/no.png"), 1)
+        self.assertLess(time.monotonic() - t, 1.0)
+
+    def test_logos_malos_no_envenenan_el_cache(self):
+        cache = os.path.join(self.tmp.name, "logos")
+        with mock.patch.object(I, "LOGOS_CACHE", cache):
+            self.assertIsNotNone(I.logo(self.base + "/ok.png"))
+            for malo in ("/pagina.png", "/cortado.png", "/no.png"):
+                self.assertIsNone(I.logo(self.base + malo), malo)
+        self.assertEqual(len([f for f in os.listdir(cache) if not f.endswith(".part")]), 1)   # solo el bueno
+        self.assertEqual([f for f in os.listdir(cache) if f.endswith(".part")], [])
+
+    def test_portada_determinista(self):
+        enc = I.Encuentro(mapa=3, codigo_azul="KC", codigo_rojo="C9")
+        a = I.render_portada(enc, os.path.join(self.tmp.name, "pa"), fondo=None)["png"]
+        b = I.render_portada(enc, os.path.join(self.tmp.name, "pb"), fondo=None)["png"]
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            self.assertEqual(fa.read(), fb.read())     # el degradado ya no es al azar
+
+    def test_texto_invisible_o_sin_glifos(self):
+        with self.assertRaises(ValueError):
+            _base(serie_marcador="1-0 ‮")             # da vuelta el texto
+        with self.assertRaises(ValueError):
+            _base(equipo_azul="KC​")
+        self.assertFalse(I.tiene_glifos("한화생명", I.TITULO))  # Anton no trae coreano: va el código
+        self.assertTrue(I.tiene_glifos("Karmine Corp · Día", I.TITULO))
+        larga = "WORLDS 2026 · CUARTOS DE FINAL · DÍA 3 XX"
+        self.assertLess(I.achicar(larga.upper(), I.TEXTO, 46, 900, 28), 46)
+
+    def test_error_en_finish_no_deja_carpeta_a_medias(self):
+        params = _base(modo="revisar")
+        partida = kills.partida_de_fixture(FIXTURE)
+        ancla = {"ancla_s": 100.0, "ancla_propuesta_s": 100.0, "desfase_s": 0.0, "confianza": "alta",
+                 "coincidencias": 3, "esperadas": 3, "referencia": "x", "referencia_vod_s": 0,
+                 "frame": None, "primera_kill_utc": partida.frames[1].ts.isoformat()}
+        job = job_manager.create_job(VOD, output_path="")
+        salidas = os.path.join(self.tmp.name, "salidas")
+        with mock.patch.object(processor, "TRABAJO", os.path.join(self.tmp.name, "trabajo")), \
+                mock.patch.object(processor.config, "COMPETITIVO_FOLDER", salidas), \
+                mock.patch.object(processor.fuente, "info_vod",
+                                  return_value={"inicio_utc": partida.t0, "duracion": 1, "titulo": "t"}), \
+                mock.patch.object(processor.kills, "fetch_partida", return_value=partida), \
+                mock.patch.object(processor, "_ancla", return_value=ancla), \
+                mock.patch.object(processor.fuente, "bajar_tramo", side_effect=RuntimeError("sin red")):
+            processor.process(job, params)
+            processor.finish(job, FinishParams.desde(params))
+        self.assertEqual(job_manager.get_job(job)["status"], "error")
+        self.assertEqual(os.listdir(salidas) if os.path.isdir(salidas) else [], [])
+        processor._SESIONES.pop(job, None)
 
 
 def _ffprobe(path: str) -> dict:

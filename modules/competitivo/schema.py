@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 
 import config
@@ -74,7 +75,9 @@ def _texto(form, name: str, max_len: int, default: str = "") -> str:
     if raw is None:
         return default
     texto = " ".join(str(raw).split())
-    if any(ord(c) < 32 or ord(c) == 127 for c in texto):
+    # Controles (C0/C1) y caracteres de formato invisibles (p. ej. U+202E, que da
+    # vuelta el texto, o U+200B): no tienen nada que hacer en una portada.
+    if any(unicodedata.category(c) in ("Cc", "Cf", "Co", "Cs", "Zl", "Zp") for c in texto):
         raise ValueError(f"'{name}' tiene caracteres no válidos.")
     if len(texto) > max_len:
         raise ValueError(f"'{name}' es demasiado largo (máximo {max_len} caracteres).")

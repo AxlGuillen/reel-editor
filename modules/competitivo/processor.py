@@ -128,6 +128,13 @@ def process(job_id: str, params: CompetitivoParams) -> None:
     try:
         carpeta = os.path.join(TRABAJO, job_id)
         os.makedirs(carpeta, exist_ok=True)
+        # La voz de la intro se valida ANTES que nada: un link roto o una voz de
+        # más de 8 s tienen que fallar en segundos, no después de la fase 1.
+        voz = None
+        if params.intro_modo != "off" and params.intro_audio_url:
+            job_manager.update_job(job_id, status="processing", progress=1,
+                                   stage="Bajando la voz de la intro…")
+            voz = intro.preparar_voz(params.intro_audio_url, carpeta)
         job_manager.update_job(job_id, status="processing", progress=2, stage="Leyendo el VOD…")
         vod = fuente.info_vod(params.vod_url)
         inicio = vod["inicio_utc"]
@@ -162,7 +169,7 @@ def process(job_id: str, params: CompetitivoParams) -> None:
         # el modo auto solo sigue si todas las anclas tienen 2+ kills alineadas.
         dudosas = [d["n"] for d in datos_partidas if d["confianza"] != "alta"]
         _SESIONES[job_id] = {"params": params, "vod": vod, "partidas": datos_partidas, "clips": clips,
-                             "carpeta": carpeta}
+                             "carpeta": carpeta, "voz": (params.intro_audio_url, voz) if voz else None}
         job_manager.update_job(
             job_id, status="done", progress=100, stage="esperando_ancla", finished=False,
             vod={"url": params.vod_url, "titulo": vod["titulo"], "inicio_utc": _iso(inicio)},
@@ -194,6 +201,18 @@ def _carpeta_salida(partidas: list[dict], mapa: int | None = None) -> str:
     return destino
 
 
+def _render_con_respaldo(render, enc: intro.Encuentro, carpeta: str):
+    """render_portada / render_placa; si falla con logos, de nuevo con los
+    códigos de los equipos: la portada nunca tumba el job."""
+    try:
+        return render(enc, carpeta)
+    except RuntimeError:
+        if not (enc.logo_azul or enc.logo_rojo):
+            raise
+        enc.logo_azul = enc.logo_rojo = None
+        return render(enc, carpeta)
+
+
 def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
     """Datos de la portada: lo que mandó Claude/el usuario y, si falta, el feed
     (códigos de equipo del mapa, fecha local de la partida)."""
@@ -211,7 +230,7 @@ def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
 
 def finish(job_id: str, fp: FinishParams) -> None:
     sesion = _SESIONES.get(job_id)
-    temp = None
+    temp = salida = None
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe (¿se reinició el servidor?). Volvé a generar la propuesta.")
@@ -241,11 +260,15 @@ def finish(job_id: str, fp: FinishParams) -> None:
         # Portada (siempre) y voz de la intro (si hay link y el modo no es off),
         # ANTES de bajar nada: un link roto o una voz larga fallan enseguida.
         enc = _encuentro(fp, sesion)
-        portada = intro.render_portada(enc, temp)
+        portada = _render_con_respaldo(intro.render_portada, enc, temp)
         voz = None
         if fp.intro_modo != "off" and fp.intro_audio_url:
             job_manager.update_job(job_id, stage="Bajando la voz de la intro…")
-            voz = intro.preparar_voz(fp.intro_audio_url, temp)
+            previa = sesion.get("voz")
+            if previa and previa[0] == fp.intro_audio_url and os.path.isfile(previa[1].path):
+                voz = previa[1]                      # ya bajada y medida en la fase 1
+            else:
+                voz = intro.preparar_voz(fp.intro_audio_url, temp)
         modo_intro = fp.intro_modo if voz else "off"
         intro_info = {"modo_pedido": fp.intro_modo, "modo_usado": modo_intro,
                       "duracion_s": voz.D if voz else None, "motivo": None}
@@ -253,7 +276,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
         intro.guardar_portada(portada, salida)
         marca = os.path.join(config.WATERMARKS_FOLDER, fp.watermark) if fp.watermark else None
         intro_mp4 = None
-        placa = intro.render_placa(enc, temp) if modo_intro == "encima" else None
+        placa = _render_con_respaldo(intro.render_placa, enc, temp) if modo_intro == "encima" else None
 
         def render_aparte():
             # Segmento propio, primero en el resumen. Los clips sueltos no llevan intro.
@@ -358,6 +381,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
         info = {
             "creado": datetime.now(timezone.utc).isoformat(),
             "serie": f"{sesion['partidas'][0]['azul']} vs {sesion['partidas'][0]['rojo']}",
+            "mapa": fp.mapa,
+            "equipos": {"azul": enc.azul, "rojo": enc.rojo},
             "vod": {**sesion["vod"], "inicio_utc": _iso(inicio), "url": params.vod_url},
             "partidas": [{**d, "ancla_usada_s": round(offsets[d["game_id"]] + (
                 datetime.fromisoformat(d["primera_kill_utc"]) - inicio).total_seconds(), 2)}
@@ -382,6 +407,10 @@ def finish(job_id: str, fp: FinishParams) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
+        # Sin info.json, la carpeta de la serie quedó a medias: se borra (si no,
+        # el reintento terminaba en "… (2)" con una carpeta rota al lado).
+        if salida and not os.path.isfile(os.path.join(salida, "info.json")):
+            shutil.rmtree(salida, ignore_errors=True)
     finally:
         if temp:
             shutil.rmtree(temp, ignore_errors=True)

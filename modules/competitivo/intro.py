@@ -17,9 +17,12 @@ el módulo watermark: el ':' del drive de Windows rompe el parser de filtros.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import os
 import shutil
+import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -67,15 +70,31 @@ class Encuentro:
 
 
 # --- Descargas --------------------------------------------------------------------
+class _Incompleto(OSError):
+    """El servidor cortó antes de mandar todo lo que anunció (Content-Length)."""
+
+
 def descargar(url: str, destino: str, timeout: float = 20, reintentos: int = 2,
               max_bytes: int | None = None) -> str:
-    """Baja `url` a `destino` (urllib). Lanza RuntimeError tras los reintentos."""
+    """Baja `url` a `destino` (urllib). Lanza RuntimeError tras los reintentos.
+
+    - Un 4xx (salvo 408/429) no se reintenta: el link está mal y no va a cambiar.
+    - Un cuerpo más corto que su Content-Length es un error (se reintenta): sin
+      esto, un logo o una voz cortados pasaban como buenos.
+    - Plazo total de 3× `timeout`, para que un servidor que gotea no cuelgue el job.
+    - Archivo temporal propio por llamada: dos jobs con la misma URL no se pisan."""
     ultimo: Exception | None = None
-    os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
+    carpeta = os.path.dirname(destino) or "."
+    os.makedirs(carpeta, exist_ok=True)
     for intento in range(reintentos + 1):
+        fd, parcial = tempfile.mkstemp(dir=carpeta, suffix=".part")
+        fh = os.fdopen(fd, "wb")
         try:
+            limite = time.monotonic() + 3 * timeout
             req = urllib.request.Request(url, headers={"User-Agent": "ReelForge"})
-            with urllib.request.urlopen(req, timeout=timeout) as r, open(destino + ".part", "wb") as fh:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                # Lo anunciado, ANTES de leer (en HTTPResponse, .length va bajando).
+                esperado = getattr(r, "length", None) or int(r.headers.get("Content-Length") or 0)
                 copiado = 0
                 while True:
                     bloque = r.read(64 * 1024)
@@ -84,24 +103,54 @@ def descargar(url: str, destino: str, timeout: float = 20, reintentos: int = 2,
                     copiado += len(bloque)
                     if max_bytes and copiado > max_bytes:
                         raise RuntimeError(f"El archivo de {url} es demasiado grande.")
+                    if time.monotonic() > limite:
+                        raise TimeoutError("la descarga tardó demasiado")
                     fh.write(bloque)
-            os.replace(destino + ".part", destino)
+                if esperado and copiado < esperado:
+                    raise _Incompleto(f"llegaron {copiado} de {esperado} bytes")
+            fh.close()
+            os.replace(parcial, destino)
             return destino
         except RuntimeError:
             raise
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        except urllib.error.HTTPError as exc:
+            ultimo = RuntimeError(f"HTTP {exc.code}: {exc.reason}")
+            exc.close()
+            if 400 <= exc.code < 500 and exc.code not in (408, 429):
+                break
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError) as exc:
             ultimo = exc
-            if intento < reintentos:
-                time.sleep(1.5 * (intento + 1))
         finally:
-            if os.path.exists(destino + ".part"):
-                os.remove(destino + ".part")
+            if not fh.closed:
+                fh.close()
+            if os.path.exists(parcial):
+                try:
+                    os.remove(parcial)
+                except OSError:
+                    pass
+        if intento < reintentos:
+            time.sleep(1.5 * (intento + 1))
     raise RuntimeError(f"No se pudo descargar {url}: {ultimo}")
+
+
+def _es_imagen(path: str) -> bool:
+    """Imagen de verdad: ffprobe le ve tamaño y FFmpeg decodifica un frame. (Un
+    HTML o un SVG guardados como .png dan 0x0 en ffprobe; un PNG cortado no
+    decodifica.)"""
+    res = ffmpeg_runner.probe_resolution(path)
+    if not res or res[0] <= 0 or res[1] <= 0:
+        return False
+    try:
+        ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-xerror", "-i", path,
+                               "-frames:v", "1", "-f", "null", "-"], timeout=30)
+        return True
+    except RuntimeError:
+        return False
 
 
 def logo(url: str) -> str | None:
     """PNG local del logo (cache por hash de la URL), o None si no hay o falla:
-    la portada pone el código del equipo en su lugar."""
+    la portada pone el código del equipo en su lugar. Nunca lanza."""
     if not url:
         return None
     os.makedirs(LOGOS_CACHE, exist_ok=True)
@@ -110,13 +159,16 @@ def logo(url: str) -> str | None:
     path = os.path.join(LOGOS_CACHE, hashlib.sha1(url.encode("utf-8")).hexdigest()[:20] + ext)
     try:
         if not os.path.isfile(path):
-            descargar(url, path, max_bytes=MAX_LOGO_BYTES)
-        if not ffmpeg_runner.probe_resolution(path):
-            raise RuntimeError("no es una imagen")
+            descargar(url, path, timeout=8, reintentos=1, max_bytes=MAX_LOGO_BYTES)
+        if not _es_imagen(path):
+            raise RuntimeError("no es una imagen que FFmpeg pueda leer")
         return path
-    except RuntimeError as exc:
+    except Exception as exc:  # noqa: BLE001 - un logo nunca tumba el job
         if os.path.isfile(path):
-            os.remove(path)
+            try:
+                os.remove(path)          # que no quede envenenado en el cache
+            except OSError:
+                pass
         print(f"[competitivo] logo {url}: {exc}".encode("ascii", "replace").decode())
         return None
 
@@ -146,6 +198,22 @@ def ajustar_texto(texto: str, fuente: str, tam: int, ancho_max: float,
             s -= 2
         return [a, b], s
     return [texto], max(12, int(s * ancho_max / max(ancho(texto, s), 1)))
+
+
+def achicar(texto: str, fuente: str, tam: int, ancho_max: float, min_tam: int) -> int:
+    """Tamaño para que `texto` entre en UN renglón de `ancho_max` px (lo usa la fase)."""
+    info = fonts.font_info(os.path.basename(fuente))
+    s = tam
+    while s > min_tam and fonts.text_width(info, texto, s) > ancho_max:
+        s -= 2
+    return s
+
+
+def tiene_glifos(texto: str, fuente: str) -> bool:
+    """¿La fuente tiene todos los caracteres? (Anton no trae coreano, por ejemplo:
+    saldrían cajitas.)"""
+    info = fonts.font_info(os.path.basename(fuente))
+    return all(ord(c) in info["adv"] for c in texto if not c.isspace())
 
 
 def _rel(path: str) -> str:
@@ -201,8 +269,8 @@ def _logo_respaldo(codigo: str, lado: int, t: _Textos, salida: str) -> str:
 V = {   # portada 1080x1920: arriba y abajo quedan franjas libres (las tapa la UI de TikTok)
     "W": 1080, "H": 1920,
     "mapa_y": 300, "mapa_tam": 190, "mapa_borde": 10,
-    "fase_y": 545, "fase_tam": 46,
-    "logos_y": 900, "logo_lado": 340, "logo_x": (270, 810),
+    "fase_y": 545, "fase_tam": 46, "fase_min": 28, "fase_ancho": 900,
+    "logos_y": 900, "logo_lado": 340, "logo_x": (290, 790),   # lejos del riel derecho de TikTok
     "vs_tam": 140, "vs_borde": 8,
     "nombre_y": 1100, "nombre_tam": 74, "nombre_min": 48, "nombre_ancho": 450, "nombre_borde": 5,
     "serie_y": 1360, "serie_tam": 46,
@@ -211,7 +279,7 @@ V = {   # portada 1080x1920: arriba y abajo quedan franjas libres (las tapa la U
 P = {   # placa horizontal (80 % del ancho del reel)
     "W": 864, "H": 560,
     "mapa_y": 34, "mapa_tam": 108, "mapa_borde": 6,
-    "fase_y": 168, "fase_tam": 30,
+    "fase_y": 168, "fase_tam": 30, "fase_min": 18, "fase_ancho": 780,
     "logos_y": 318, "logo_lado": 180, "logo_x": (196, 668),
     "vs_tam": 84, "vs_borde": 5,
     "nombre_y": 424, "nombre_tam": 46, "nombre_min": 30, "nombre_ancho": 300, "nombre_borde": 3,
@@ -236,8 +304,10 @@ def _componer(enc: Encuentro, T: dict, t: _Textos, fondo: str | None) -> tuple[l
                       "format=rgba,drawbox=c=black@0.28:t=fill[fondo]")
     else:
         c0, c1 = DEGRADADO
-        entradas += ["-f", "lavfi", "-i", f"gradients=s={W}x{H}:c0={c0}:c1={c1}:x0=0:y0=0:x1={W}:y1={H}"
-                                          ":nb_colors=2:speed=0:d=1:r=1"]
+        # De arriba a abajo. Los extremos tienen que caer DENTRO del cuadro: fuera de
+        # rango, FFmpeg los elige al azar y la plantilla salía distinta cada vez.
+        entradas += ["-f", "lavfi", "-i", f"gradients=s={W}x{H}:c0={c0}:c1={c1}:x0=0:y0=0:x1=0:y1={H - 1}"
+                                          ":nb_colors=2:speed=0:seed=0:d=1:r=1"]
         partes.append("[0:v]format=rgba[fondo]")
     n = 1
 
@@ -264,11 +334,15 @@ def _componer(enc: Encuentro, T: dict, t: _Textos, fondo: str | None) -> tuple[l
                    borde=T["mapa_borde"], sombra=True),
         t.drawtext("VS", TITULO, T["vs_tam"], "(w-text_w)/2", f"{ly}-text_h/2", borde=T["vs_borde"]),
     ]
-    if enc.fase:
-        textos.append(t.drawtext(enc.fase.upper(), TEXTO, T["fase_tam"], "(w-text_w)/2",
-                                 str(T["fase_y"]), color=ACENTO, sombra=True))
+    fase = enc.fase.upper()
+    if fase and tiene_glifos(fase, TEXTO):
+        tam = achicar(fase, TEXTO, T["fase_tam"], T["fase_ancho"], T["fase_min"])
+        textos.append(t.drawtext(fase, TEXTO, tam, "(w-text_w)/2", str(T["fase_y"]),
+                                 color=ACENTO, sombra=True))
     dos_renglones = False
-    for nombre, x in ((enc.azul, xa), (enc.rojo, xr)):
+    nombres = [(n if tiene_glifos(n, TITULO) else c, x)
+               for n, c, x in ((enc.azul, enc.codigo_azul, xa), (enc.rojo, enc.codigo_rojo, xr))]
+    for nombre, x in nombres:
         lineas, tam = ajustar_texto(nombre, TITULO, T["nombre_tam"], T["nombre_ancho"], T["nombre_min"])
         dos_renglones = dos_renglones or len(lineas) > 1
         for i, linea in enumerate(lineas):
@@ -300,11 +374,19 @@ def render_portada(enc: Encuentro, carpeta: str, fondo: str | None = FONDO) -> d
     entradas, partes, info = _componer(enc, V, t, fondo)
     cmd = [config.FFMPEG_PATH, "-y", "-v", "error", *entradas]
     final = "[tarjeta]"
+    caja = None
     if enc.marca and os.path.isfile(enc.marca):
+        from modules.competitivo.layout import recorte_marca
+        caja = recorte_marca(enc.marca)
+    if caja:
         n = entradas.count("-i")
         cmd += ["-i", enc.marca]
         # Marca 4xl: chica, translúcida, sin placa. Tiene que pasar desapercibida.
-        partes.append(f"[{n}:v]scale=-2:{V['marca_alto']},format=rgba,colorchannelmixer=aa=0.4[marca]")
+        # Se recorta su margen transparente antes de escalar (si no, la figura
+        # quedaba a la mitad del alto pedido).
+        pw, ph, px, py = caja
+        partes.append(f"[{n}:v]crop={pw}:{ph}:{px}:{py},scale=-2:{V['marca_alto']},format=rgba,"
+                      "colorchannelmixer=aa=0.4[marca]")
         partes.append(f"[tarjeta][marca]overlay=W-w-{V['marca_x']}:{V['marca_y']}-h[con_marca]")
         final = "[con_marca]"
     partes.append(f"{final}format=rgb24[out]")

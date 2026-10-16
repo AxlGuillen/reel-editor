@@ -50,7 +50,8 @@ def finish():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     job_manager.update_job(job_id, status="processing", progress=0, finished=False,
-                           stage="Preparando el render…", error=None, resultado=None)
+                           stage="Preparando el render…", error=None, resultado=None,
+                           portada=None, intro=None)
     threading.Thread(target=processor.finish, args=(job_id, fp), daemon=True).start()
     return jsonify(job_id=job_id), 202
 
