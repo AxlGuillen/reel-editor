@@ -7,6 +7,7 @@ Contrato (también para que Claude lo opere solo; ver CLAUDE.md):
     GET  /download/<job_id>       → resumen.mp4
     GET  /download/<job_id>/<n>   → clip n (1..)
     GET  /frame/<job_id>/<n>      → JPG de control del ancla de la partida n
+    GET  /portada/<job_id>        → portada.jpg (después de /finish)
     GET  /resumenes               → resúmenes guardados (carpeta persistente)
     GET  /resumenes/<carpeta>/<archivo> → un archivo de un resumen guardado
 """
@@ -64,6 +65,7 @@ def status(job_id):
         error=job["error"], finished=bool(job.get("finished")), modo=job.get("modo"),
         aviso=job.get("aviso"), vod=job.get("vod"), partidas=job.get("partidas"),
         clips=job.get("clips"), seleccion=job.get("seleccion"), resultado=job.get("resultado"),
+        portada=job.get("portada"), intro=job.get("intro"),
     )
 
 
@@ -108,6 +110,19 @@ def frame(job_id, n):
     if not path or not os.path.isfile(path):
         return jsonify(error="No hay frame de control para esa partida."), 404
     return send_file(path, mimetype="image/jpeg", max_age=0)
+
+
+@bp.get("/portada/<job_id>")
+def portada(job_id):
+    res, err = _resultado(job_id)
+    if err:
+        return err
+    path = os.path.join(res["carpeta"], res.get("portada") or "portada.jpg")
+    if not os.path.isfile(path):
+        return jsonify(error="Ese resumen no tiene portada."), 404
+    return send_file(path, mimetype="image/jpeg", max_age=0,
+                     as_attachment=request.args.get("descargar") == "1",
+                     download_name=f"{res['nombre']} - portada.jpg")
 
 
 @bp.get("/resumenes")

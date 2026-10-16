@@ -31,6 +31,7 @@ reel-editor/
 │
 ├── assets/                     ← Assets PERSISTENTES (versionados, NO los toca "Limpiar archivos")
 │   ├── watermarks/             ← librería de PNG con transparencia (overlay)
+│   ├── competitivo/            ← fondo_portada.png y sting.mp3 opcionales (intro del módulo competitivo)
 │   ├── fonts/                  ← fuentes de subtítulos (Poppins Bold/ExtraBold/Black, Anton,
 │   │                             Archivo Black); SOLO archivos de fuente (libass los abre todos)
 │   └── font_licenses/          ← licencias OFL de las fuentes (fuera de fonts/ a propósito)
@@ -312,6 +313,7 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `kills.py` | Baja el feed (urllib, ventanas en paralelo, con las K/D/A por jugador del propio `window`) y arma las peleas: kills a <15 s = pelea; ventanas a <6 s se fusionan; filtro de kills mínimas; puntaje del brief + **oro que movió la pelea** (+1 c/100, máx. 20, pedido de Axl); selección por puntaje sin tope con presupuesto y tope por partida; la pelea que cierra la serie entra siempre; orden cronológico. CLI: `python -m modules.competitivo.kills <gameId…>` |
 | `layout.py` | Layout, análisis del tramo (cámara del set, repeticiones, contador de kills) y comando de render |
 | `fuente.py` | yt-dlp con la config del Downloader (cookies, runtimes JS, reintentos): hora de inicio del directo y tramos HLS |
+| `intro.py` | Portada (vertical, `portada.jpg`) y placa (horizontal) con plantilla fija; voz de la intro por URL; segmento "aparte" |
 | `schema.py` / `processor.py` / `routes.py` | Contrato estándar de dos fases |
 
 **Layout** (1080x1920, de arriba a abajo): barra de la transmisión (cámaras de jugadores + tabla de stats; en peleas, retratos con vida) con aire y esquinas redondeadas → gameplay con zoom (default **1.3×**, centrado donde el observador pone la acción, sin desenfoque) → marcador oficial → cámara del set de Ibai al 70 % del ancho. Con zoom < ~1.6 el gameplay no llena su alto (la zona limpia de la fuente mide 712 px): la barra baja, marcador y cámara suben, y lo que sobra queda arriba y abajo de todo (las franjas que tapa la UI de TikTok). Watermark opaco "parado" en la esquina inferior derecha (se recorta su margen transparente). Zonas medidas en 169 frames (ver docstring de `layout.py`); la **y de la cámara del set cambia por partida** y se detecta por las aristas del recuadro. Tope de 16 Mbps (con cq 18 salía a 34 Mbps).
@@ -323,11 +325,26 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `game_ids` | str | — | gameId de 15–20 dígitos, uno por partida **en orden** (la última es la decisiva) |
 | `vod_url` | str | — | VOD de IbaiExtra (necesita `release_timestamp`) |
 | `modo` | str | revisar | `revisar` (pausa con todo prellenado) / `auto` (sigue solo si todas las anclas son de confianza alta) |
-| `duracion_max_s` / `max_por_partida` / `min_kills` | int | 60 / 2 / 2 | 20–180 / 1–5 / 1–5 |
+| `duracion_max_s` / `max_por_partida` / `min_kills` | int | 60 / 3 / 2 | 20–180 / 1–5 / 1–5 |
 | `incluir_picks` / `incluir_primera_sangre` | bool | false | |
 | `pre_s` / `post_s` | float | 8 / 3 | antes del frame anterior a la 1ª kill / después de la última |
 | `zoom` / `color` | float / str | 1.3 / vivo | 0.8–2.2 / off·vivo·cine |
 | `watermark` / `marca_alto` | str / int | "" / 190 | PNG de `assets/watermarks` / alto en px |
+| `intro_modo` | str | encima | `encima` (placa sobre el clip 1) · `aparte` (segmento propio) · `off` |
+| `intro_audio_url` | str | "" | link http(s) del mp3 de la voz; vacío → sin intro |
+| `mapa` | int | 1 | 1–5 ("MAPA N" en la portada; la carpeta lleva "· Mapa N" si el trabajo es de un mapa) |
+| `fase` | str | "" | máx. 40, p. ej. "PLAY-IN · DÍA 2" |
+| `equipo_azul` / `equipo_rojo` | str | códigos del feed | máx. 30; nombre completo para la portada (según el lado de ESE mapa) |
+| `logo_azul_url` / `logo_rojo_url` | str | "" | http(s) o vacío (se cachean en `cache/competitivo/logos/`) |
+| `serie_marcador` | str | "" | máx. 12, p. ej. "1-0" |
+| `marca_4xl` | bool | false | el `watermark`, chico y al 40 % en la portada |
+
+Todos estos campos se pueden mandar también en `/finish` (lo que no llega se hereda de la fase 1; el modo `auto` los pasa con `FinishParams.desde()`).
+
+**Intro con voz y portada (`intro.py`).** La **voz no la genera ReelForge**: la genera Claude con Fish Audio (MCP) y llega como link de un mp3 en `intro_audio_url` (no hay API de Fish Audio ni claves en la app). Se baja una vez; `D` = voz + 0.4 s; si la voz dura más de 8 s el job falla con un error claro. Lo visual es una **plantilla fija** (MAPA N en Anton, la fase en el lima de la app, logos VS, nombres, serie y fecha): la portada vertical 1080x1920 (`portada.jpg`, se genera **siempre**, en la carpeta de la serie) y la misma plantilla en horizontal como placa (864x560, esquinas redondeadas, borde blanco y sombra como la placa del HUD). Fallbacks, nunca falla: sin `assets/competitivo/fondo_portada.png` → degradado oscuro; sin logo o si falla la descarga → el código del equipo en un círculo; sin nombres → los códigos del feed; nombres largos → se achican o se parten en dos renglones (ancho real con `fonts.text_width`). `assets/competitivo/sting.mp3`, si existe, suena al 35 % debajo de la voz.
+- **`encima`** (default): dentro del encode del clip 1. La placa entra con un fade de 0.2 s y sale con otro de 0.3 s durante `[0, D]`; el juego baja al 25 % (misma expresión `volume=…:eval=frame` que hook_reel) y vuelve al 100 % con una rampa de 0.4 s; `amix` con la voz (+ sting) y un limitador. El clip 1 se renderiza **dos veces**: `clip_01.mp4` limpio y la versión con intro solo para el resumen. Cae solo a `aparte` (y lo anota con el motivo) si el clip 1 dura menos de `D + 2 s` o si su primera kill cae antes de `D + 0.5 s` (la placa la taparía).
+- **`aparte`**: `intro.mp4` propio (la portada con zoom lento 1.00→1.06 y fade-in), primero en el resumen. Sale con **los mismos parámetros que los clips** (60 fps, encoder, tope de 16 Mbps, AAC 160k 48 kHz estéreo, yuv420p, SAR 1:1, **bt709/tv**): el resumen se une con `concat -c copy` y hereda la cabecera de video del primer archivo. Por eso los clips también salen etiquetados bt709/tv explícitamente (`layout.SALIDA`). Lo verifica un test con ffprobe.
+- **`off`**: sin intro; la portada se genera igual.
 
 **API (form-urlencoded; también para que Claude la opere sola con el server corriendo):**
 
@@ -342,11 +359,12 @@ POST /api/competitivo/finish     job_id, [anchors='{"gameId": "1:22:15"|4935}'],
         [clips='["2-9","3-19"]'], [zoom, color, watermark, marca_alto]  → 202
 GET  /api/competitivo/download/<id>      → resumen.mp4   (·/<n> → clip n)
 GET  /api/competitivo/frame/<id>/<n>     → JPG de control del ancla de la partida n
+GET  /api/competitivo/portada/<id>       → portada.jpg (después de finish)
 GET  /api/competitivo/resumenes          → resúmenes guardados (carpeta persistente)
 GET  /api/competitivo/resumenes/<carpeta>/<archivo>
 ```
 
-Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fase 2 en `finished=true` con `resultado.carpeta`. Para operarlo de punta a punta: `process` con `modo=auto` → poll de `status` hasta `finished=true` (si queda en `esperando_ancla` con `aviso`, revisar el `frame` de esa partida, corregir con `anchors` y llamar `finish`). Para elegir otras peleas: tomar ids de `clips` y pasarlos en `finish`. Tiempos medidos (3 partidas, 3 clips): fase 1 ~64 s, fase 2 ~54 s. Las sesiones viven en memoria: si el server se reinicia (el modo debug recarga al cambiar código), hay que repetir la fase 1. Tests: `tests/competitivo/` (fixture real de KC-C9 G1).
+Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fase 2 en `finished=true` con `resultado.carpeta`. Al terminar, `status` y `resultado` traen `portada` ("portada.jpg") e `intro: {modo_usado, duracion_s, motivo}`; `info.json` además `intro_modo_usado`. **Como lo opera Claude:** un `/process` **por mapa** (`game_ids=<uno>`) con `modo=auto`, `intro_audio_url` (la voz de Fish Audio), `mapa`, `fase`, `equipo_*`, `logo_*`, `serie_marcador`; poll hasta `finished=true`; bajar `resumen.mp4` y `portada.jpg`. Para operarlo de punta a punta: `process` con `modo=auto` → poll de `status` hasta `finished=true` (si queda en `esperando_ancla` con `aviso`, revisar el `frame` de esa partida, corregir con `anchors` y llamar `finish`). Para elegir otras peleas: tomar ids de `clips` y pasarlos en `finish`. Tiempos medidos (3 partidas, 3 clips): fase 1 ~64 s, fase 2 ~54 s. Las sesiones viven en memoria: si el server se reinicia (el modo debug recarga al cambiar código), hay que repetir la fase 1. Tests: `tests/competitivo/` (fixture real de KC-C9 G1).
 
 ### assets — blueprint de assets persistentes
 

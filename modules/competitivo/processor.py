@@ -177,10 +177,15 @@ def process(job_id: str, params: CompetitivoParams) -> None:
 
 
 # --- Fase 2 ---------------------------------------------------------------------
-def _carpeta_salida(partidas: list[dict]) -> str:
+def _carpeta_salida(partidas: list[dict], mapa: int | None = None) -> str:
+    """<fecha> <A> vs <B> (· Mapa N si el trabajo es de un solo mapa, que es como
+    lo opera Claude: un /process por mapa)."""
     primera = partidas[0]
     fecha = datetime.fromisoformat(primera["inicio_utc"]).astimezone().strftime("%Y-%m-%d")
-    nombre = re.sub(r'[<>:"/\\|?*]+', "", f"{fecha} {primera['azul']} vs {primera['rojo']}").strip()
+    nombre = f"{fecha} {primera['azul']} vs {primera['rojo']}"
+    if mapa and len(partidas) == 1:
+        nombre += f" · Mapa {mapa}"
+    nombre = re.sub(r'[<>:"/\\|?*]+', "", nombre).strip()
     base = os.path.join(config.COMPETITIVO_FOLDER, nombre)
     destino, n = base, 2
     while os.path.exists(destino):
@@ -244,7 +249,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
         modo_intro = fp.intro_modo if voz else "off"
         intro_info = {"modo_pedido": fp.intro_modo, "modo_usado": modo_intro,
                       "duracion_s": voz.D if voz else None, "motivo": None}
-        salida = _carpeta_salida(sesion["partidas"])
+        salida = _carpeta_salida(sesion["partidas"], fp.mapa)
         intro.guardar_portada(portada, salida)
         marca = os.path.join(config.WATERMARKS_FOLDER, fp.watermark) if fp.watermark else None
         intro_mp4 = None
@@ -346,6 +351,10 @@ def finish(job_id: str, fp: FinishParams) -> None:
                            "-c", "copy", "-movflags", "+faststart", resumen],
                           job_id, total_duration=sum(h["duracion"] for h in hechos) + (voz.D if intro_mp4 else 0),
                           progress_range=(92, 99))
+        duracion_total = round(sum(h["duracion"] for h in hechos) + (voz.D if intro_mp4 else 0), 2)
+        intro_res = {"modo_pedido": intro_info["modo_pedido"], "modo_usado": modo_intro,
+                     "duracion_s": intro_info["duracion_s"], "motivo": intro_info["motivo"],
+                     "fondo": portada["fondo"], "logos": portada["logos"]}
         info = {
             "creado": datetime.now(timezone.utc).isoformat(),
             "serie": f"{sesion['partidas'][0]['azul']} vs {sesion['partidas'][0]['rojo']}",
@@ -354,17 +363,22 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 datetime.fromisoformat(d["primera_kill_utc"]) - inicio).total_seconds(), 2)}
                 for d in sesion["partidas"]],
             "clips": hechos,
-            "duracion_total": round(sum(h["duracion"] for h in hechos), 2),
+            "portada": "portada.jpg",
+            "intro": intro_res,
+            "intro_modo_usado": modo_intro,
+            "duracion_total": duracion_total,
             "parametros": {**asdict(params), "render": asdict(fp)},
         }
         with open(os.path.join(salida, "info.json"), "w", encoding="utf-8") as fh:
             json.dump(info, fh, ensure_ascii=False, indent=2)
+        intro_corto = {"modo_usado": modo_intro, "duracion_s": intro_info["duracion_s"],
+                       "motivo": intro_info["motivo"]}
         job_manager.update_job(
             job_id, status="done", progress=100, stage="listo", finished=True,
-            output_path=resumen,
+            output_path=resumen, portada="portada.jpg", intro=intro_corto,
             resultado={"carpeta": salida, "nombre": os.path.basename(salida),
-                       "resumen": "resumen.mp4", "clips": hechos,
-                       "duracion_total": info["duracion_total"]},
+                       "resumen": "resumen.mp4", "portada": "portada.jpg", "intro": intro_corto,
+                       "clips": hechos, "duracion_total": duracion_total},
         )
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
@@ -395,5 +409,7 @@ def listar_resumenes() -> list[dict]:
             "clips": [{"archivo": c["archivo"], "titulo": c["titulo"], "duracion": c["duracion"]}
                       for c in info.get("clips", [])],
             "resumen": "resumen.mp4" if os.path.isfile(os.path.join(base, nombre, "resumen.mp4")) else None,
+            "portada": "portada.jpg" if os.path.isfile(os.path.join(base, nombre, "portada.jpg")) else None,
+            "intro": info.get("intro_modo_usado"),
         })
     return sorted(out, key=lambda r: r["creado"] or "", reverse=True)
