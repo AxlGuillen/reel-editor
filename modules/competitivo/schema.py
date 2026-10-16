@@ -127,8 +127,8 @@ class CompetitivoParams:
     min_kills: int = 2
     incluir_picks: bool = False
     incluir_primera_sangre: bool = False
-    pre_s: float = 8
-    post_s: float = 3
+    pre_s: float = 10
+    post_s: float = 5
     zoom: float = 1.3
     color: str = "vivo"
     watermark: str = ""
@@ -175,8 +175,8 @@ class CompetitivoParams:
             min_kills=_num(form, "min_kills", 2, 1, 5),
             incluir_picks=_bool(form, "incluir_picks"),
             incluir_primera_sangre=_bool(form, "incluir_primera_sangre"),
-            pre_s=_num(form, "pre_s", 8, 0, 20, float),
-            post_s=_num(form, "post_s", 3, 0, 15, float),
+            pre_s=_num(form, "pre_s", 10, 0, 20, float),
+            post_s=_num(form, "post_s", 5, 0, 15, float),
             **_render(form),
             **_intro(form),
         )

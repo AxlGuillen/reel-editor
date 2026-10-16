@@ -327,7 +327,7 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `modo` | str | revisar | `revisar` (pausa con todo prellenado) / `auto` (sigue solo si todas las anclas son de confianza alta) |
 | `duracion_max_s` / `max_por_partida` / `min_kills` | int | 60 / 3 / 2 | 20–180 / 1–5 / 1–5 |
 | `incluir_picks` / `incluir_primera_sangre` | bool | false | |
-| `pre_s` / `post_s` | float | 8 / 3 | antes del frame anterior a la 1ª kill / después de la última |
+| `pre_s` / `post_s` | float | 10 / 5 | 0–20 / 0–15: antes del frame anterior a la 1ª kill / después de la última |
 | `zoom` / `color` | float / str | 1.3 / vivo | 0.8–2.2 / off·vivo·cine |
 | `watermark` / `marca_alto` | str / int | "" / 190 | PNG de `assets/watermarks` / alto en px |
 | `intro_modo` | str | encima | `encima` (placa sobre el clip 1) · `aparte` (segmento propio) · `off` |

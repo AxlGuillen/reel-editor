@@ -46,6 +46,10 @@ class Validacion(unittest.TestCase):
         self.assertEqual((p.zoom, p.color, p.watermark), (1.3, "vivo", ""))
         self.assertFalse(p.incluir_picks or p.incluir_primera_sangre)
         self.assertEqual(p.reglas.duracion_max_s, 60)
+        # ventana de cada clip: 10 s antes de la pelea y 5 s después
+        self.assertEqual((p.pre_s, p.post_s, p.reglas.pre_s, p.reglas.post_s), (10, 5, 10, 5))
+        p = CompetitivoParams.from_form({"game_ids": IDS, "vod_url": VOD, "pre_s": "6", "post_s": "2.5"})
+        self.assertEqual((p.reglas.pre_s, p.reglas.post_s), (6, 2.5))
 
     def test_errores_legibles(self):
         casos = [

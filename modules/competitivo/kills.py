@@ -45,8 +45,8 @@ class Reglas:
     min_kills: int = 2
     incluir_picks: bool = False
     incluir_primera_sangre: bool = False
-    pre_s: float = 8
-    post_s: float = 3
+    pre_s: float = 10
+    post_s: float = 5
     duracion_max_s: float = 60
     max_por_partida: int = 3
 

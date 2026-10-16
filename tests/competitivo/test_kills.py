@@ -29,9 +29,9 @@ class FixtureKCvsC9(unittest.TestCase):
                          ["C9 · pelea 2-0 → barón · 25:40", "C9 · pelea 3-0 → nexo · 34:50"])
         total = sum(c.duracion for c in self.clips)
         self.assertLessEqual(total, 60)
-        # El brief estimaba ~42 s; la pelea final tiene kills en DOS frames
-        # (34:40 y 34:50), así que su clip dura ~31 s: 21 + 31 ≈ 52.
-        self.assertAlmostEqual(total, 52, delta=1.5)
+        # La pelea final tiene kills en DOS frames (34:40 y 34:50), así que con
+        # la ventana de 10 s + 5 s su clip dura ~35 s: 25 + 35 ≈ 60.
+        self.assertAlmostEqual(total, 60, delta=1.5)
 
     def test_puntajes_del_brief(self):
         baron, cierre = self.clips
@@ -49,13 +49,18 @@ class FixtureKCvsC9(unittest.TestCase):
     def test_ventana_del_clip(self):
         baron, cierre = self.clips
         # La kill pasó entre el frame anterior y el que sube el contador:
-        # inicio = frame anterior − pre_s (8); fin = última kill + post_s (3).
+        # inicio = frame anterior − pre_s (10); fin = última kill + post_s (5).
+        self.assertEqual((K.Reglas().pre_s, K.Reglas().post_s), (10, 5))
         for c in self.clips:
-            self.assertAlmostEqual((c.antes - c.clip_inicio).total_seconds(), 8, places=3)
-            self.assertAlmostEqual((c.clip_fin - c.ultima).total_seconds(), 3, places=3)
+            self.assertAlmostEqual((c.antes - c.clip_inicio).total_seconds(), 10, places=3)
+            self.assertAlmostEqual((c.clip_fin - c.ultima).total_seconds(), 5, places=3)
             self.assertAlmostEqual((c.primera - c.antes).total_seconds(), 9.75, delta=0.75)
-        self.assertAlmostEqual(baron.duracion, 21, delta=1)
-        self.assertAlmostEqual(cierre.duracion, 31, delta=1)
+        self.assertAlmostEqual(baron.duracion, 25, delta=1)
+        self.assertAlmostEqual(cierre.duracion, 35, delta=1)
+        # con otra ventana, el clip cambia lo mismo
+        reglas = K.Reglas(pre_s=8, post_s=3)
+        otro = [p for p in K.detectar_peleas(self.partida, reglas) if p.reloj == "25:40"][0]
+        self.assertAlmostEqual(otro.duracion, baron.duracion - 4, places=3)
 
     def test_cuenta_de_kills_igual_al_motor(self):
         # 15 eventos de kills: la primera sangre, 9 picks y 5 peleas de 2+.
@@ -88,7 +93,7 @@ class FixtureKCvsC9(unittest.TestCase):
         self.assertEqual(len(clips), 2)   # el siguiente (24:30, ~21 s) pasaría de 60
 
     def test_picks_y_presupuesto(self):
-        reglas = K.Reglas(incluir_picks=True, max_por_partida=5, duracion_max_s=180)
+        reglas = K.Reglas(incluir_picks=True, max_por_partida=5, duracion_max_s=180, pre_s=8, post_s=3)
         clips = K.seleccionar([K.detectar_peleas(self.partida, reglas)], reglas)
         self.assertEqual(len(clips), 5)
         self.assertTrue(any(c.total == 1 for c in clips))
