@@ -129,7 +129,7 @@ def process(job_id: str, params: CompetitivoParams) -> None:
         carpeta = os.path.join(TRABAJO, job_id)
         os.makedirs(carpeta, exist_ok=True)
         # La voz de la intro se valida ANTES que nada: un link roto o una voz de
-        # más de 8 s tienen que fallar en segundos, no después de la fase 1.
+        # más de 20 s tienen que fallar en segundos, no después de la fase 1.
         voz = None
         if params.intro_modo != "off" and params.intro_audio_url:
             job_manager.update_job(job_id, status="processing", progress=1,
@@ -271,7 +271,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 voz = intro.preparar_voz(fp.intro_audio_url, temp)
         modo_intro = fp.intro_modo if voz else "off"
         intro_info = {"modo_pedido": fp.intro_modo, "modo_usado": modo_intro,
-                      "duracion_s": voz.D if voz else None, "motivo": None}
+                      "duracion_s": voz.D if voz else None, "motivo": None, "placa_s": None}
         salida = _carpeta_salida(sesion["partidas"], fp.mapa)
         intro.guardar_portada(portada, salida)
         marca = os.path.join(config.WATERMARKS_FOLDER, fp.watermark) if fp.watermark else None
@@ -330,6 +330,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     if modo_intro == "aparte":
                         intro_info.update(modo_usado="aparte", motivo=motivo)
                         intro_mp4 = render_aparte()
+                    else:
+                        intro_info["placa_s"] = intro.fin_de_placa(voz.D, t_kill - an.vivo_desde)
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
                 render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
                 cmd = layout.build_command(tramo, os.path.join(salida, archivo), an.vivo_desde, dur,
@@ -350,7 +352,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                         intro=layout.IntroEncima(placa=placa, voz=voz.path, D=voz.D, sting=intro.sting(),
                                                  sting_vol=intro.STING_VOL, voz_filtro=intro.cadena_voz(voz),
                                                  sting_filtro=intro.cadena_sting(voz.D),
-                                                 volumen_juego=fp.intro_volumen_juego / 100),
+                                                 volumen_juego=fp.intro_volumen_juego / 100,
+                                                 placa_fin=intro_info["placa_s"]),
                         con_audio=ffmpeg_runner.has_audio_stream(tramo))
                     ffmpeg_runner.run(cmd, job_id, total_duration=dur, progress_range=((lo + hi) // 2, hi))
                     en_resumen[-1] = con
@@ -378,6 +381,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
         duracion_total = round(sum(h["duracion"] for h in hechos) + (voz.D if intro_mp4 else 0), 2)
         intro_res = {"modo_pedido": intro_info["modo_pedido"], "modo_usado": modo_intro,
                      "duracion_s": intro_info["duracion_s"], "motivo": intro_info["motivo"],
+                     "placa_s": intro_info["placa_s"],
                      "fondo": portada["fondo"], "logos": portada["logos"]}
         info = {
             "creado": datetime.now(timezone.utc).isoformat(),

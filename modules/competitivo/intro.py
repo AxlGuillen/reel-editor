@@ -445,7 +445,7 @@ def guardar_portada(info: dict, destino_dir: str) -> str:
 
 
 # --- Voz ----------------------------------------------------------------------------
-MAX_VOZ_S = 8.0          # tope de la voz
+MAX_VOZ_S = 20.0         # tope de la voz: solo una protección (un link equivocado, un audio largo)
 COLA_S = 0.4             # la intro dura la voz + esta cola
 STING_VOL = 0.35         # el sting (si existe) suena debajo de la voz
 MAX_VOZ_BYTES = 20 * 1024 * 1024
@@ -536,17 +536,29 @@ def preparar_voz(url: str, carpeta: str) -> Voz:
     return Voz(path, round(dur, 3), D, fin=round(fin, 3), ln=_medir(path, fin))
 
 
+KILL_MIN_S = 3.0         # "encima" necesita que la primera kill del clip 1 caiga después de esto
+PLACA_ANTES_S = 0.5      # la placa se va al menos esto antes de la primera kill
+
+
 def modo_para_clip1(D: float, dur_clip: float, t_primera_kill: float) -> tuple[str, str | None]:
     """¿La intro puede ir "encima" del clip 1? Si no, cae a "aparte" (y el motivo).
 
-    - el clip tiene que durar al menos D + 2 s;
-    - su primera kill tiene que caer después de que la placa se fue (D + 0.5 s):
-      si no, la placa la taparía."""
-    if dur_clip < D + 2:
-        return "aparte", f"el clip 1 dura {dur_clip:.1f} s y la intro {D:.1f} s"
-    if t_primera_kill < D + 0.5:
-        return "aparte", f"la primera kill del clip 1 cae a los {t_primera_kill:.1f} s y la placa la taparía"
+    La placa ya no obliga a que la voz termine antes de la kill: se va antes
+    (`fin_de_placa`) y la voz sigue con el juego bajado hasta D. Solo cae a
+    "aparte" si la primera kill llega antes de KILL_MIN_S (la placa casi no
+    se vería) o si la voz no entra en el clip (se cortaría)."""
+    if t_primera_kill < KILL_MIN_S:
+        return "aparte", (f"la primera kill del clip 1 cae a los {t_primera_kill:.1f} s "
+                          f"(antes de los {KILL_MIN_S:g} s)")
+    if dur_clip < D + PLACA_ANTES_S:
+        return "aparte", f"el clip 1 dura {dur_clip:.1f} s y la voz de la intro {D:.1f} s"
     return "encima", None
+
+
+def fin_de_placa(D: float, t_primera_kill: float) -> float:
+    """Hasta cuándo se ve la placa en "encima": la intro entera o hasta medio
+    segundo antes de la primera kill, lo que llegue primero."""
+    return round(min(D, t_primera_kill - PLACA_ANTES_S), 3)
 
 
 def sting() -> str | None:

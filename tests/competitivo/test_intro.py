@@ -392,10 +392,15 @@ class IntroAparte(unittest.TestCase):
     def test_voz_larga_o_rota(self):
         from pathlib import Path
         d = self.tmp.name
+        # 12 s ya no es demasiado (el tope de 8 s se fue; 20 s queda como protección)
+        media = os.path.join(d, "media.mp3")
+        subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=d=12",
+                        "-c:a", "libmp3lame", media], check=True)
+        self.assertAlmostEqual(I.preparar_voz(Path(media).as_uri(), os.path.join(d, "x0")).D, 12.4, delta=0.1)
         larga = os.path.join(d, "larga.mp3")
-        subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=d=9",
+        subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=d=21",
                         "-c:a", "libmp3lame", larga], check=True)
-        with self.assertRaisesRegex(RuntimeError, r"dura 9\.0 s; máximo 8"):
+        with self.assertRaisesRegex(RuntimeError, r"dura 21\.0 s; máximo 20"):
             I.preparar_voz(Path(larga).as_uri(), os.path.join(d, "x1"))
         rota = os.path.join(d, "rota.mp3")
         with open(rota, "w") as fh:
@@ -429,6 +434,11 @@ class IntroEncima(unittest.TestCase):
         ffmpeg_runner.capture(layout.build_command(
             cls.tramo, cls.con, 1.0, 8.0, layout.CAMARA_Y_DEFECTO,
             intro=layout.IntroEncima(placa=cls.placa, voz=cls.silencio, D=cls.D)))
+        # Voz de 4 s y kill a los 2.5 s: la placa se va a los 2.0 s y la voz sigue.
+        cls.corta = os.path.join(d, "placa_corta.mp4")
+        ffmpeg_runner.capture(layout.build_command(
+            cls.tramo, cls.corta, 1.0, 8.0, layout.CAMARA_Y_DEFECTO,
+            intro=layout.IntroEncima(placa=cls.placa, voz=cls.silencio, D=4.0, placa_fin=2.0)))
         cls.con_40 = os.path.join(d, "con_intro_40.mp4")
         ffmpeg_runner.capture(layout.build_command(
             cls.tramo, cls.con_40, 1.0, 8.0, layout.CAMARA_Y_DEFECTO,
@@ -453,6 +463,14 @@ class IntroEncima(unittest.TestCase):
         cmd = L.build_command(self.tramo, "x.mp4", 1.0, 8.0, L.CAMARA_Y_DEFECTO,
                               intro=L.IntroEncima(placa=self.placa, voz=self.voz_src, D=3.4, volumen_juego=0.3))
         self.assertIn("volume='0.3+0.7*min(", cmd[cmd.index("-filter_complex") + 1])
+        # placa más corta que la voz: el loop y el enable duran la placa; el ducking, la voz
+        cmd = L.build_command(self.tramo, "x.mp4", 1.0, 8.0, L.CAMARA_Y_DEFECTO,
+                              intro=L.IntroEncima(placa=self.placa, voz=self.voz_src, D=6.0, placa_fin=3.2))
+        corta = cmd[cmd.index("-filter_complex") + 1]
+        self.assertEqual(cmd[cmd.index(self.placa) - 2], "3.200")
+        self.assertIn("enable='between(t,0,3.200)'", corta)
+        self.assertIn("fade=t=out:st=2.900:d=0.3", corta)
+        self.assertIn("(t-6.000)/0.4", corta)
         self.assertIn("amix=inputs=3:normalize=0", fc)
         self.assertEqual(cmd[cmd.index("-map", cmd.index("-map") + 1) + 1], "[aout]")
         # sin intro: el comando de siempre
@@ -492,14 +510,35 @@ class IntroEncima(unittest.TestCase):
         # con intro_volumen_juego = 40: −8 dB
         self.assertAlmostEqual(self._rms(self.con_40, 0.5, self.D - 1.0) - despues, -7.96, delta=1.0)
 
+    def test_placa_se_va_antes_de_la_kill_y_la_voz_sigue(self):
+        g = self.L.geometria(1.3)
+        y0 = self.L.ARRIBA_H + g.extra_arriba
+        zona = (slice(y0 + 200, y0 + g.juego_h - 200), slice(200, 880))
+        durante = abs(self._frame(self.corta, 1.2)[zona] - self._frame(self.limpio, 1.2)[zona]).mean()
+        despues = abs(self._frame(self.corta, 2.6)[zona] - self._frame(self.limpio, 2.6)[zona]).mean()
+        self.assertGreater(durante, 20)
+        self.assertLess(despues, 3)                         # a los 2.6 s ya no está
+        # pero el juego sigue bajado hasta D = 4 s
+        bajado = self._rms(self.corta, 2.4, 1.3)
+        lleno = self._rms(self.corta, 5.0, 2.0)
+        self.assertAlmostEqual(bajado - lleno, -15.39, delta=1.0)
+
     def test_caida_a_aparte(self):
+        # La voz ya puede ser más larga que el tiempo hasta la kill: sigue "encima".
         self.assertEqual(I.modo_para_clip1(4.0, 20.0, 8.0), ("encima", None))
-        modo, motivo = I.modo_para_clip1(4.0, 5.5, 5.0)        # clip corto (< D + 2)
+        self.assertEqual(I.modo_para_clip1(9.0, 20.0, 4.2), ("encima", None))
+        self.assertEqual(I.modo_para_clip1(4.0, 20.0, 3.0), ("encima", None))
+        modo, motivo = I.modo_para_clip1(4.0, 20.0, 2.9)        # kill antes de los 3 s
         self.assertEqual(modo, "aparte")
-        self.assertIn("dura 5.5 s", motivo)
-        modo, motivo = I.modo_para_clip1(4.0, 20.0, 4.2)       # la placa taparía la kill
+        self.assertIn("antes de los 3 s", motivo)
+        modo, motivo = I.modo_para_clip1(15.0, 12.0, 10.0)      # la voz no entra en el clip
         self.assertEqual(modo, "aparte")
-        self.assertIn("taparía", motivo)
+        self.assertIn("dura 12.0 s", motivo)
+
+    def test_fin_de_placa(self):
+        self.assertEqual(I.fin_de_placa(4.0, 10.0), 4.0)        # la voz termina antes: la intro entera
+        self.assertEqual(I.fin_de_placa(9.0, 4.2), 3.7)         # kill antes de D: kill − 0.5 s
+        self.assertEqual(I.fin_de_placa(9.0, 3.0), 2.5)
 
 
 if __name__ == "__main__":

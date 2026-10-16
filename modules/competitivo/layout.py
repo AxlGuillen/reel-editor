@@ -81,6 +81,9 @@ class IntroEncima:
     voz_filtro: str = ""
     sting_filtro: str = ""
     volumen_juego: float = DUCK_VOL    # 0–1: el juego mientras habla la voz
+    # Hasta cuándo se ve la placa (None = D). Se va antes de la primera kill;
+    # la voz y el juego bajado siguen hasta D.
+    placa_fin: float | None = None
 
 
 # Limitador de la mezcla: ≈ −1 dBTP, sin subir el nivel (level=0: el default lo
@@ -340,7 +343,8 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
 
     `placa_idx`/`D`: intro "encima": la placa (entrada `placa_idx`, imagen en
     loop de largo D) va centrada sobre el gameplay durante [0, D], entra con
-    un fade de 0.2 s y sale con otro de 0.3 s."""
+    un fade de 0.2 s y sale con otro de 0.3 s. Acá D es lo que dura la PLACA
+    (IntroEncima.placa_fin), que puede ser menos que la voz."""
     g = geometria(zoom)
     cw, ch, cx, cy = g.recorte
     arriba_h = ARRIBA_H + g.extra_arriba
@@ -428,8 +432,9 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
     amap = "0:a?"
     if intro:
         D = intro.D
+        placa_s = min(D, intro.placa_fin) if intro.placa_fin else D
         placa_idx, voz_idx = idx, idx + 1
-        cmd += ["-loop", "1", "-framerate", "60", "-t", f"{D:.3f}", "-i", intro.placa, "-i", intro.voz]
+        cmd += ["-loop", "1", "-framerate", "60", "-t", f"{placa_s:.3f}", "-i", intro.placa, "-i", intro.voz]
         idx += 2
         fmt = "aresample=48000,aformat=channel_layouts=stereo"
         audio, fuentes = [], []
@@ -448,7 +453,7 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
         audio.append(f"{''.join(fuentes)}amix=inputs={len(fuentes)}:normalize=0:duration={largo},"
                      f"{LIMITADOR},apad,atrim=0:{duracion:.3f}[aout]")
         filtros = build_filter_complex(camara_y, zoom, color, marca, marca_alto,
-                                       placa_idx=placa_idx, D=D) + ";" + ";".join(audio)
+                                       placa_idx=placa_idx, D=placa_s) + ";" + ";".join(audio)
         amap = "[aout]"
     cmd += [
         "-filter_complex", filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto),
