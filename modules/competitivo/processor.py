@@ -171,8 +171,7 @@ def process(job_id: str, params: CompetitivoParams) -> None:
                    if dudosas else None),
         )
         if params.modo == "auto" and not dudosas:
-            finish(job_id, FinishParams(anclas={}, clips=None, zoom=params.zoom, color=params.color,
-                                        watermark=params.watermark, marca_alto=params.marca_alto))
+            finish(job_id, FinishParams.desde(params))
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
         job_manager.update_job(job_id, status="error", error=str(exc))
 

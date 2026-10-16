@@ -214,11 +214,12 @@ def atempo_chain(tempo: float) -> str:
     return ",".join(f"atempo={t:.6f}" for t in parts)
 
 
-def capture(command: list[str], timeout: float = 300) -> bytes:
+def capture(command: list[str], timeout: float = 300, cwd: str | None = None) -> bytes:
     """Ejecuta FFmpeg y devuelve su stdout (p. ej. frames en `-f rawvideo -`
-    para analizarlos con numpy). Lanza RuntimeError si FFmpeg falla."""
+    para analizarlos con numpy). Lanza RuntimeError si FFmpeg falla.
+    `cwd`: como en run(), para filtros con rutas relativas (drawtext)."""
     try:
-        result = subprocess.run(command, capture_output=True, timeout=timeout)
+        result = subprocess.run(command, capture_output=True, timeout=timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
         raise RuntimeError("FFmpeg tardó demasiado en leer los frames.")
     if result.returncode != 0:

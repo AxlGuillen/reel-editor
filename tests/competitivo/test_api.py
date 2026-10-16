@@ -42,7 +42,7 @@ class Validacion(unittest.TestCase):
     def test_defaults(self):
         p = CompetitivoParams.from_form({"game_ids": IDS, "vod_url": VOD})
         self.assertEqual(p.game_ids, IDS.split())
-        self.assertEqual((p.modo, p.duracion_max_s, p.max_por_partida, p.min_kills), ("revisar", 60, 2, 2))
+        self.assertEqual((p.modo, p.duracion_max_s, p.max_por_partida, p.min_kills), ("revisar", 60, 3, 2))
         self.assertEqual((p.zoom, p.color, p.watermark), (1.3, "vivo", ""))
         self.assertFalse(p.incluir_picks or p.incluir_primera_sangre)
         self.assertEqual(p.reglas.duracion_max_s, 60)

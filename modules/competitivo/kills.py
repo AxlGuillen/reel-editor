@@ -48,7 +48,7 @@ class Reglas:
     pre_s: float = 8
     post_s: float = 3
     duracion_max_s: float = 60
-    max_por_partida: int = 2
+    max_por_partida: int = 3
 
 
 # --- Modelo -------------------------------------------------------------------

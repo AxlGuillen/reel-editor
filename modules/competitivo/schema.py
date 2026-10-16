@@ -11,6 +11,11 @@ from modules.competitivo import engine, kills, layout
 
 COLORES = set(layout.COLOR)
 MODOS = {"revisar", "auto"}
+INTRO_MODOS = {"encima", "aparte", "off"}
+# Campos que /finish hereda de la fase 1 si no llegan (render e intro).
+CAMPOS_RENDER = ("zoom", "color", "watermark", "marca_alto")
+CAMPOS_INTRO = ("intro_modo", "intro_audio_url", "mapa", "fase", "equipo_azul", "equipo_rojo",
+                "logo_azul_url", "logo_rojo_url", "serie_marcador", "marca_4xl")
 _GAME_ID = re.compile(r"^\d{15,20}$")
 
 
@@ -52,6 +57,52 @@ def _render(form, base: "CompetitivoParams | None" = None) -> dict:
     }
 
 
+def _url(form, name: str, default: str = "") -> str:
+    """Link http(s) o vacío."""
+    raw = form.get(name)
+    if raw is None:
+        return default
+    url = str(raw).strip()
+    if url and not re.match(r"^https?://\S+$", url):
+        raise ValueError(f"'{name}' tiene que ser un link http(s).")
+    return url
+
+
+def _texto(form, name: str, max_len: int, default: str = "") -> str:
+    """Texto de una línea para la portada (espacios colapsados, sin caracteres de control)."""
+    raw = form.get(name)
+    if raw is None:
+        return default
+    texto = " ".join(str(raw).split())
+    if any(ord(c) < 32 or ord(c) == 127 for c in texto):
+        raise ValueError(f"'{name}' tiene caracteres no válidos.")
+    if len(texto) > max_len:
+        raise ValueError(f"'{name}' es demasiado largo (máximo {max_len} caracteres).")
+    return texto
+
+
+def _intro(form, base=None) -> dict:
+    """Intro con voz y portada. En /finish, lo que no llega se hereda de la fase 1."""
+    def b(campo, defecto):
+        return getattr(base, campo) if base else defecto
+
+    modo = (form.get("intro_modo") or b("intro_modo", "encima")).strip().lower()
+    if modo not in INTRO_MODOS:
+        raise ValueError("'intro_modo' tiene que ser 'encima', 'aparte' u 'off'.")
+    return {
+        "intro_modo": modo,
+        "intro_audio_url": _url(form, "intro_audio_url", b("intro_audio_url", "")),
+        "mapa": _num(form, "mapa", b("mapa", 1), 1, 5),
+        "fase": _texto(form, "fase", 40, b("fase", "")),
+        "equipo_azul": _texto(form, "equipo_azul", 30, b("equipo_azul", "")),
+        "equipo_rojo": _texto(form, "equipo_rojo", 30, b("equipo_rojo", "")),
+        "logo_azul_url": _url(form, "logo_azul_url", b("logo_azul_url", "")),
+        "logo_rojo_url": _url(form, "logo_rojo_url", b("logo_rojo_url", "")),
+        "serie_marcador": _texto(form, "serie_marcador", 12, b("serie_marcador", "")),
+        "marca_4xl": _bool(form, "marca_4xl", b("marca_4xl", False)),
+    }
+
+
 def _color(form, default: str) -> str:
     color = (form.get("color") or default).strip().lower()
     if color not in COLORES:
@@ -66,7 +117,7 @@ class CompetitivoParams:
     vod_url: str
     modo: str = "revisar"            # revisar: pausa para el ancla y los clips; auto: sigue solo
     duracion_max_s: int = 60
-    max_por_partida: int = 2
+    max_por_partida: int = 3          # con un mapa por video; el presupuesto de tiempo manda
     min_kills: int = 2
     incluir_picks: bool = False
     incluir_primera_sangre: bool = False
@@ -76,6 +127,17 @@ class CompetitivoParams:
     color: str = "vivo"
     watermark: str = ""
     marca_alto: int = layout.MARCA_ALTO_DEFECTO
+    # Intro con voz y portada (ver intro.py). La voz llega hecha, como link de un mp3.
+    intro_modo: str = "encima"         # encima | aparte | off
+    intro_audio_url: str = ""          # vacío → sin intro (aunque el modo no sea off)
+    mapa: int = 1
+    fase: str = ""                     # "PLAY-IN · DÍA 2"
+    equipo_azul: str = ""              # nombre completo; vacío → código del feed
+    equipo_rojo: str = ""
+    logo_azul_url: str = ""
+    logo_rojo_url: str = ""
+    serie_marcador: str = ""           # "1-0"
+    marca_4xl: bool = False            # el watermark, chico y translúcido, en la portada
 
     @classmethod
     def from_form(cls, form) -> "CompetitivoParams":
@@ -102,13 +164,14 @@ class CompetitivoParams:
         return cls(
             game_ids=ids, vod_url=vod, modo=modo,
             duracion_max_s=_num(form, "duracion_max_s", 60, 20, 180),
-            max_por_partida=_num(form, "max_por_partida", 2, 1, 5),
+            max_por_partida=_num(form, "max_por_partida", 3, 1, 5),
             min_kills=_num(form, "min_kills", 2, 1, 5),
             incluir_picks=_bool(form, "incluir_picks"),
             incluir_primera_sangre=_bool(form, "incluir_primera_sangre"),
             pre_s=_num(form, "pre_s", 8, 0, 20, float),
             post_s=_num(form, "post_s", 3, 0, 15, float),
             **_render(form),
+            **_intro(form),
         )
 
     @property
@@ -130,6 +193,23 @@ class FinishParams:
     color: str
     watermark: str
     marca_alto: int
+    intro_modo: str = "encima"
+    intro_audio_url: str = ""
+    mapa: int = 1
+    fase: str = ""
+    equipo_azul: str = ""
+    equipo_rojo: str = ""
+    logo_azul_url: str = ""
+    logo_rojo_url: str = ""
+    serie_marcador: str = ""
+    marca_4xl: bool = False
+
+    @classmethod
+    def desde(cls, base: CompetitivoParams) -> "FinishParams":
+        """Todo heredado de la fase 1: lo usa el modo auto, que llama a finish()
+        sin pasar por el form (así no se pierde ningún campo nuevo)."""
+        return cls(anclas={}, clips=None,
+                   **{c: getattr(base, c) for c in CAMPOS_RENDER + CAMPOS_INTRO})
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "FinishParams":
@@ -158,4 +238,4 @@ class FinishParams:
                 raise ValueError("Elegí al menos un clip.")
         else:
             clips = None
-        return cls(anclas=anclas, clips=clips, **_render(form, base))
+        return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base))
