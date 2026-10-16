@@ -194,18 +194,102 @@ def _logo_respaldo(codigo: str, lado: int, t: _Textos, salida: str) -> str:
             + t.drawtext(" ".join(lineas), TITULO, tam, "(w-text_w)/2", "(h-text_h)/2") + salida)
 
 
-# --- Portada vertical ---------------------------------------------------------------
-# Plantilla 1080x1920. Arriba y abajo quedan franjas libres (las tapa la UI de TikTok).
-V = {
+# --- Plantilla --------------------------------------------------------------------
+# La misma plantilla en dos tamaños: la portada vertical (portada.jpg y el modo
+# "aparte") y la placa horizontal (el modo "encima", sobre el gameplay del clip 1).
+# Mismo fondo, mismas fuentes, mismos colores, mismos elementos.
+V = {   # portada 1080x1920: arriba y abajo quedan franjas libres (las tapa la UI de TikTok)
     "W": 1080, "H": 1920,
-    "mapa_y": 300, "mapa_tam": 190,
+    "mapa_y": 300, "mapa_tam": 190, "mapa_borde": 10,
     "fase_y": 545, "fase_tam": 46,
     "logos_y": 900, "logo_lado": 340, "logo_x": (270, 810),
-    "vs_tam": 140,
-    "nombre_y": 1100, "nombre_tam": 74, "nombre_min": 48, "nombre_ancho": 450,
+    "vs_tam": 140, "vs_borde": 8,
+    "nombre_y": 1100, "nombre_tam": 74, "nombre_min": 48, "nombre_ancho": 450, "nombre_borde": 5,
     "serie_y": 1360, "serie_tam": 46,
     "marca_alto": 70, "marca_x": 70, "marca_y": 1920 - 430,
 }
+P = {   # placa horizontal (80 % del ancho del reel)
+    "W": 864, "H": 560,
+    "mapa_y": 34, "mapa_tam": 108, "mapa_borde": 6,
+    "fase_y": 168, "fase_tam": 30,
+    "logos_y": 318, "logo_lado": 180, "logo_x": (196, 668),
+    "vs_tam": 84, "vs_borde": 5,
+    "nombre_y": 424, "nombre_tam": 46, "nombre_min": 30, "nombre_ancho": 300, "nombre_borde": 3,
+    "serie_y": 500, "serie_tam": 28,
+}
+PLACA_RADIO = 26           # esquinas, como la placa del HUD de vertical_convert
+PLACA_BORDE = 4            # borde blanco
+PLACA_SOMBRA = 30          # margen para la sombra (blur)
+PLACA_SOMBRA_DY = 8
+
+
+def _componer(enc: Encuentro, T: dict, t: _Textos, fondo: str | None) -> tuple[list[str], list[str], dict]:
+    """Entradas (-i …) y filtros de la tarjeta de la plantilla `T`: termina en
+    [tarjeta] (rgba, T["W"]xT["H"]). Siempre arranca en la entrada 0."""
+    W, H = T["W"], T["H"]
+    entradas, partes = [], []
+    usa_fondo = bool(fondo and os.path.isfile(fondo) and ffmpeg_runner.probe_resolution(fondo))
+    if usa_fondo:
+        entradas += ["-i", fondo]
+        # Un velo oscuro leve: el texto se lee sobre cualquier fondo.
+        partes.append(f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+                      "format=rgba,drawbox=c=black@0.28:t=fill[fondo]")
+    else:
+        c0, c1 = DEGRADADO
+        entradas += ["-f", "lavfi", "-i", f"gradients=s={W}x{H}:c0={c0}:c1={c1}:x0=0:y0=0:x1={W}:y1={H}"
+                                          ":nb_colors=2:speed=0:d=1:r=1"]
+        partes.append("[0:v]format=rgba[fondo]")
+    n = 1
+
+    lado = T["logo_lado"]
+    fuentes_logo = {}
+    for lado_eq, path, codigo in (("azul", enc.logo_azul, enc.codigo_azul),
+                                  ("rojo", enc.logo_rojo, enc.codigo_rojo)):
+        if path and os.path.isfile(path):
+            entradas += ["-i", path]
+            partes.append(f"[{n}:v]scale={lado}:{lado}:force_original_aspect_ratio=decrease,"
+                          f"format=rgba[logo_{lado_eq}]")
+            n += 1
+            fuentes_logo[lado_eq] = "logo"
+        else:
+            partes.append(_logo_respaldo(codigo, lado, t, f"[logo_{lado_eq}]"))
+            fuentes_logo[lado_eq] = "codigo"
+    ly = T["logos_y"]
+    xa, xr = T["logo_x"]
+    partes.append(f"[fondo][logo_azul]overlay=x={xa}-w/2:y={ly}-h/2[p1]")
+    partes.append(f"[p1][logo_rojo]overlay=x={xr}-w/2:y={ly}-h/2[p2]")
+
+    textos = [
+        t.drawtext(f"MAPA {enc.mapa}", TITULO, T["mapa_tam"], "(w-text_w)/2", str(T["mapa_y"]),
+                   borde=T["mapa_borde"], sombra=True),
+        t.drawtext("VS", TITULO, T["vs_tam"], "(w-text_w)/2", f"{ly}-text_h/2", borde=T["vs_borde"]),
+    ]
+    if enc.fase:
+        textos.append(t.drawtext(enc.fase.upper(), TEXTO, T["fase_tam"], "(w-text_w)/2",
+                                 str(T["fase_y"]), color=ACENTO, sombra=True))
+    dos_renglones = False
+    for nombre, x in ((enc.azul, xa), (enc.rojo, xr)):
+        lineas, tam = ajustar_texto(nombre, TITULO, T["nombre_tam"], T["nombre_ancho"], T["nombre_min"])
+        dos_renglones = dos_renglones or len(lineas) > 1
+        for i, linea in enumerate(lineas):
+            textos.append(t.drawtext(linea, TITULO, tam, f"{x}-text_w/2",
+                                     str(T["nombre_y"] + round(i * tam * 1.12)),
+                                     borde=T["nombre_borde"], sombra=True))
+    # En la placa no hay lugar para la serie si un nombre ocupa dos renglones.
+    if enc.serie_marcador and not (dos_renglones and T is P):
+        serie = " · ".join(x for x in (f"Serie {enc.serie_marcador}", _fecha(enc.fecha)) if x)
+        textos.append(t.drawtext(serie, TEXTO, T["serie_tam"], "(w-text_w)/2", str(T["serie_y"]),
+                                 sombra=True))
+    partes.append("[p2]" + ",".join(textos) + "[tarjeta]")
+    return entradas, partes, {"fondo": "imagen" if usa_fondo else "degradado", "logos": fuentes_logo}
+
+
+def _limpiar(t: _Textos) -> None:
+    for i in range(1, t.n + 1):
+        try:
+            os.remove(os.path.join(t.carpeta, f"portada_txt_{i}.txt"))
+        except OSError:
+            pass
 
 
 def render_portada(enc: Encuentro, carpeta: str, fondo: str | None = FONDO) -> dict:
@@ -213,82 +297,60 @@ def render_portada(enc: Encuentro, carpeta: str, fondo: str | None = FONDO) -> d
     calidad). Devuelve {png, jpg, fondo: "imagen"|"degradado", logos: {azul, rojo}}."""
     os.makedirs(carpeta, exist_ok=True)
     t = _Textos(carpeta)
-    W, H = V["W"], V["H"]
-    cmd = [config.FFMPEG_PATH, "-y", "-v", "error"]
-    entradas, partes = 0, []
-    usa_fondo = bool(fondo and os.path.isfile(fondo) and ffmpeg_runner.probe_resolution(fondo))
-    if usa_fondo:
-        cmd += ["-i", fondo]
-        # Un velo oscuro leve: el texto se lee sobre cualquier fondo.
-        partes.append(f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-                      "format=rgba,drawbox=c=black@0.28:t=fill[fondo]")
-    else:
-        c0, c1 = DEGRADADO
-        cmd += ["-f", "lavfi", "-i", f"gradients=s={W}x{H}:c0={c0}:c1={c1}:x0=0:y0=0:x1={W}:y1={H}"
-                                      ":nb_colors=2:speed=0:d=1:r=1"]
-        partes.append("[0:v]format=rgba[fondo]")
-    entradas += 1
-
-    lado = V["logo_lado"]
-    fuentes_logo = {}
-    for lado_eq, path, codigo in (("azul", enc.logo_azul, enc.codigo_azul),
-                                  ("rojo", enc.logo_rojo, enc.codigo_rojo)):
-        if path and os.path.isfile(path):
-            cmd += ["-i", path]
-            partes.append(f"[{entradas}:v]scale={lado}:{lado}:force_original_aspect_ratio=decrease,"
-                          f"format=rgba[logo_{lado_eq}]")
-            entradas += 1
-            fuentes_logo[lado_eq] = "logo"
-        else:
-            partes.append(_logo_respaldo(codigo, lado, t, f"[logo_{lado_eq}]"))
-            fuentes_logo[lado_eq] = "codigo"
-    ly = V["logos_y"]
-    xa, xr = V["logo_x"]
-    partes.append(f"[fondo][logo_azul]overlay=x={xa}-w/2:y={ly}-h/2[p1]")
-    partes.append(f"[p1][logo_rojo]overlay=x={xr}-w/2:y={ly}-h/2[p2]")
-
-    textos = [
-        t.drawtext(f"MAPA {enc.mapa}", TITULO, V["mapa_tam"], "(w-text_w)/2", str(V["mapa_y"]),
-                   borde=10, sombra=True),
-        t.drawtext("VS", TITULO, V["vs_tam"], "(w-text_w)/2", f"{ly}-text_h/2", borde=8),
-    ]
-    if enc.fase:
-        textos.append(t.drawtext(enc.fase.upper(), TEXTO, V["fase_tam"], "(w-text_w)/2",
-                                 str(V["fase_y"]), color=ACENTO, sombra=True))
-    for nombre, x in ((enc.azul, xa), (enc.rojo, xr)):
-        lineas, tam = ajustar_texto(nombre, TITULO, V["nombre_tam"], V["nombre_ancho"], V["nombre_min"])
-        for i, linea in enumerate(lineas):
-            textos.append(t.drawtext(linea, TITULO, tam, f"{x}-text_w/2",
-                                     str(V["nombre_y"] + round(i * tam * 1.12)), borde=5, sombra=True))
-    if enc.serie_marcador:
-        serie = " · ".join(x for x in (f"Serie {enc.serie_marcador}", _fecha(enc.fecha)) if x)
-        textos.append(t.drawtext(serie, TEXTO, V["serie_tam"], "(w-text_w)/2", str(V["serie_y"]),
-                                 sombra=True))
-    partes.append("[p2]" + ",".join(textos) + "[p3]")
-
-    final = "[p3]"
+    entradas, partes, info = _componer(enc, V, t, fondo)
+    cmd = [config.FFMPEG_PATH, "-y", "-v", "error", *entradas]
+    final = "[tarjeta]"
     if enc.marca and os.path.isfile(enc.marca):
+        n = entradas.count("-i")
         cmd += ["-i", enc.marca]
         # Marca 4xl: chica, translúcida, sin placa. Tiene que pasar desapercibida.
-        partes.append(f"[{entradas}:v]scale=-2:{V['marca_alto']},format=rgba,colorchannelmixer=aa=0.4[marca]")
-        partes.append(f"[p3][marca]overlay=W-w-{V['marca_x']}:{V['marca_y']}-h[p4]")
-        final = "[p4]"
-        entradas += 1
+        partes.append(f"[{n}:v]scale=-2:{V['marca_alto']},format=rgba,colorchannelmixer=aa=0.4[marca]")
+        partes.append(f"[tarjeta][marca]overlay=W-w-{V['marca_x']}:{V['marca_y']}-h[con_marca]")
+        final = "[con_marca]"
     partes.append(f"{final}format=rgb24[out]")
-
     png = os.path.join(carpeta, "portada.png")
     jpg = os.path.join(carpeta, "portada.jpg")
-    ffmpeg_runner.capture(cmd + ["-filter_complex", ";".join(partes), "-map", "[out]",
-                                 "-frames:v", "1", png], cwd=config.BASE_DIR)
+    try:
+        ffmpeg_runner.capture(cmd + ["-filter_complex", ";".join(partes), "-map", "[out]",
+                                     "-frames:v", "1", png], cwd=config.BASE_DIR)
+    finally:
+        _limpiar(t)
     ffmpeg_runner.capture([config.FFMPEG_PATH, "-y", "-v", "error", "-i", png,
                            "-q:v", "2", "-frames:v", "1", jpg])
-    for i in range(1, t.n + 1):
-        try:
-            os.remove(os.path.join(carpeta, f"portada_txt_{i}.txt"))
-        except OSError:
-            pass
-    return {"png": png, "jpg": jpg, "fondo": "imagen" if usa_fondo else "degradado",
-            "logos": fuentes_logo}
+    return {"png": png, "jpg": jpg, **info}
+
+
+def render_placa(enc: Encuentro, carpeta: str, fondo: str | None = FONDO) -> str:
+    """La placa del modo "encima" en `carpeta`/placa.png (rgba): la plantilla en
+    horizontal con esquinas redondeadas, borde blanco y sombra, como la placa
+    del HUD. El PNG incluye el margen de la sombra; se centra tal cual."""
+    from modules.vertical_convert.processor import _rounded_mask_expr
+    os.makedirs(carpeta, exist_ok=True)
+    t = _Textos(carpeta)
+    entradas, partes, _ = _componer(enc, P, t, fondo)
+    W, H, b, m = P["W"], P["H"], PLACA_BORDE, PLACA_SOMBRA
+    bw, bh = W + 2 * b, H + 2 * b
+    partes += [
+        f"color=c=white:s={W}x{H}:d=1,format=gray,geq=lum='{_rounded_mask_expr(PLACA_RADIO)}'[m_tarjeta]",
+        "[tarjeta][m_tarjeta]alphamerge[tarjeta_r]",
+        f"color=c=white:s={bw}x{bh}:d=1,format=rgba[borde_c]",
+        f"color=c=white:s={bw}x{bh}:d=1,format=gray,geq=lum='{_rounded_mask_expr(PLACA_RADIO + b)}'[m_borde]",
+        "[borde_c][m_borde]alphamerge[borde]",
+        f"[borde][tarjeta_r]overlay={b}:{b},split[placa_a][placa_b]",
+        f"[placa_b]geq=r=0:g=0:b=0:a='0.55*alpha(X,Y)',pad={bw + 2 * m}:{bh + 2 * m}:{m}:{m}:color=black@0,"
+        f"gblur=sigma=12[sombra]",
+        f"color=c=black@0:s={bw + 2 * m}x{bh + 2 * m}:d=1,format=rgba[lienzo]",
+        f"[lienzo][sombra]overlay=0:{PLACA_SOMBRA_DY}[con_sombra]",
+        f"[con_sombra][placa_a]overlay={m}:{m},format=rgba[out]",
+    ]
+    png = os.path.join(carpeta, "placa.png")
+    try:
+        ffmpeg_runner.capture([config.FFMPEG_PATH, "-y", "-v", "error", *entradas,
+                               "-filter_complex", ";".join(partes), "-map", "[out]",
+                               "-frames:v", "1", png], cwd=config.BASE_DIR)
+    finally:
+        _limpiar(t)
+    return png
 
 
 def guardar_portada(info: dict, destino_dir: str) -> str:
@@ -323,6 +385,19 @@ def preparar_voz(url: str, carpeta: str) -> Voz:
     if dur > MAX_VOZ_S:
         raise RuntimeError(f"La voz de la intro dura {dur:.1f} s; máximo {MAX_VOZ_S:g}.")
     return Voz(path, round(dur, 3), round(dur + COLA_S, 3))
+
+
+def modo_para_clip1(D: float, dur_clip: float, t_primera_kill: float) -> tuple[str, str | None]:
+    """¿La intro puede ir "encima" del clip 1? Si no, cae a "aparte" (y el motivo).
+
+    - el clip tiene que durar al menos D + 2 s;
+    - su primera kill tiene que caer después de que la placa se fue (D + 0.5 s):
+      si no, la placa la taparía."""
+    if dur_clip < D + 2:
+        return "aparte", f"el clip 1 dura {dur_clip:.1f} s y la intro {D:.1f} s"
+    if t_primera_kill < D + 0.5:
+        return "aparte", f"la primera kill del clip 1 cae a los {t_primera_kill:.1f} s y la placa la taparía"
+    return "encima", None
 
 
 def sting() -> str | None:

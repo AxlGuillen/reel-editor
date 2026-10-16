@@ -253,5 +253,94 @@ class IntroAparte(unittest.TestCase):
             I.preparar_voz(Path(rota).as_uri(), os.path.join(d, "x2"))
 
 
+class IntroEncima(unittest.TestCase):
+    """La intro dentro del encode del clip 1: placa + voz + ducking del juego."""
+
+    @classmethod
+    def setUpClass(cls):
+        import numpy as np  # noqa: F401  (lo usan los tests de frames)
+        from modules.competitivo import layout
+        cls.L = layout
+        cls.tmp = tempfile.TemporaryDirectory()
+        d = cls.tmp.name
+        cls.voz_src, cls.tramo = _sinteticos(d, voz_s=2.5)
+        # Voz en silencio para medir el ducking del juego sin que la voz sume.
+        cls.silencio = os.path.join(d, "silencio.mp3")
+        subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        "anullsrc=r=48000:cl=stereo", "-t", "2.5", "-c:a", "libmp3lame", cls.silencio],
+                       check=True)
+        enc = I.Encuentro(mapa=1, codigo_azul="KC", codigo_rojo="C9")
+        cls.placa = I.render_placa(enc, os.path.join(d, "placa"), fondo=None)
+        cls.D = 2.9
+        cls.limpio = os.path.join(d, "limpio.mp4")
+        ffmpeg_runner.capture(layout.build_command(cls.tramo, cls.limpio, 1.0, 8.0, layout.CAMARA_Y_DEFECTO))
+        cls.con = os.path.join(d, "con_intro.mp4")
+        ffmpeg_runner.capture(layout.build_command(
+            cls.tramo, cls.con, 1.0, 8.0, layout.CAMARA_Y_DEFECTO,
+            intro=layout.IntroEncima(placa=cls.placa, voz=cls.silencio, D=cls.D)))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_comando(self):
+        L = self.L
+        cmd = L.build_command(self.tramo, "x.mp4", 1.0, 8.0, L.CAMARA_Y_DEFECTO,
+                              intro=L.IntroEncima(placa=self.placa, voz=self.voz_src, D=3.4, sting="s.mp3"))
+        self.assertIn(self.placa, cmd)
+        self.assertEqual(cmd[cmd.index(self.placa) - 7:cmd.index(self.placa)],
+                         ["-loop", "1", "-framerate", "60", "-t", "3.400", "-i"])
+        self.assertIn(self.voz_src, cmd)
+        self.assertIn("s.mp3", cmd)
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        self.assertIn("enable='between(t,0,3.400)'", fc)
+        self.assertIn("volume='0.25+0.75*min(max((t-3.400)/0.4,0),1)':eval=frame", fc)
+        self.assertIn("amix=inputs=3:normalize=0", fc)
+        self.assertEqual(cmd[cmd.index("-map", cmd.index("-map") + 1) + 1], "[aout]")
+        # sin intro: el comando de siempre
+        cmd = L.build_command(self.tramo, "x.mp4", 1.0, 8.0, L.CAMARA_Y_DEFECTO)
+        self.assertNotIn("-loop", cmd)
+        self.assertIn("0:a?", cmd)
+
+    def _frame(self, path, t):
+        import numpy as np
+        raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{t}", "-i", path,
+                                     "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+        return np.frombuffer(raw, np.uint8).reshape(1920, 1080).astype(float)
+
+    def test_placa_durante_D_y_despues_no(self):
+        g = self.L.geometria(1.3)
+        y0 = self.L.ARRIBA_H + g.extra_arriba
+        zona = (slice(y0 + 200, y0 + g.juego_h - 200), slice(200, 880))   # centro del gameplay
+        durante = abs(self._frame(self.con, 1.2)[zona] - self._frame(self.limpio, 1.2)[zona]).mean()
+        despues = abs(self._frame(self.con, self.D + 0.8)[zona] - self._frame(self.limpio, self.D + 0.8)[zona]).mean()
+        self.assertGreater(durante, 20)          # la placa tapa el gameplay
+        self.assertLess(despues, 3)              # se fue: igual al clip limpio
+        self.assertAlmostEqual(_ffprobe(self.con)["duracion"], _ffprobe(self.limpio)["duracion"], delta=0.05)
+
+    def _rms(self, path, ss, dur):
+        import re
+        err = subprocess.run([config.FFMPEG_PATH, "-v", "info", "-ss", f"{ss}", "-t", f"{dur}", "-i", path,
+                              "-af", "astats=measure_overall=RMS_level:measure_perchannel=none",
+                              "-f", "null", "-"], capture_output=True, text=True).stderr
+        return float(re.findall(r"RMS level dB: (-?[\d.]+)", err)[-1])
+
+    def test_ducking_baja_el_juego_12_db(self):
+        durante = self._rms(self.con, 0.5, self.D - 1.0)
+        despues = self._rms(self.con, self.D + 1.0, 2.0)
+        limpio = self._rms(self.limpio, self.D + 1.0, 2.0)
+        self.assertAlmostEqual(durante - despues, -12.04, delta=1.0)   # 25 % = −12 dB
+        self.assertAlmostEqual(despues, limpio, delta=0.5)             # después, el juego al 100 %
+
+    def test_caida_a_aparte(self):
+        self.assertEqual(I.modo_para_clip1(4.0, 20.0, 8.0), ("encima", None))
+        modo, motivo = I.modo_para_clip1(4.0, 5.5, 5.0)        # clip corto (< D + 2)
+        self.assertEqual(modo, "aparte")
+        self.assertIn("dura 5.5 s", motivo)
+        modo, motivo = I.modo_para_clip1(4.0, 20.0, 4.2)       # la placa taparía la kill
+        self.assertEqual(modo, "aparte")
+        self.assertIn("taparía", motivo)
+
+
 if __name__ == "__main__":
     unittest.main()

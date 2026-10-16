@@ -235,24 +235,32 @@ def finish(job_id: str, fp: FinishParams) -> None:
         os.makedirs(temp, exist_ok=True)
         # Portada (siempre) y voz de la intro (si hay link y el modo no es off),
         # ANTES de bajar nada: un link roto o una voz larga fallan enseguida.
-        portada = intro.render_portada(_encuentro(fp, sesion), temp)
+        enc = _encuentro(fp, sesion)
+        portada = intro.render_portada(enc, temp)
         voz = None
         if fp.intro_modo != "off" and fp.intro_audio_url:
             job_manager.update_job(job_id, stage="Bajando la voz de la intro…")
             voz = intro.preparar_voz(fp.intro_audio_url, temp)
         modo_intro = fp.intro_modo if voz else "off"
-        if modo_intro == "encima":
-            modo_intro = "aparte"        # la placa sobre el clip 1 llega en la fase 3
+        intro_info = {"modo_pedido": fp.intro_modo, "modo_usado": modo_intro,
+                      "duracion_s": voz.D if voz else None, "motivo": None}
         salida = _carpeta_salida(sesion["partidas"])
         intro.guardar_portada(portada, salida)
         marca = os.path.join(config.WATERMARKS_FOLDER, fp.watermark) if fp.watermark else None
         intro_mp4 = None
-        if modo_intro == "aparte":
+        placa = intro.render_placa(enc, temp) if modo_intro == "encima" else None
+
+        def render_aparte():
             # Segmento propio, primero en el resumen. Los clips sueltos no llevan intro.
             job_manager.update_job(job_id, stage="Renderizando la intro…")
-            intro_mp4 = os.path.join(temp, "intro.mp4")
-            ffmpeg_runner.run(intro.build_intro_aparte(portada["png"], voz, intro_mp4), job_id,
+            path = os.path.join(temp, "intro.mp4")
+            ffmpeg_runner.run(intro.build_intro_aparte(portada["png"], voz, path), job_id,
                               total_duration=voz.D, progress_range=(1, 5))
+            job_manager.update_job(job_id, status="processing")
+            return path
+
+        if modo_intro == "aparte":
+            intro_mp4 = render_aparte()
         job_manager.update_job(job_id, status="processing", stage="Bajando los tramos del VOD…")
 
         def ventana(c):
@@ -263,6 +271,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
 
         n = len(elegidos)
         hechos = []
+        en_resumen: list[str] = []     # lo que entra al resumen (el clip 1 puede llevar la intro)
         with ThreadPoolExecutor(max_workers=3) as ex:
             futuros = [ex.submit(fuente.bajar_tramo, params.vod_url, *ventana(c),
                                  os.path.join(temp, f"tramo_{k:02d}")) for k, c in enumerate(elegidos, 1)]
@@ -288,12 +297,33 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     raise RuntimeError(f"El clip «{c['titulo']}» cae casi entero fuera del vivo "
                                        "(repetición o pausa). Quitalo o corregí el ancla.")
                 archivo = f"clip_{k:02d}.mp4"
+                if k == 1 and modo_intro == "encima":
+                    modo_intro, motivo = intro.modo_para_clip1(voz.D, dur, t_kill - an.vivo_desde)
+                    if modo_intro == "aparte":
+                        intro_info.update(modo_usado="aparte", motivo=motivo)
+                        intro_mp4 = render_aparte()
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
+                render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
                 cmd = layout.build_command(tramo, os.path.join(salida, archivo), an.vivo_desde, dur,
-                                           an.camara_y, zoom=fp.zoom, color=fp.color, marca_path=marca,
-                                           marca_alto=fp.marca_alto)
-                lo = 5 + int(85 * (k - 1) / n)
-                ffmpeg_runner.run(cmd, job_id, total_duration=dur, progress_range=(lo, 5 + int(85 * k / n)))
+                                           an.camara_y, **render)
+                lo, hi = 5 + int(85 * (k - 1) / n), 5 + int(85 * k / n)
+                con_intro = k == 1 and modo_intro == "encima"
+                ffmpeg_runner.run(cmd, job_id, total_duration=dur,
+                                  progress_range=(lo, (lo + hi) // 2 if con_intro else hi))
+                en_resumen.append(os.path.join(salida, archivo))
+                if con_intro:
+                    # El clip suelto queda limpio; la versión con la intro encima es
+                    # solo para el resumen.
+                    job_manager.update_job(job_id, status="processing",
+                                           stage="Clip 1: renderizando con la intro encima…")
+                    con = os.path.join(temp, "clip_01_intro.mp4")
+                    cmd = layout.build_command(
+                        tramo, con, an.vivo_desde, dur, an.camara_y, **render,
+                        intro=layout.IntroEncima(placa=placa, voz=voz.path, D=voz.D, sting=intro.sting(),
+                                                 sting_vol=intro.STING_VOL),
+                        con_audio=ffmpeg_runner.has_audio_stream(tramo))
+                    ffmpeg_runner.run(cmd, job_id, total_duration=dur, progress_range=((lo + hi) // 2, hi))
+                    en_resumen[-1] = con
                 job_manager.update_job(job_id, status="processing")
                 hechos.append({
                     "archivo": archivo, "id": c["id"], "titulo": c["titulo"], "partida": c["partida"],
@@ -306,7 +336,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
 
         job_manager.update_job(job_id, stage="Uniendo el resumen…", progress=92)
         lista = os.path.join(temp, "lista.txt")
-        partes = ([intro_mp4] if intro_mp4 else []) + [os.path.join(salida, h["archivo"]) for h in hechos]
+        partes = ([intro_mp4] if intro_mp4 else []) + en_resumen
         with open(lista, "w", encoding="utf-8") as fh:
             for ruta in partes:
                 ruta = ruta.replace("\\", "/").replace("'", "'\\''")

@@ -63,6 +63,28 @@ MARCA_MARGEN = 14                     # distancia del watermark al borde derecho
 # la intro y los clips tienen que llevar exactamente las mismas etiquetas.
 SALIDA = "format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
 
+# Intro "encima" (la placa sobre el gameplay del clip 1, ver intro.py).
+DUCK_VOL = 0.25           # el audio del juego mientras habla la voz
+DUCK_RAMPA = 0.4          # y vuelve al 100 % con esta rampa en t = D
+PLACA_FADE_IN, PLACA_FADE_OUT = 0.2, 0.3
+
+
+@dataclass
+class IntroEncima:
+    placa: str            # placa.png (rgba, con el margen de la sombra)
+    voz: str              # audio de la voz
+    D: float              # duración de la intro: voz + cola
+    sting: str | None = None
+    sting_vol: float = 0.35
+
+
+def ducking(D: float) -> str:
+    """volume con eval=frame: DUCK_VOL hasta D y rampa lineal al 100 %, la
+    misma idea que el ducking de la música en hook_reel."""
+    return (f"volume='{DUCK_VOL}+{1 - DUCK_VOL}*min(max((t-{D:.3f})/{DUCK_RAMPA},0),1)'"
+            ":eval=frame")
+
+
 COLOR = {
     "off": "",
     "vivo": "eq=contrast=1.08:saturation=1.25:gamma=0.98,unsharp=5:5:0.6",
@@ -301,9 +323,14 @@ def recorte_marca(png: str) -> tuple[int, int, int, int] | None:
 # --- Filtro -----------------------------------------------------------------------
 def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
                          marca: tuple[int, int, int, int] | None = None,
-                         marca_alto: int = MARCA_ALTO_DEFECTO) -> str:
+                         marca_alto: int = MARCA_ALTO_DEFECTO,
+                         placa_idx: int | None = None, D: float | None = None) -> str:
     """filter_complex del layout: entra [0:v] (1920x1080) y, si hay watermark,
-    [1:v] (el PNG); sale [vout] 1080x1920 yuv420p."""
+    [1:v] (el PNG); sale [vout] 1080x1920 yuv420p.
+
+    `placa_idx`/`D`: intro "encima": la placa (entrada `placa_idx`, imagen en
+    loop de largo D) va centrada sobre el gameplay durante [0, D], entra con
+    un fade de 0.2 s y sale con otro de 0.3 s."""
     g = geometria(zoom)
     cw, ch, cx, cy = g.recorte
     arriba_h = ARRIBA_H + g.extra_arriba
@@ -336,28 +363,71 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
         f"[cam_b]scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos[cam_frente]",
         # La cámara sube pegada al marcador; lo que sobra queda abajo.
         "[cam_fondo][cam_frente]overlay=(W-w)/2:0,format=yuv420p,setsar=1[camara]",
-        "[arriba][juego][marcador][camara]vstack=4" + ("[pila]" if marca else f",{SALIDA}[vout]"),
+        "[arriba][juego][marcador][camara]vstack=4[pila]",
     ]
+    pila = "[pila]"
+    if placa_idx is not None and D:
+        cy = ARRIBA_H + g.extra_arriba + g.juego_h // 2
+        partes += [
+            f"[{placa_idx}:v]format=rgba,fade=t=in:st=0:d={PLACA_FADE_IN}:alpha=1,"
+            f"fade=t=out:st={max(0.0, D - PLACA_FADE_OUT):.3f}:d={PLACA_FADE_OUT}:alpha=1[placa]",
+            f"[pila][placa]overlay=x=(W-w)/2:y={cy}-h/2:enable='between(t,0,{D:.3f})'"
+            ":eof_action=pass[pila_intro]",
+        ]
+        pila = "[pila_intro]"
     if marca:
         pw, ph, px, py = marca
         partes += [
             f"[1:v]crop={pw}:{ph}:{px}:{py},scale=-2:{marca_alto}:flags=lanczos,format=rgba[marca]",
-            f"[pila][marca]overlay=W-w-{MARCA_MARGEN}:H-h,{SALIDA}[vout]",
+            f"{pila}[marca]overlay=W-w-{MARCA_MARGEN}:H-h,{SALIDA}[vout]",
         ]
+    else:
+        partes.append(f"{pila}{SALIDA}[vout]")
     return ";".join(partes)
 
 
 def build_command(src: str, out: str, desde: float, duracion: float, camara_y: int,
                   zoom: float = 1.3, color: str = "vivo", marca_path: str | None = None,
-                  marca_alto: int = MARCA_ALTO_DEFECTO) -> list[str]:
-    """Un solo encode por clip: recorte exacto del tramo + layout + watermark."""
+                  marca_alto: int = MARCA_ALTO_DEFECTO, intro: IntroEncima | None = None,
+                  con_audio: bool = True) -> list[str]:
+    """Un solo encode por clip: recorte exacto del tramo + layout + watermark.
+
+    `intro`: la intro "encima" del clip 1 (placa + voz + ducking del juego).
+    `con_audio`: si el tramo trae audio (sin él, con intro suena solo la voz)."""
     marca = recorte_marca(marca_path) if marca_path else None
     cmd = [config.FFMPEG_PATH, "-y", "-ss", f"{desde:.3f}", "-t", f"{duracion:.3f}", "-i", src]
+    idx = 1
     if marca:
         cmd += ["-i", marca_path]
+        idx += 1
+    filtros = None
+    amap = "0:a?"
+    if intro:
+        D = intro.D
+        placa_idx, voz_idx = idx, idx + 1
+        cmd += ["-loop", "1", "-framerate", "60", "-t", f"{D:.3f}", "-i", intro.placa, "-i", intro.voz]
+        idx += 2
+        fmt = "aresample=48000,aformat=channel_layouts=stereo"
+        audio, fuentes = [], []
+        if con_audio:
+            audio.append(f"[0:a]{fmt},{ducking(D)}[juego]")
+            fuentes.append("[juego]")
+        audio.append(f"[{voz_idx}:a]{fmt}[voz]")
+        fuentes.append("[voz]")
+        if intro.sting:
+            cmd += ["-i", intro.sting]
+            audio.append(f"[{idx}:a]{fmt},volume={intro.sting_vol},atrim=0:{D:.3f}[sting]")
+            fuentes.append("[sting]")
+            idx += 1
+        largo = "first" if con_audio else "longest"
+        audio.append(f"{''.join(fuentes)}amix=inputs={len(fuentes)}:normalize=0:duration={largo},"
+                     f"apad,atrim=0:{duracion:.3f},alimiter=limit=0.95[aout]")
+        filtros = build_filter_complex(camara_y, zoom, color, marca, marca_alto,
+                                       placa_idx=placa_idx, D=D) + ";" + ";".join(audio)
+        amap = "[aout]"
     cmd += [
-        "-filter_complex", build_filter_complex(camara_y, zoom, color, marca, marca_alto),
-        "-map", "[vout]", "-map", "0:a?",
+        "-filter_complex", filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto),
+        "-map", "[vout]", "-map", amap,
         "-r", "60",
         *ffmpeg_runner.video_encode_flags(),
         # Tope de bitrate: con cq 18 una imagen ampliada y con nitidez extra
