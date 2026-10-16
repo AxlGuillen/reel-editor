@@ -31,7 +31,7 @@ from modules.competitivo import engine
 
 # --- Reglas -------------------------------------------------------------------
 OBJ_LABEL_S = 30         # objetivo grande ≤ esto después de la pelea → etiqueta + bonus
-CIERRE_S = 40            # nexo ≤ esto después de la última kill → la pelea cierra la partida
+CIERRE_S = 40            # nexo ≤ esto después de la pelea de cierre → etiqueta "→ nexo"
 SWING_S = 20             # el oro "después" se mide esto después de la última kill
 LAG_JUGADOR_S = 5        # las kills por jugador llegan unos segundos tarde vs el total
 REMONTADA_ORO = 2000     # el ganador iba abajo por al menos esto antes de la pelea
@@ -101,7 +101,7 @@ class Pelea:
     reloj: str                        # reloj del feed en la última kill
     primera_sangre: bool
     objetivo: str | None              # "barón" / "anciano" / "inhibidor" / "nexo"
-    cierra: bool
+    cierra: bool                      # la última pelea que GANÓ el ganador de la partida
     multikill: str | None             # "triple de Blaber"
     oro_antes: int                    # ventaja del ganador antes de la pelea
     oro_despues: int                  # ventaja del ganador SWING_S después
@@ -272,8 +272,30 @@ def _multikill(p: Partida, i_antes: int, i_ultima: int) -> tuple[str, int] | Non
     return f"{MULTIKILL[min(n, 5)][0]} de {nombre}", n
 
 
+def ganador_partida(p: Partida) -> str | None:
+    """Quién ganó la partida (None si el feed no la muestra terminada).
+
+    El que tiró el ÚLTIMO edificio (torre o inhibidor) antes del final: las
+    torres del nexo caen siempre justo antes que el nexo. Si no hay edificios,
+    o si los dos tiraron uno en el mismo frame, el de más oro al final (lo
+    que hace el motor, "aproximado")."""
+    fin_i = next((i for i, f in enumerate(p.frames) if f.state == "finished"), None)
+    if fin_i is None:
+        return None
+    ultimo: dict[str, int] = {}
+    for i in range(1, fin_i + 1):
+        a, b = p.frames[i - 1], p.frames[i]
+        for code, sa, sb in ((p.azul, a.blue, b.blue), (p.rojo, a.red, b.red)):
+            if sb.towers > sa.towers or sb.inhib > sa.inhib:
+                ultimo[code] = i
+    if ultimo and len(set(ultimo.values())) == len(ultimo):      # no empataron en el mismo frame
+        return max(ultimo, key=ultimo.get)
+    fin = next((ev for ev in p.eventos if ev.tipo == "fin"), None)
+    return fin.equipo if fin else None
+
+
 def _armar(p: Partida, grupo: list[Kill], reglas: Reglas, primera_sangre_i: int,
-           ultima_kill_i: int) -> Pelea:
+           cierra: bool = False) -> Pelea:
     i0, i1 = grupo[0].i, grupo[-1].i
     marcador: dict[str, int] = {}
     for k in grupo:
@@ -285,20 +307,20 @@ def _armar(p: Partida, grupo: list[Kill], reglas: Reglas, primera_sangre_i: int,
     # Objetivos que caen después de la pelea: solo etiqueta y bonus. Un
     # objetivo pasó entre el frame anterior al suyo y el suyo: se compara el
     # momento más temprano posible (con el fixture, frames cada ~9.5 s).
-    objetivo, cierra = None, False
+    # `cierra` lo decide detectar_peleas (la última pelea que ganó el ganador
+    # de la partida); "→ nexo" solo si además el nexo cae enseguida.
+    objetivo, nexo_cerca = None, False
     for ev in p.eventos:
         ev_i = p.indice(ev.ts)
         temprano = p.frames[max(ev_i - 1, 0)].ts
         dt = (temprano - ultima).total_seconds()
-        # Solo la ÚLTIMA pelea de la partida puede cerrarla (un pick 30 s
-        # antes de la pelea final no "cierra" nada aunque el nexo caiga cerca).
-        if ev.tipo == "fin" and dt <= CIERRE_S and ev.ts >= ultima and i1 == ultima_kill_i:
-            cierra = True
+        if ev.tipo == "fin" and dt <= CIERRE_S and ev.ts >= ultima:
+            nexo_cerca = True
         elif ev.tipo in OBJETIVOS_GRANDES and 0 <= dt <= OBJ_LABEL_S and ev.ts > ultima and not objetivo:
             objetivo = OBJETIVOS_GRANDES[ev.tipo]
             if ev.equipo != ganador:
                 objetivo += f" ({ev.equipo})"
-    if cierra and not objetivo:
+    if cierra and nexo_cerca and not objetivo:
         objetivo = "nexo"
 
     mk = _multikill(p, i0 - 1, p.indice(ultima + timedelta(seconds=LAG_JUGADOR_S)))
@@ -348,8 +370,8 @@ def detectar_peleas(p: Partida, reglas: Reglas | None = None) -> list[Pelea]:
     if not kills:
         return []
     grupos = _agrupar(p, kills)
-    fb, ultima_i = kills[0].i, kills[-1].i
-    peleas = [_armar(p, g, reglas, fb, ultima_i) for g in grupos]
+    fb = kills[0].i
+    peleas = [_armar(p, g, reglas, fb) for g in grupos]
     for pe in peleas:
         pe.elegible = _elegible(pe, reglas)
 
@@ -360,10 +382,20 @@ def detectar_peleas(p: Partida, reglas: Reglas | None = None) -> list[Pelea]:
         prev = out[-1] if out and out[-1].elegible else None
         if (pe.elegible and prev is not None
                 and (pe.clip_inicio - prev.clip_fin).total_seconds() <= engine.MERGE_GAP_S):
-            out[-1] = _armar(p, prev.kills + pe.kills, reglas, fb, ultima_i)
+            out[-1] = _armar(p, prev.kills + pe.kills, reglas, fb)
             out[-1].elegible = True
         else:
             out.append(pe)
+
+    # La pelea de cierre: la ÚLTIMA que ganó el equipo que ganó la partida (no
+    # la última antes del nexo, que a veces la gana el que pierde: una
+    # escaramuza desesperada en la base). Se rearma con el bonus de cierre.
+    ganador = ganador_partida(p)
+    i = next((i for i in range(len(out) - 1, -1, -1) if out[i].ganador == ganador), None)
+    if ganador and i is not None:
+        elegible = out[i].elegible
+        out[i] = _armar(p, out[i].kills, reglas, fb, cierra=True)
+        out[i].elegible = elegible
     return out
 
 

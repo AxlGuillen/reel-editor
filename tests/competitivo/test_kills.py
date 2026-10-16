@@ -153,6 +153,10 @@ class FixtureKCvsC9(unittest.TestCase):
     def test_solo_la_ultima_pelea_cierra(self):
         self.assertEqual([p.reloj for p in self.peleas if p.cierra], ["34:50"])
 
+    def test_ganador_de_la_partida(self):
+        # C9 tira las torres del nexo (18:51) justo antes del final.
+        self.assertEqual(K.ganador_partida(self.partida), "C9")
+
 
 # --- Partidas sintéticas -------------------------------------------------------
 T0 = datetime(2026, 10, 15, 18, 0, tzinfo=timezone.utc)
@@ -227,6 +231,67 @@ class Duracion(unittest.TestCase):
         self.assertEqual(clips, sorted(clips, key=lambda c: c.clip_inicio))
         for a, b in zip(clips, clips[1:]):
             self.assertLessEqual(a.clip_fin, b.clip_inicio)        # sin encimarse
+
+
+def _con_torres(p, torres):
+    """`torres`: lista de (segundo, equipo): ese equipo tira una torre ahí."""
+    for s, equipo in torres:
+        for f in p.frames[s:]:
+            if equipo == AZUL:
+                f.blue.towers += 1
+            else:
+                f.red.towers += 1
+    return K.Partida(p.game_id, p.azul, p.rojo, p.frames, p.kills_jugador, p.nombres)
+
+
+class PeleaDeCierre(unittest.TestCase):
+    """La que entra forzada es la última pelea que GANÓ el ganador de la
+    partida, no la última antes del nexo."""
+
+    def setUp(self):
+        # C9 (rojo) gana 3-0 a los 27:00 y tira las torres del nexo; KC gana
+        # una escaramuza 2-0 en su base a los 29:40, 20 s antes del nexo.
+        base = _partida([(1620, ROJO, 6), (1622, ROJO, 7), (1625, ROJO, 8),
+                         (1780, AZUL, 1), (1782, AZUL, 2)], minutos=30)
+        self.p = _con_torres(base, [(900, AZUL), (1700, ROJO), (1790, ROJO), (1795, ROJO)])
+
+    def test_cierra_la_ultima_que_gano_el_ganador(self):
+        self.assertEqual(K.ganador_partida(self.p), ROJO)
+        peleas = K.detectar_peleas(self.p)
+        cierre = [pe for pe in peleas if pe.cierra]
+        self.assertEqual([(pe.ganador, pe.reloj) for pe in cierre], [(ROJO, "27:05")])
+        self.assertEqual(cierre[0].desglose["cierre"], 30)
+        self.assertIsNone(cierre[0].objetivo)              # el nexo cae 3 min después: sin "→ nexo"
+        escaramuza = peleas[-1]
+        self.assertEqual((escaramuza.ganador, escaramuza.cierra), (AZUL, False))
+        self.assertEqual(escaramuza.desglose["cierre"], 0)
+        clips = K.seleccionar([peleas])
+        self.assertEqual([c.reloj for c in clips if c.forzada], ["27:05"])
+
+    def test_entra_aunque_no_pase_el_filtro(self):
+        reglas = K.Reglas(min_kills=5, duracion_min_s=0)
+        clips = K.seleccionar([K.detectar_peleas(self.p, reglas)], reglas)
+        self.assertEqual([(c.reloj, c.forzada) for c in clips], [("27:05", True)])
+
+    def test_nexo_enseguida(self):
+        # Si la pelea del ganador es la última y el nexo cae a los 15 s: "→ nexo".
+        p = _con_torres(_partida([(1780, ROJO, 6), (1782, ROJO, 7)], minutos=30), [(1790, ROJO)])
+        pe = K.detectar_peleas(p)[-1]
+        self.assertTrue(pe.cierra)
+        self.assertEqual(pe.objetivo, "nexo")
+
+    def test_sin_edificios_el_oro_decide(self):
+        p = _partida([(600, ROJO, 6), (602, ROJO, 7)], oro_azul=5000, minutos=20)
+        self.assertEqual(K.ganador_partida(p), AZUL)        # sin torres: más oro al final
+        self.assertFalse(any(pe.cierra for pe in K.detectar_peleas(p)))   # AZUL no ganó ninguna
+        # dos torres en el mismo frame: también el oro
+        p = _con_torres(_partida([(600, ROJO, 6)], oro_azul=5000, minutos=20), [(1100, AZUL), (1100, ROJO)])
+        self.assertEqual(K.ganador_partida(p), AZUL)
+
+    def test_partida_sin_terminar(self):
+        p = _partida([(600, ROJO, 6), (602, ROJO, 7)], minutos=20, fin=False)
+        self.assertIsNone(K.ganador_partida(p))
+        self.assertFalse(any(pe.cierra for pe in K.detectar_peleas(p)))
 
 
 class Sinteticas(unittest.TestCase):
