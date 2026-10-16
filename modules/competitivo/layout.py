@@ -198,6 +198,83 @@ def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5
     return Analisis(camara_y, desde, hasta, fuera)
 
 
+# Dígitos de kills del marcador, a cada lado del logo central. El equipo azul
+# siempre va a la izquierda y el rojo a la derecha (en la G2 del día 1 C9 fue
+# azul y pasó a la izquierda). El oro, que cambia todo el tiempo, queda afuera.
+KILLS_LADO = {"izq": (885, 22, 60, 36), "der": (975, 22, 60, 36)}
+
+
+def cambios_kills(path: str, ss: float = 0.0, dur: float | None = None,
+                  fps: float = 10) -> list[tuple[float, str]]:
+    """(segundo, lado) en que sube el contador de kills del marcador oficial,
+    solo durante la transmisión en vivo. Segundos relativos al archivo.
+
+    Es lo que sincroniza el video con el feed sin pedir nada: el feed dice a
+    qué hora UTC subió el contador (±0.2 s) y de qué lado; acá se ve en qué
+    segundo del video subió. Cada cambio se mide como escalón: el promedio
+    de los 0.5 s posteriores contra el de los 0.5 s anteriores. Así se ven
+    también los cambios chicos (8→9 comparte casi todos los trazos) y no
+    cuenta el ruido de compresión. Las repeticiones (sin marcador) no cuentan."""
+    mx, my, mw, mh = MARCADOR
+    m = _gris(path, f"fps={fps},crop={mw}:{mh}:{mx}:{my},scale={mw // 4}:{mh // 4}:flags=area",
+              ss=ss, dur=dur, w=mw // 4, h=mh // 4)
+    if len(m) < 12:
+        return []
+    d_marc = np.abs(m - np.median(m, axis=0)).mean(axis=(1, 2))
+    vivo = d_marc < max(18.0, 3 * float(np.median(d_marc)))
+    v = max(1, int(round(fps * 0.5)))                         # ventana de cada lado del escalón
+    out: list[tuple[float, str]] = []
+    for lado, (kx, ky, kw, kh) in KILLS_LADO.items():
+        k = _gris(path, f"fps={fps},crop={kw}:{kh}:{kx}:{ky}", ss=ss, dur=dur, w=kw, h=kh)
+        n = min(len(k), len(vivo))
+        esc = np.zeros(n)
+        for i in range(v + 1, n - v):
+            antes, despues = slice(i - v - 1, i - 1), slice(i + 1, i + v + 1)
+            if vivo[antes].all() and vivo[despues].all():
+                esc[i] = np.abs(k[despues].mean(axis=0) - k[antes].mean(axis=0)).mean()
+        base = float(np.median(esc[esc > 0])) if (esc > 0).any() else 0.0
+        umbral = max(2.5, 5 * base)
+        ultimo = -1e9
+        for i in range(1, n - 1):
+            # máximo local del escalón por encima del umbral, uno por cambio
+            if esc[i] > umbral and esc[i] >= esc[i - 1] and esc[i] >= esc[i + 1]:
+                t = ss + i / fps
+                if t - ultimo >= 1.0:
+                    out.append((round(t, 2), lado))
+                    ultimo = t
+    return sorted(out)
+
+
+def estimar_desfase(vistos: list[tuple[float, str]], esperados: list[tuple[float, str]],
+                    rango: float = 25.0, tol: float = 0.8) -> tuple[float, int]:
+    """Corrimiento (s) que mejor alinea las kills esperadas (del feed) con las
+    vistas en el video, y cuántas coinciden (mismo lado, a menos de `tol`).
+
+    Se prueba cada corrimiento posible: el que suma más coincidencias gana, y
+    se afina con la mediana de las diferencias. (0.0, 0) si no hay datos."""
+    if not vistos or not esperados:
+        return 0.0, 0
+    candidatos = {round(tv - te, 2) for tv, lv in vistos for te, le in esperados
+                  if lv == le and abs(tv - te) <= rango}
+    mejor = (0, 0.0, 0.0)                                       # (coincidencias, -error, delta)
+    for d in candidatos:
+        difs = []
+        for te, le in esperados:
+            cerca = [tv - te - d for tv, lv in vistos if lv == le and abs(tv - te - d) <= tol]
+            if cerca:
+                difs.append(min(cerca, key=abs))
+        if difs:
+            clave = (len(difs), -sum(abs(x) for x in difs), d)
+            mejor = max(mejor, clave)
+    n, _, d = mejor
+    if not n:
+        return 0.0, 0
+    difs = [min((tv - te - d for tv, lv in vistos if lv == le and abs(tv - te - d) <= tol), key=abs)
+            for te, le in esperados
+            if any(lv == le and abs(tv - te - d) <= tol for tv, lv in vistos)]
+    return round(d + float(np.median(difs)), 2), n
+
+
 # --- Watermark ------------------------------------------------------------------
 def recorte_marca(png: str) -> tuple[int, int, int, int] | None:
     """Caja (w, h, x, y) del contenido visible del PNG: sin el margen

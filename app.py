@@ -22,6 +22,7 @@ from modules.library.routes import bp as library_bp
 from modules.timeline.routes import bp as timeline_bp
 from modules.watermark.routes import bp as watermark_bp
 from modules.subtitles.routes import bp as subtitles_bp
+from modules.competitivo.routes import bp as competitivo_bp
 
 
 def create_app() -> Flask:
@@ -46,6 +47,7 @@ def create_app() -> Flask:
     app.register_blueprint(timeline_bp)
     app.register_blueprint(watermark_bp)
     app.register_blueprint(subtitles_bp)
+    app.register_blueprint(competitivo_bp)
 
     @app.route("/")
     def index():

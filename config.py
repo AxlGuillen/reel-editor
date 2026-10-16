@@ -28,6 +28,12 @@ CLIPS_LIBRARY_FOLDER = os.environ.get("REELFORGE_CLIPS_FOLDER") or os.path.join(
     os.path.expanduser("~"), "Videos", "Overwolf", "Insights Capture")
 THUMBS_FOLDER = os.path.join(BASE_DIR, "cache", "thumbs")
 
+# Resúmenes del módulo competitivo: carpeta PERSISTENTE (fuera de outputs/, que
+# "Limpiar archivos" vacía). Una subcarpeta por serie con resumen.mp4, los
+# clips sueltos e info.json. Override: REELFORGE_COMPETITIVO_FOLDER.
+COMPETITIVO_FOLDER = os.environ.get("REELFORGE_COMPETITIVO_FOLDER") or os.path.join(
+    os.path.expanduser("~"), "Videos", "ReelForge", "Competitivo")
+
 MAX_UPLOAD_SIZE_MB = 2000
 MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 

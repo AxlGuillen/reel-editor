@@ -47,7 +47,8 @@ reel-editor/
 │   ├── audio_merge/            ← Unir varios audios + capar pausas
 │   ├── assets/                 ← CRUD de watermarks + fuente (blueprint, no procesa video)
 │   ├── library/                ← Librería de clips: lista la carpeta local de capturas (sin upload)
-│   └── timeline/               ← Historial del proyecto leído de git (vista informativa)
+│   ├── timeline/               ← Historial del proyecto leído de git (vista informativa)
+│   └── competitivo/            ← PIPELINE: highlights de Worlds (solo kills) desde el VOD de Ibai
 │
 │   Cada módulo que procesa video tiene los mismos tres archivos:
 │       routes.py      ← Blueprint Flask con sus endpoints
@@ -57,6 +58,9 @@ reel-editor/
 │
 ├── cookies/                    ← cookies.txt de yt-dlp. SENSIBLE: gitignored
 ├── cache/thumbs/               ← miniaturas de la librería de clips (temporal)
+│
+├── tests/                      ← unittest (sin pytest): python -m unittest discover -s tests -t .
+│   └── competitivo/            ← detección de peleas (fixture real), layout, sincronía, validación
 │
 ├── core/
 │   ├── ffmpeg_runner.py        ← Único lugar que ejecuta FFmpeg + helpers ffprobe
@@ -293,6 +297,57 @@ Música (link o archivo)       ──→ baja mientras habla el avatar, sube a t
 
 **Inputs:** `video1` + `video2` + música: `music` (archivo) o un link, según `audio_source` (`url` \| `file`). Reusa `VerticalConvertParams` y `SubtitlesParams`. Con subtítulos es **dos fases** (`/process` + `/finish`), igual que reel_express.
 
+### 10. competitivo — `/api/competitivo` (pipeline, dos fases, ancla automática)
+
+Highlights de una serie de Worlds **solo con kills** (los objetivos sin pelea nunca dan clip), sacados del directo de **Ibai en YouTube** (`@Ibai_Extra`, 1080p60) con un layout vertical propio. Entrega `resumen.mp4` (≤ 60 s por defecto) y cada clip suelto en una **carpeta persistente** (`config.COMPETITIVO_FOLDER`, por defecto `~/Videos/ReelForge/Competitivo/<fecha> <A> vs <B>/`, que "Limpiar archivos" no toca), con un `info.json`.
+
+```
+feed lolesports (window, ~5 frames/s) ─kills.py─→ peleas + puntaje ─→ selección (presupuesto)
+VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida + ajuste por clip ─→ render 1080x1920 ─→ resumen
+```
+
+| Archivo | Qué hace |
+|---|---|
+| `engine.py` | Motor del prototipo `esports_highlights`, **copiado sin cambios** (eventos, fmt_hms, dataclasses) |
+| `kills.py` | Baja el feed (urllib, ventanas en paralelo, con las K/D/A por jugador del propio `window`) y arma las peleas: kills a <15 s = pelea; ventanas a <6 s se fusionan; filtro de kills mínimas; puntaje del brief + **oro que movió la pelea** (+1 c/100, máx. 20, pedido de Axl); selección por puntaje sin tope con presupuesto y tope por partida; la pelea que cierra la serie entra siempre; orden cronológico. CLI: `python -m modules.competitivo.kills <gameId…>` |
+| `layout.py` | Layout, análisis del tramo (cámara del set, repeticiones, contador de kills) y comando de render |
+| `fuente.py` | yt-dlp con la config del Downloader (cookies, runtimes JS, reintentos): hora de inicio del directo y tramos HLS |
+| `schema.py` / `processor.py` / `routes.py` | Contrato estándar de dos fases |
+
+**Layout** (1080x1920, de arriba a abajo): barra de la transmisión (cámaras de jugadores + tabla de stats; en peleas, retratos con vida) con aire y esquinas redondeadas → gameplay con zoom (default **1.3×**, centrado donde el observador pone la acción, sin desenfoque) → marcador oficial → cámara del set de Ibai al 70 % del ancho. Con zoom < ~1.6 el gameplay no llena su alto (la zona limpia de la fuente mide 712 px): la barra baja, marcador y cámara suben, y lo que sobra queda arriba y abajo de todo (las franjas que tapa la UI de TikTok). Watermark opaco "parado" en la esquina inferior derecha (se recorta su margen transparente). Zonas medidas en 169 frames (ver docstring de `layout.py`); la **y de la cámara del set cambia por partida** y se detecta por las aristas del recuadro. Tope de 16 Mbps (con cq 18 salía a 34 Mbps).
+
+**Sincronía (lo más importante).** La fórmula del brief (`vod = utc − inicio del directo + 38 s`) es solo el punto de partida: el desfase real fue **+7.5 s en la G1 y −5 s en la G2/G3 del mismo día**. Se mide solo: `cambios_kills()` ve en qué segundo del video sube el contador de kills del marcador oficial (cada lado por separado: el azul siempre a la izquierda) y `estimar_desfase()` alinea ese patrón con las kills del feed (±0.2 s). Fase 1: ancla por partida con el tramo de su pelea más grande (confianza **alta** con 2+ kills alineadas). Fase 2: ajuste fino de cada clip con sus propias kills. Medido en KC-C9 G1-G3: todas las kills dentro de sus clips, ajuste fino < 0.1 s. Las **repeticiones** (sin marcador) se detectan y el clip queda en el tramo en vivo que contiene la kill.
+
+| Parámetro (fase 1) | Tipo | Default | Notas |
+|---|---|---|---|
+| `game_ids` | str | — | gameId de 15–20 dígitos, uno por partida **en orden** (la última es la decisiva) |
+| `vod_url` | str | — | VOD de IbaiExtra (necesita `release_timestamp`) |
+| `modo` | str | revisar | `revisar` (pausa con todo prellenado) / `auto` (sigue solo si todas las anclas son de confianza alta) |
+| `duracion_max_s` / `max_por_partida` / `min_kills` | int | 60 / 2 / 2 | 20–180 / 1–5 / 1–5 |
+| `incluir_picks` / `incluir_primera_sangre` | bool | false | |
+| `pre_s` / `post_s` | float | 8 / 3 | antes del frame anterior a la 1ª kill / después de la última |
+| `zoom` / `color` | float / str | 1.3 / vivo | 0.8–2.2 / off·vivo·cine |
+| `watermark` / `marca_alto` | str / int | "" / 190 | PNG de `assets/watermarks` / alto en px |
+
+**API (form-urlencoded; también para que Claude la opere sola con el server corriendo):**
+
+```
+POST /api/competitivo/process    game_ids, vod_url, [modo, reglas, render…]  → 202 {job_id}
+GET  /api/competitivo/status/<id>  → {status, progress, stage, error, finished, aviso,
+        vod, partidas:[{n, game_id, azul, rojo, ancla_s, ancla_propuesta_s, desfase_s,
+        confianza, coincidencias, esperadas, referencia, frame}],
+        clips:[{id "partida-n", titulo, puntaje, bruto, desglose, kills, duracion,
+        elegible, seleccionada, forzada, …}], seleccion:[ids], resultado}
+POST /api/competitivo/finish     job_id, [anchors='{"gameId": "1:22:15"|4935}'],
+        [clips='["2-9","3-19"]'], [zoom, color, watermark, marca_alto]  → 202
+GET  /api/competitivo/download/<id>      → resumen.mp4   (·/<n> → clip n)
+GET  /api/competitivo/frame/<id>/<n>     → JPG de control del ancla de la partida n
+GET  /api/competitivo/resumenes          → resúmenes guardados (carpeta persistente)
+GET  /api/competitivo/resumenes/<carpeta>/<archivo>
+```
+
+Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fase 2 en `finished=true` con `resultado.carpeta`. Para operarlo de punta a punta: `process` con `modo=auto` → poll de `status` hasta `finished=true` (si queda en `esperando_ancla` con `aviso`, revisar el `frame` de esa partida, corregir con `anchors` y llamar `finish`). Para elegir otras peleas: tomar ids de `clips` y pasarlos en `finish`. Tiempos medidos (3 partidas, 3 clips): fase 1 ~64 s, fase 2 ~54 s. Las sesiones viven en memoria: si el server se reinicia (el modo debug recarga al cambiar código), hay que repetir la fase 1. Tests: `tests/competitivo/` (fixture real de KC-C9 G1).
+
 ### assets — blueprint de assets persistentes
 
 No procesa video: gestiona la **librería de watermarks** y la **fuente**.
@@ -334,7 +389,7 @@ POST /api/<modulo>/process       → 202 { job_id }   (corre en thread)
 GET  /api/<modulo>/status/<id>   → { status, progress, error, [stage], [segments], [title] }
 GET  /api/<modulo>/download/<id> → archivo (mimetype correcto, as_attachment)
 ```
-`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express` y `hook_reel` usan `/process` + `/finish`. Global: `POST /api/cleanup` vacía las carpetas temporales.
+`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express`, `hook_reel` y `competitivo` usan `/process` + `/finish`. Global: `POST /api/cleanup` vacía las carpetas temporales.
 
 ---
 
@@ -363,6 +418,8 @@ video_encode_flags(crf=18) -> list[str]   # flags del encoder: h264_nvenc si la
                                           # GPU está (probe cacheado), si no libx264
 encoder_info() -> str                     # "GPU NVENC" / "CPU" (lo muestra Info)
 atempo_chain(tempo) -> str                # cadena de atempo para tempos > 2.0
+capture(command) -> bytes                 # corre FFmpeg y devuelve su stdout (frames en
+                                          # rawvideo para analizar con numpy)
 ```
 
 **Todo módulo que encodea usa `video_encode_flags()`**: es lo que hace que la GPU
@@ -392,6 +449,7 @@ ASSETS_FOLDER / WATERMARKS_FOLDER / FONTS_FOLDER        # persistentes
 COOKIES_FOLDER / COOKIES_FILE      # cookies.txt de yt-dlp (sensible, gitignored)
 CLIPS_LIBRARY_FOLDER               # carpeta de capturas (env REELFORGE_CLIPS_FOLDER)
 THUMBS_FOLDER                      # cache/thumbs/ (miniaturas de la librería)
+COMPETITIVO_FOLDER                 # resúmenes de competitivo, PERSISTENTE (env REELFORGE_COMPETITIVO_FOLDER)
 MAX_UPLOAD_SIZE_MB = 2000
 FFMPEG_PATH   = os.environ.get("FFMPEG_PATH")  or _resolve_ffmpeg()
 FFPROBE_PATH  = os.environ.get("FFPROBE_PATH") or _resolve_ffprobe()
@@ -410,7 +468,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 12 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 13 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
@@ -441,6 +499,8 @@ ffmpeg -version && ffprobe -version   # deben existir
 
 python3 app.py                    # ojo: python3, no python (en macOS)
 # http://localhost:5001           # puerto 5001 (el 5000 lo ocupa AirPlay en Mac)
+
+python -m unittest discover -s tests -t .   # tests (sin internet)
 ```
 
 **En Windows** hay dos .bat pensados para doble click, y son la vía recomendada
