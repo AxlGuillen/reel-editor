@@ -214,6 +214,19 @@ def atempo_chain(tempo: float) -> str:
     return ",".join(f"atempo={t:.6f}" for t in parts)
 
 
+def capture(command: list[str], timeout: float = 300) -> bytes:
+    """Ejecuta FFmpeg y devuelve su stdout (p. ej. frames en `-f rawvideo -`
+    para analizarlos con numpy). Lanza RuntimeError si FFmpeg falla."""
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("FFmpeg tardó demasiado en leer los frames.")
+    if result.returncode != 0:
+        tail = result.stderr.decode("utf-8", "replace").strip().splitlines()[-5:]
+        raise RuntimeError(f"FFmpeg falló (code {result.returncode}):\n" + "\n".join(tail))
+    return result.stdout
+
+
 def _hms_to_seconds(match) -> float:
     hours, minutes, seconds = match.groups()
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
