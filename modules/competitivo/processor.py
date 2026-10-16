@@ -348,7 +348,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     cmd = layout.build_command(
                         tramo, con, an.vivo_desde, dur, an.camara_y, **render,
                         intro=layout.IntroEncima(placa=placa, voz=voz.path, D=voz.D, sting=intro.sting(),
-                                                 sting_vol=intro.STING_VOL),
+                                                 sting_vol=intro.STING_VOL, voz_filtro=intro.cadena_voz(voz),
+                                                 sting_filtro=intro.cadena_sting(voz.D)),
                         con_audio=ffmpeg_runner.has_audio_stream(tramo))
                     ffmpeg_runner.run(cmd, job_id, total_duration=dur, progress_range=((lo + hi) // 2, hi))
                     en_resumen[-1] = con
@@ -370,8 +371,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 ruta = ruta.replace("\\", "/").replace("'", "'\\''")
                 fh.write(f"file '{ruta}'\n")
         resumen = os.path.join(salida, "resumen.mp4")
-        ffmpeg_runner.run([config.FFMPEG_PATH, "-y", "-f", "concat", "-safe", "0", "-i", lista,
-                           "-c", "copy", "-movflags", "+faststart", resumen],
+        ffmpeg_runner.run(layout.build_concat(lista, resumen),
                           job_id, total_duration=sum(h["duracion"] for h in hechos) + (voz.D if intro_mp4 else 0),
                           progress_range=(92, 99))
         duracion_total = round(sum(h["duracion"] for h in hechos) + (voz.D if intro_mp4 else 0), 2)

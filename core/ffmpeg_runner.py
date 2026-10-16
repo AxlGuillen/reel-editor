@@ -214,10 +214,12 @@ def atempo_chain(tempo: float) -> str:
     return ",".join(f"atempo={t:.6f}" for t in parts)
 
 
-def capture(command: list[str], timeout: float = 300, cwd: str | None = None) -> bytes:
+def capture(command: list[str], timeout: float = 300, cwd: str | None = None,
+            stderr: bool = False) -> bytes:
     """Ejecuta FFmpeg y devuelve su stdout (p. ej. frames en `-f rawvideo -`
     para analizarlos con numpy). Lanza RuntimeError si FFmpeg falla.
-    `cwd`: como en run(), para filtros con rutas relativas (drawtext)."""
+    `cwd`: como en run(), para filtros con rutas relativas (drawtext).
+    `stderr`: devuelve el stderr (lo que imprimen loudnorm o silencedetect)."""
     try:
         result = subprocess.run(command, capture_output=True, timeout=timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
@@ -225,7 +227,7 @@ def capture(command: list[str], timeout: float = 300, cwd: str | None = None) ->
     if result.returncode != 0:
         tail = result.stderr.decode("utf-8", "replace").strip().splitlines()[-5:]
         raise RuntimeError(f"FFmpeg falló (code {result.returncode}):\n" + "\n".join(tail))
-    return result.stdout
+    return result.stderr if stderr else result.stdout
 
 
 def _hms_to_seconds(match) -> float:

@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import json
+import math
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -446,27 +449,91 @@ MAX_VOZ_S = 8.0          # tope de la voz
 COLA_S = 0.4             # la intro dura la voz + esta cola
 STING_VOL = 0.35         # el sting (si existe) suena debajo de la voz
 MAX_VOZ_BYTES = 20 * 1024 * 1024
+FPS = 60
+# Nivel de la voz. Llega como la entrega el TTS (medido: −20 LUFS) y el VOD de
+# Ibai está a ~−9 LUFS: sin normalizar, en "encima" la voz quedaba a la par del
+# juego bajado al 25 % (+0.5 LU; Whisper entendía 4 de 10 palabras) y en
+# "aparte" la intro sonaba 11 LU más baja que los clips. A −11 LUFS queda ~10 LU
+# sobre el juego bajado y al nivel de los clips.
+VOZ_LUFS, VOZ_TP = -11.0, -1.5
+SILENCIO_DB = -45        # lo que hay después de esto al final de la voz se recorta
+LIMITADOR = "alimiter=limit=0.89:level=0:latency=1"   # ≈ −1 dBTP, sin subir el nivel ni correr el audio
 
 
 @dataclass
 class Voz:
     path: str
-    duracion: float      # de la voz
-    D: float             # de la intro: voz + cola
+    duracion: float      # del archivo
+    D: float             # de la intro: voz (sin el silencio final) + cola, en frames enteros
+    fin: float = 0.0     # donde termina de hablar (sin el silencio que deja el TTS al final)
+    ln: dict | None = None   # medición de loudnorm (pasada 1) para normalizarla igual siempre
+
+    def __post_init__(self):
+        self.fin = self.fin or self.duracion
+
+
+def _fin_de_voz(path: str, dur: float) -> float:
+    """Dónde termina de hablar: el TTS deja silencio al final (medido: 0.7 s), y
+    sumado a la cola eran ~1 s muerto antes del corte."""
+    err = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "info", "-i", path, "-af",
+                                 f"silencedetect=n={SILENCIO_DB}dB:d=0.25", "-f", "null", "-"],
+                                stderr=True).decode("utf-8", "replace")
+    inicios = [float(x) for x in re.findall(r"silence_start: ([\d.]+)", err)]
+    finales = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", err)]
+    # El silencio final: el último que arranca y no termina, o (FFmpeg 6+) el que
+    # silencedetect cierra justo en el fin del archivo.
+    if inicios and inicios[-1] > 0.5 and (len(inicios) > len(finales) or finales[-1] >= dur - 0.05):
+        return min(dur, inicios[-1] + 0.1)
+    return dur
+
+
+def _medir(path: str, fin: float) -> dict | None:
+    """Pasada 1 de loudnorm sobre la misma cadena que se va a usar."""
+    try:
+        err = ffmpeg_runner.capture(
+            [config.FFMPEG_PATH, "-v", "info", "-i", path, "-af",
+             f"atrim=0:{fin:.3f},aresample=48000,aformat=channel_layouts=stereo,"
+             f"loudnorm=I={VOZ_LUFS}:TP={VOZ_TP}:LRA=11:print_format=json", "-f", "null", "-"],
+            stderr=True).decode("utf-8", "replace")
+        datos = json.loads(err[err.rindex("{"):err.rindex("}") + 1])
+        if not all(math.isfinite(float(datos[k])) for k in
+                   ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")):
+            return None
+        return datos
+    except (RuntimeError, ValueError, KeyError):
+        return None
+
+
+def cadena_voz(voz: Voz) -> str:
+    """Filtros de la voz (sin etiqueta de entrada): sin el silencio final,
+    estéreo 48 kHz y normalizada a VOZ_LUFS (loudnorm de dos pasadas, lineal
+    si se puede)."""
+    base = f"atrim=0:{voz.fin:.3f},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo"
+    if not voz.ln:
+        return base
+    m = voz.ln
+    return (f"{base},loudnorm=I={VOZ_LUFS}:TP={VOZ_TP}:LRA=11:measured_I={m['input_i']}:"
+            f"measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}:"
+            f"measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true,"
+            "aresample=48000")
 
 
 def preparar_voz(url: str, carpeta: str) -> Voz:
-    """Baja la voz (una vez) y mide su duración. Error claro si no es audio o
-    si dura más de MAX_VOZ_S."""
+    """Baja la voz (una vez), recorta el silencio final, la mide y calcula D.
+    Error claro si no es audio o si dura más de MAX_VOZ_S."""
     ext = os.path.splitext(url.split("?")[0])[1].lower()
     path = os.path.join(carpeta, "intro_voz" + (ext if ext in (".mp3", ".wav", ".m4a", ".ogg", ".opus") else ".mp3"))
     descargar(url, path, timeout=20, reintentos=2, max_bytes=MAX_VOZ_BYTES)
     dur = ffmpeg_runner.probe_duration(path) if ffmpeg_runner.has_audio_stream(path) else None
     if not dur:
         raise RuntimeError("No se pudo leer el audio de la intro: ¿el link es un mp3?")
-    if dur > MAX_VOZ_S:
-        raise RuntimeError(f"La voz de la intro dura {dur:.1f} s; máximo {MAX_VOZ_S:g}.")
-    return Voz(path, round(dur, 3), round(dur + COLA_S, 3))
+    fin = _fin_de_voz(path, dur)
+    if fin > MAX_VOZ_S:
+        raise RuntimeError(f"La voz de la intro dura {fin:.1f} s; máximo {MAX_VOZ_S:g}.")
+    # D en frames enteros: si no, el video de intro.mp4 terminaba antes que su
+    # audio y el concat corría todo lo que venía después (medido: 21 ms).
+    D = math.ceil((fin + COLA_S) * FPS - 1e-6) / FPS
+    return Voz(path, round(dur, 3), D, fin=round(fin, 3), ln=_medir(path, fin))
 
 
 def modo_para_clip1(D: float, dur_clip: float, t_primera_kill: float) -> tuple[str, str | None]:
@@ -505,17 +572,23 @@ def salida_video_audio() -> list[str]:
     ]
 
 
-def _audio_intro(voz_idx: int, sting_idx: int | None, D: float) -> list[str]:
-    """Voz (+ sting al 35 %) de largo exacto D → [aout]."""
-    voz = f"[{voz_idx}:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:{D:.3f}"
+def cadena_sting(D: float) -> str:
+    """El sting debajo de la voz, con un fade de 0.3 s para que no se corte en seco en D."""
+    return (f"aresample=48000,aformat=channel_layouts=stereo,volume={STING_VOL},"
+            f"afade=t=out:st={max(0.0, D - 0.3):.6f}:d=0.3,apad,atrim=0:{D:.6f}")
+
+
+def _audio_intro(voz: Voz, voz_idx: int, sting_idx: int | None) -> list[str]:
+    """Voz normalizada (+ sting al 35 %) de largo exacto D → [aout]."""
+    D = voz.D
+    partes = [f"[{voz_idx}:a]{cadena_voz(voz)},apad,atrim=0:{D:.6f}[voz]"]
     if sting_idx is None:
-        return [voz + "[aout]"]
-    return [
-        voz + "[voz]",
-        f"[{sting_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={STING_VOL},"
-        f"apad,atrim=0:{D:.3f}[sting]",
-        "[voz][sting]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95[aout]",
-    ]
+        partes.append(f"[voz]{LIMITADOR},atrim=0:{D:.6f}[aout]")
+    else:
+        partes.append(f"[{sting_idx}:a]{cadena_sting(D)}[sting]")
+        partes.append(f"[voz][sting]amix=inputs=2:normalize=0:duration=first,{LIMITADOR},"
+                      f"atrim=0:{D:.6f}[aout]")
+    return partes
 
 
 def build_intro_aparte(portada_png: str, voz: Voz, out: str) -> list[str]:
@@ -525,15 +598,15 @@ def build_intro_aparte(portada_png: str, voz: Voz, out: str) -> list[str]:
     El zoom se hace sobre la portada al doble de tamaño: zoompan recorta en
     píxeles enteros, y así cada paso es medio píxel de la salida (sin saltos)."""
     D = voz.D
-    n = max(1, round(D * 60))
+    n = max(1, round(D * FPS))
     s = sting()
-    cmd = [config.FFMPEG_PATH, "-y", "-loop", "1", "-framerate", "60", "-t", f"{D:.3f}",
+    cmd = [config.FFMPEG_PATH, "-y", "-loop", "1", "-framerate", str(FPS), "-t", f"{D:.6f}",
            "-i", portada_png, "-i", voz.path]
     if s:
         cmd += ["-i", s]
     video = (f"[0:v]scale=2160:3840:flags=bicubic,"
              f"zoompan=z='1+0.06*on/{n}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
              f"d=1:s=1080x1920:fps=60,fade=t=in:st=0:d=0.2,{COLOR_SALIDA}[vout]")
-    partes = [video, *_audio_intro(1, 2 if s else None, D)]
+    partes = [video, *_audio_intro(voz, 1, 2 if s else None)]
     return cmd + ["-filter_complex", ";".join(partes), "-map", "[vout]", "-map", "[aout]",
-                  "-t", f"{D:.3f}", *salida_video_audio(), out]
+                  "-t", f"{D:.6f}", *salida_video_audio(), out]

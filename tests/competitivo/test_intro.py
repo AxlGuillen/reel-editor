@@ -276,7 +276,7 @@ def _ffprobe(path: str) -> dict:
     out = subprocess.run([config.FFPROBE_PATH, "-v", "error", "-show_entries",
                           "stream=codec_type,codec_name,profile,level,width,height,pix_fmt,r_frame_rate,"
                           "sample_aspect_ratio,color_range,color_space,color_transfer,color_primaries,"
-                          "time_base,sample_rate,channels,channel_layout:format=duration",
+                          "time_base,sample_rate,channels,channel_layout,duration:format=duration",
                           "-of", "json", path], capture_output=True, text=True, check=True).stdout
     d = json.loads(out)
     s = {x["codec_type"]: x for x in d["streams"]}
@@ -287,7 +287,7 @@ def _sinteticos(carpeta: str, voz_s: float = 3.0) -> tuple[str, str]:
     """Una voz (seno) y un tramo 1920x1080@60 etiquetado bt709/tv como el VOD de Ibai."""
     voz = os.path.join(carpeta, "voz.mp3")
     subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi",
-                    "-i", f"sine=f=330:d={voz_s}", "-c:a", "libmp3lame", voz], check=True)
+                    "-i", f"sine=f=330:d={voz_s}", "-af", "volume=0.2", "-c:a", "libmp3lame", voz], check=True)
     tramo = os.path.join(carpeta, "tramo.mp4")
     subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error",
                     "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=60:d=12",
@@ -323,8 +323,30 @@ class IntroAparte(unittest.TestCase):
 
     def test_dura_la_voz_mas_la_cola(self):
         self.assertAlmostEqual(self.voz.duracion, 3.0, delta=0.1)
-        self.assertAlmostEqual(self.voz.D, self.voz.duracion + I.COLA_S, places=3)
-        self.assertAlmostEqual(_ffprobe(self.intro)["duracion"], self.voz.D, delta=0.05)
+        self.assertAlmostEqual(self.voz.fin, self.voz.duracion, delta=0.01)     # sin silencio final
+        self.assertAlmostEqual(self.voz.D, self.voz.fin + I.COLA_S, delta=1 / 60)
+        self.assertAlmostEqual(self.voz.D * 60, round(self.voz.D * 60), places=6)   # frames enteros
+        self.assertAlmostEqual(_ffprobe(self.intro)["duracion"], self.voz.D, delta=0.03)
+
+    def test_silencio_final_recortado(self):
+        from pathlib import Path
+        d = self.tmp.name
+        voz = os.path.join(d, "con_silencio.mp3")
+        subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=300:d=2",
+                        "-af", "apad=pad_dur=1.2", "-c:a", "libmp3lame", voz], check=True)
+        v = I.preparar_voz(Path(voz).as_uri(), os.path.join(d, "sil"))
+        self.assertAlmostEqual(v.duracion, 3.2, delta=0.1)
+        self.assertAlmostEqual(v.fin, 2.1, delta=0.1)             # dónde termina de hablar (+0.1)
+        self.assertAlmostEqual(v.D, 2.5, delta=1 / 60 + 0.1)
+
+    def test_voz_normalizada(self):
+        # La voz de prueba es un seno bajito; la intro tiene que quedar cerca de −11 LUFS.
+        import re
+        err = subprocess.run([config.FFMPEG_PATH, "-v", "info", "-i", self.intro, "-af", "ebur128",
+                              "-f", "null", "-"], capture_output=True, text=True).stderr
+        lufs = float(re.findall(r"I:\s+(-?[\d.]+) LUFS", err)[-1])
+        self.assertAlmostEqual(lufs, I.VOZ_LUFS, delta=1.5)
+        self.assertIsNotNone(self.voz.ln)
 
     def test_mismos_parametros_que_un_clip(self):
         a, b = _ffprobe(self.intro), _ffprobe(self.clip)
@@ -343,10 +365,13 @@ class IntroAparte(unittest.TestCase):
             for p in (self.intro, self.clip):
                 fh.write(f"file '{p.replace(os.sep, '/')}'\n")
         resumen = os.path.join(d, "resumen.mp4")
-        ffmpeg_runner.capture([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "concat", "-safe", "0",
-                               "-i", lista, "-c", "copy", resumen])
+        from modules.competitivo import layout
+        ffmpeg_runner.capture(layout.build_concat(lista, resumen))
         esperado = _ffprobe(self.intro)["duracion"] + _ffprobe(self.clip)["duracion"]
-        self.assertAlmostEqual(_ffprobe(resumen)["duracion"], esperado, delta=0.15)
+        info = _ffprobe(resumen)
+        self.assertAlmostEqual(info["duracion"], esperado, delta=0.1)
+        # El audio termina con el video (sin el relleno AAC que corría cada unión).
+        self.assertAlmostEqual(float(info["audio"]["duration"]), float(info["video"]["duration"]), delta=0.04)
         # Se decodifica entero sin errores (cabeceras compatibles).
         err = subprocess.run([config.FFMPEG_PATH, "-v", "error", "-i", resumen, "-f", "null", "-"],
                              capture_output=True, text=True).stderr.strip()

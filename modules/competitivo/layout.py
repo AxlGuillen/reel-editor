@@ -76,6 +76,15 @@ class IntroEncima:
     D: float              # duración de la intro: voz + cola
     sting: str | None = None
     sting_vol: float = 0.35
+    # Filtros de la voz y del sting (intro.cadena_voz / cadena_sting): la voz
+    # normalizada y sin su silencio final; el sting con fade. Vacío = sin tocar.
+    voz_filtro: str = ""
+    sting_filtro: str = ""
+
+
+# Limitador de la mezcla: ≈ −1 dBTP, sin subir el nivel (level=0: el default lo
+# subía +0.45 dB) y compensando su latencia (si no, corría el audio 5 ms).
+LIMITADOR = "alimiter=limit=0.89:level=0:latency=1"
 
 
 def ducking(D: float) -> str:
@@ -386,6 +395,20 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
     return ";".join(partes)
 
 
+def build_concat(lista: str, out: str) -> list[str]:
+    """Une el resumen: el video en copy (sin recodificar), el audio retemporizado
+    y recodificado UNA vez. Con -c copy el audio de cada archivo traía su
+    relleno AAC (priming/padding) y se iba atrasando en cada unión (medido:
+    +39, +73, +86 ms); aresample=async lo vuelve a poner en los timestamps
+    del video (medido: < 1 ms). El limitador evita que los picos del VOD
+    pasen 0 dBFS."""
+    return [config.FFMPEG_PATH, "-y", "-f", "concat", "-safe", "0", "-i", lista,
+            "-map", "0:v", "-map", "0:a?", "-c:v", "copy",
+            "-af", f"aresample=async=1:min_hard_comp=0.001:first_pts=0,{LIMITADOR}",
+            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+            "-movflags", "+faststart", out]
+
+
 def build_command(src: str, out: str, desde: float, duracion: float, camara_y: int,
                   zoom: float = 1.3, color: str = "vivo", marca_path: str | None = None,
                   marca_alto: int = MARCA_ALTO_DEFECTO, intro: IntroEncima | None = None,
@@ -412,16 +435,17 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
         if con_audio:
             audio.append(f"[0:a]{fmt},{ducking(D)}[juego]")
             fuentes.append("[juego]")
-        audio.append(f"[{voz_idx}:a]{fmt}[voz]")
+        audio.append(f"[{voz_idx}:a]{intro.voz_filtro or fmt}[voz]")
         fuentes.append("[voz]")
         if intro.sting:
             cmd += ["-i", intro.sting]
-            audio.append(f"[{idx}:a]{fmt},volume={intro.sting_vol},atrim=0:{D:.3f}[sting]")
+            sting_f = intro.sting_filtro or f"{fmt},volume={intro.sting_vol},atrim=0:{D:.3f}"
+            audio.append(f"[{idx}:a]{sting_f}[sting]")
             fuentes.append("[sting]")
             idx += 1
         largo = "first" if con_audio else "longest"
         audio.append(f"{''.join(fuentes)}amix=inputs={len(fuentes)}:normalize=0:duration={largo},"
-                     f"apad,atrim=0:{duracion:.3f},alimiter=limit=0.95[aout]")
+                     f"{LIMITADOR},apad,atrim=0:{duracion:.3f}[aout]")
         filtros = build_filter_complex(camara_y, zoom, color, marca, marca_alto,
                                        placa_idx=placa_idx, D=D) + ";" + ";".join(audio)
         amap = "[aout]"
