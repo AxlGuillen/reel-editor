@@ -17,20 +17,25 @@ class Geometria(unittest.TestCase):
 
     def test_recorte_dentro_del_juego_limpio(self):
         x0, y0, jw, jh = L.JUEGO
-        for zoom in (1.0, 1.4, 1.6, 1.7, 2.0, 2.2):
-            cw, ch, cx, cy, z = L.recorte_juego(zoom)
+        for zoom in (0.5, 1.0, 1.2, 1.4, 1.6, 1.7, 2.0, 2.2):
+            cw, ch, cx, cy, z, alto = L.recorte_juego(zoom)
             self.assertGreaterEqual(z, L.ZOOM_MIN)
             self.assertGreaterEqual(cx, x0)
             self.assertGreaterEqual(cy, y0)
             self.assertLessEqual(cx + cw, x0 + jw)
             self.assertLessEqual(cy + ch, y0 + jh)
-            # misma proporción que la sección del gameplay
-            self.assertAlmostEqual(cw / ch, L.W / L.JUEGO_H, delta=0.01)
+            self.assertLessEqual(alto, L.JUEGO_H)
+            # el juego nítido conserva la proporción del recorte
+            self.assertAlmostEqual(cw / ch, L.W / alto, delta=0.01)
 
-    def test_zoom_bajo_se_sube_al_minimo(self):
-        self.assertEqual(L.recorte_juego(1.0)[4], L.ZOOM_MIN)
-        self.assertEqual(L.recorte_juego(2.0)[4], 2.0)
-
+    def test_con_menos_zoom_el_juego_no_llena_el_hueco(self):
+        # Más campo de visión a lo ancho; de alto manda la zona limpia (712 px).
+        cw, ch, _, _, _, alto = L.recorte_juego(1.2)
+        self.assertEqual(ch, L.JUEGO[3])
+        self.assertLess(alto, L.JUEGO_H)
+        self.assertGreater(cw, L.recorte_juego(1.7)[0])
+        # Con zoom >= ZOOM_LLENO llena el hueco entero.
+        self.assertAlmostEqual(L.recorte_juego(1.7)[5], L.JUEGO_H, delta=2)
 
 class Render(unittest.TestCase):
     def test_render_1080x1920_con_marca(self):
