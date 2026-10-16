@@ -42,10 +42,16 @@ class Validacion(unittest.TestCase):
     def test_defaults(self):
         p = CompetitivoParams.from_form({"game_ids": IDS, "vod_url": VOD})
         self.assertEqual(p.game_ids, IDS.split())
-        self.assertEqual((p.modo, p.duracion_max_s, p.max_por_partida, p.min_kills), ("revisar", 60, 3, 2))
+        self.assertEqual((p.modo, p.duracion_max_s, p.max_por_partida, p.min_kills), ("revisar", 180, 8, 2))
+        self.assertEqual((p.duracion_min_s, p.duracion_auto), (90, True))
+        self.assertEqual((p.reglas.duracion_min_s, p.reglas.duracion_auto, p.reglas.max_por_partida), (90, True, 8))
         self.assertEqual((p.zoom, p.color, p.watermark), (1.3, "vivo", ""))
         self.assertFalse(p.incluir_picks or p.incluir_primera_sangre)
-        self.assertEqual(p.reglas.duracion_max_s, 60)
+        self.assertEqual(p.reglas.duracion_max_s, 180)
+        p = CompetitivoParams.from_form({"game_ids": IDS, "vod_url": VOD, "duracion_auto": "0",
+                                         "duracion_min_s": "0", "duracion_max_s": "300", "max_por_partida": "12"})
+        self.assertEqual((p.duracion_auto, p.duracion_min_s, p.duracion_max_s, p.max_por_partida),
+                         (False, 0, 300, 12))
         # ventana de cada clip: 10 s antes de la pelea y 5 s después
         self.assertEqual((p.pre_s, p.post_s, p.reglas.pre_s, p.reglas.post_s), (10, 5, 10, 5))
         p = CompetitivoParams.from_form({"game_ids": IDS, "vod_url": VOD, "pre_s": "6", "post_s": "2.5"})
@@ -60,6 +66,10 @@ class Validacion(unittest.TestCase):
             {"game_ids": IDS, "vod_url": VOD, "modo": "x"},
             {"game_ids": IDS, "vod_url": VOD, "zoom": "3"},
             {"game_ids": IDS, "vod_url": VOD, "duracion_max_s": "10"},
+            {"game_ids": IDS, "vod_url": VOD, "duracion_max_s": "301"},
+            {"game_ids": IDS, "vod_url": VOD, "duracion_min_s": "301"},
+            {"game_ids": IDS, "vod_url": VOD, "duracion_min_s": "120", "duracion_max_s": "100"},
+            {"game_ids": IDS, "vod_url": VOD, "max_por_partida": "13"},
             {"game_ids": IDS, "vod_url": VOD, "color": "neon"},
             {"game_ids": IDS, "vod_url": VOD, "watermark": "no-existe.png"},
         ]

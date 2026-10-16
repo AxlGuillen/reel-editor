@@ -300,7 +300,7 @@ Música (link o archivo)       ──→ baja mientras habla el avatar, sube a t
 
 ### 10. competitivo — `/api/competitivo` (pipeline, dos fases, ancla automática)
 
-Highlights de una serie de Worlds **solo con kills** (los objetivos sin pelea nunca dan clip), sacados del directo de **Ibai en YouTube** (`@Ibai_Extra`, 1080p60) con un layout vertical propio. Entrega `resumen.mp4` (≤ 60 s por defecto) y cada clip suelto en una **carpeta persistente** (`config.COMPETITIVO_FOLDER`, por defecto `~/Videos/ReelForge/Competitivo/<fecha> <A> vs <B>/`, que "Limpiar archivos" no toca), con un `info.json`.
+Highlights de una serie de Worlds **solo con kills** (los objetivos sin pelea nunca dan clip), sacados del directo de **Ibai en YouTube** (`@Ibai_Extra`, 1080p60) con un layout vertical propio. Entrega `resumen.mp4` (por defecto **4 s por minuto de partida**, entre 90 y 180 s por mapa) y cada clip suelto en una **carpeta persistente** (`config.COMPETITIVO_FOLDER`, por defecto `~/Videos/ReelForge/Competitivo/<fecha> <A> vs <B>/`, que "Limpiar archivos" no toca), con un `info.json`.
 
 ```
 feed lolesports (window, ~5 frames/s) ─kills.py─→ peleas + puntaje ─→ selección (presupuesto)
@@ -310,7 +310,7 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | Archivo | Qué hace |
 |---|---|
 | `engine.py` | Motor del prototipo `esports_highlights`, **copiado sin cambios** (eventos, fmt_hms, dataclasses) |
-| `kills.py` | Baja el feed (urllib, ventanas en paralelo, con las K/D/A por jugador del propio `window`) y arma las peleas: kills a <15 s = pelea; ventanas a <6 s se fusionan; filtro de kills mínimas; puntaje del brief + **oro que movió la pelea** (+1 c/100, máx. 20, pedido de Axl); selección por puntaje sin tope con presupuesto y tope por partida; la pelea que cierra la serie entra siempre; orden cronológico. CLI: `python -m modules.competitivo.kills <gameId…>` |
+| `kills.py` | Baja el feed (urllib, ventanas en paralelo, con las K/D/A por jugador del propio `window`) y arma las peleas: kills a <15 s = pelea; ventanas a <6 s se fusionan; filtro de kills mínimas; puntaje del brief + **oro que movió la pelea** (+1 c/100, máx. 20, pedido de Axl); selección **por mapa**: por puntaje sin tope dentro del objetivo de duración del mapa (`objetivo_s`) y con tope por partida; si no llega a `duracion_min_s`, relleno con las que no pasaron el filtro (picks y primera sangre) por puntaje, sin encimarse; la pelea que cierra la serie entra siempre; orden cronológico. CLI: `python -m modules.competitivo.kills <gameId…>` |
 | `layout.py` | Layout, análisis del tramo (cámara del set, repeticiones, contador de kills) y comando de render |
 | `fuente.py` | yt-dlp con la config del Downloader (cookies, runtimes JS, reintentos): hora de inicio del directo y tramos HLS |
 | `intro.py` | Portada (vertical, `portada.jpg`) y placa (horizontal) con plantilla fija; voz de la intro por URL; segmento "aparte" |
@@ -325,7 +325,9 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `game_ids` | str | — | gameId de 15–20 dígitos, uno por partida **en orden** (la última es la decisiva) |
 | `vod_url` | str | — | VOD de IbaiExtra (necesita `release_timestamp`) |
 | `modo` | str | revisar | `revisar` (pausa con todo prellenado) / `auto` (sigue solo si todas las anclas son de confianza alta) |
-| `duracion_max_s` / `max_por_partida` / `min_kills` | int | 60 / 3 / 2 | 20–180 / 1–5 / 1–5 |
+| `duracion_auto` | bool | true | objetivo **por mapa** = minutos de la partida × 4 s, acotado entre `duracion_min_s` y `duracion_max_s` (sin auto: `duracion_max_s`) |
+| `duracion_min_s` / `duracion_max_s` | int | 90 / 180 | 0–300 / 20–300 (mín. ≤ máx.). Si las elegibles no llegan al mínimo, se rellena con picks y la primera sangre por puntaje (`relleno: true`), sin pasar el máximo |
+| `max_por_partida` / `min_kills` | int | 8 / 2 | 1–12 / 1–5 |
 | `incluir_picks` / `incluir_primera_sangre` | bool | false | |
 | `pre_s` / `post_s` | float | 10 / 5 | 0–20 / 0–15: antes del frame anterior a la 1ª kill / después de la última |
 | `zoom` / `color` | float / str | 1.3 / vivo | 0.8–2.2 / off·vivo·cine |
@@ -352,10 +354,10 @@ Todos estos campos se pueden mandar también en `/finish` (lo que no llega se he
 ```
 POST /api/competitivo/process    game_ids, vod_url, [modo, reglas, render…]  → 202 {job_id}
 GET  /api/competitivo/status/<id>  → {status, progress, stage, error, finished, aviso,
-        vod, partidas:[{n, game_id, azul, rojo, ancla_s, ancla_propuesta_s, desfase_s,
+        vod, partidas:[{n, game_id, azul, rojo, minutos, objetivo_s, seleccion_s, ancla_s, ancla_propuesta_s, desfase_s,
         confianza, coincidencias, esperadas, referencia, frame}],
         clips:[{id "partida-n", titulo, puntaje, bruto, desglose, kills, duracion,
-        elegible, seleccionada, forzada, …}], seleccion:[ids], resultado, portada, intro}
+        elegible, seleccionada, forzada, relleno, …}], seleccion:[ids], resultado, portada, intro}
 POST /api/competitivo/finish     job_id, [anchors='{"gameId": "1:22:15"|4935}'],
         [clips='["2-9","3-19"]'], [zoom, color, watermark, marca_alto,
         intro_modo, intro_audio_url, intro_volumen_juego, mapa, fase, equipo_*, logo_*,

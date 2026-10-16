@@ -21,9 +21,23 @@ class FixtureKCvsC9(unittest.TestCase):
     def setUpClass(cls):
         cls.partida = K.partida_de_fixture(FIXTURE)
         cls.peleas = K.detectar_peleas(cls.partida)
-        cls.clips = K.seleccionar([cls.peleas])
+        # Presupuesto fijo de 60 s (el de la primera versión): da los dos clips
+        # de siempre, que usan varios tests.
+        cls.reglas_60 = K.Reglas(duracion_max_s=60, duracion_min_s=0, duracion_auto=False, max_por_partida=3)
+        cls.clips = K.seleccionar([K.detectar_peleas(cls.partida, cls.reglas_60)], cls.reglas_60)
 
-    def test_dos_clips_con_los_defaults(self):
+    def test_con_los_defaults_dura_minutos_por_4(self):
+        # La partida dura 34.9 min → objetivo 139 s (entre 90 y 180).
+        self.assertAlmostEqual(K.minutos_de(self.partida), 34.86, delta=0.05)
+        self.assertEqual(K.objetivo_s(K.Reglas(), K.minutos_de(self.partida)), 139.4)
+        clips = K.seleccionar([K.detectar_peleas(self.partida)])
+        self.assertEqual([c.reloj for c in clips], ["20:30", "24:30", "25:40", "34:50"])
+        total = sum(c.duracion for c in clips)
+        self.assertLessEqual(total, 139.4)
+        self.assertGreaterEqual(total, 90)
+        self.assertFalse(any(c.relleno for c in clips))
+
+    def test_dos_clips_con_60_s(self):
         # Orden cronológico, no de puntaje.
         self.assertEqual([c.titulo for c in self.clips],
                          ["C9 · pelea 2-0 → barón · 25:40", "C9 · pelea 3-0 → nexo · 34:50"])
@@ -88,12 +102,13 @@ class FixtureKCvsC9(unittest.TestCase):
                                      f"{e.reloj} {e.tipo} dentro de {p.titulo} ({t0})")
 
     def test_un_tercero_no_cabe(self):
-        reglas = K.Reglas(max_por_partida=5)
+        reglas = K.Reglas(max_por_partida=5, duracion_max_s=60, duracion_min_s=0, duracion_auto=False)
         clips = K.seleccionar([K.detectar_peleas(self.partida, reglas)], reglas)
         self.assertEqual(len(clips), 2)   # el siguiente (24:30, ~21 s) pasaría de 60
 
     def test_picks_y_presupuesto(self):
-        reglas = K.Reglas(incluir_picks=True, max_por_partida=5, duracion_max_s=180, pre_s=8, post_s=3)
+        reglas = K.Reglas(incluir_picks=True, max_por_partida=5, duracion_max_s=180, pre_s=8, post_s=3,
+                          duracion_auto=False)
         clips = K.seleccionar([K.detectar_peleas(self.partida, reglas)], reglas)
         self.assertEqual(len(clips), 5)
         self.assertTrue(any(c.total == 1 for c in clips))
@@ -108,9 +123,32 @@ class FixtureKCvsC9(unittest.TestCase):
         self.assertTrue(K.detectar_peleas(self.partida, reglas)[0].elegible)
 
     def test_el_cierre_de_la_serie_entra_siempre(self):
-        reglas = K.Reglas(min_kills=5)   # ninguna pelea llega a 5 kills
+        reglas = K.Reglas(min_kills=5, duracion_min_s=0)   # ninguna pelea llega a 5 kills
         clips = K.seleccionar([K.detectar_peleas(self.partida, reglas)], reglas)
         self.assertEqual([c.reloj for c in clips], ["34:50"])
+
+    def test_relleno_hasta_el_minimo(self):
+        # Con min_kills 5 solo entra el cierre (35 s): se rellena por puntaje
+        # con las que no pasaron el filtro hasta llegar a 90 s.
+        reglas = K.Reglas(min_kills=5)
+        clips = K.seleccionar([K.detectar_peleas(self.partida, reglas)], reglas)
+        total = sum(c.duracion for c in clips)
+        self.assertGreaterEqual(total, 90)
+        self.assertLessEqual(total, 180)
+        self.assertEqual(clips, sorted(clips, key=lambda c: c.clip_inicio))   # cronológico
+        rellenos = [c for c in clips if c.relleno]
+        self.assertEqual(len(rellenos), len(clips) - 1)
+        self.assertTrue(all(not c.elegible for c in rellenos))
+        # los de más puntaje entre los que no pasaron
+        resto = [p for p in K.detectar_peleas(self.partida, reglas) if not p.cierra]
+        mejores = sorted(resto, key=lambda p: -p.bruto)[:len(rellenos)]
+        self.assertEqual(sorted(c.reloj for c in rellenos), sorted(p.reloj for p in mejores))
+        # con el tope por partida
+        reglas = K.Reglas(min_kills=5, max_por_partida=2)
+        self.assertEqual(len(K.seleccionar([K.detectar_peleas(self.partida, reglas)], reglas)), 2)
+        # sin mínimo no rellena
+        reglas = K.Reglas(min_kills=5, duracion_min_s=0)
+        self.assertFalse(any(c.relleno for c in K.seleccionar([K.detectar_peleas(self.partida, reglas)], reglas)))
 
     def test_solo_la_ultima_pelea_cierra(self):
         self.assertEqual([p.reloj for p in self.peleas if p.cierra], ["34:50"])
@@ -145,6 +183,50 @@ def _partida(kills, oro_azul=0, minutos=30, fin=True):
         por_jugador.append(dict(pk))
     nombres = {pid: f"{AZUL if pid <= 5 else ROJO} Jugador{pid}" for pid in range(1, 11)}
     return K.Partida("sintetica", AZUL, ROJO, frames, por_jugador, nombres)
+
+
+class Duracion(unittest.TestCase):
+    def test_objetivo(self):
+        r = K.Reglas()
+        self.assertEqual(K.objetivo_s(r, 30), 120)       # 30 min × 4 s
+        self.assertEqual(K.objetivo_s(r, 20), 90)        # 80 → el mínimo
+        self.assertEqual(K.objetivo_s(r, 50), 180)       # 200 → el máximo
+        self.assertEqual(K.objetivo_s(K.Reglas(duracion_auto=False), 20), 180)
+        self.assertEqual(K.objetivo_s(K.Reglas(duracion_min_s=60, duracion_max_s=300), 60), 240)
+
+    def test_presupuesto_por_mapa(self):
+        # Peleas de 2 kills cada 2 min: ~18 s por clip.
+        def serie(minutos):
+            return _partida([(s + d, ROJO, 6 + d) for s in range(120, minutos * 60 - 60, 120) for d in (0, 2)],
+                            minutos=minutos)
+        larga, corta = serie(40), serie(20)
+        r = K.Reglas()
+        clips = K.seleccionar([K.detectar_peleas(larga, r), K.detectar_peleas(corta, r)], r)
+        por_mapa = {}
+        for c in clips:
+            por_mapa.setdefault(c.minutos_partida, []).append(c)
+        self.assertEqual(sorted(por_mapa), [20, 40])
+        self.assertEqual(len(por_mapa[40]), 8)                                  # tope por partida
+        self.assertLessEqual(sum(c.duracion for c in por_mapa[40]), 160)        # 40 × 4
+        self.assertGreater(sum(c.duracion for c in por_mapa[40]), 90)
+        self.assertLessEqual(sum(c.duracion for c in por_mapa[20]), 90)         # 20 × 4 = 80 → 90
+        self.assertEqual(clips, sorted(clips, key=lambda c: (c.minutos_partida != 40, c.clip_inicio)))
+
+    def test_relleno_con_picks_y_primera_sangre(self):
+        # Una sola pelea de 2 kills; el resto son picks (la primera, primera sangre).
+        p = _partida([(200, ROJO, 6), (500, AZUL, 1), (800, ROJO, 7), (1100, AZUL, 2), (1400, ROJO, 8),
+                      (1600, ROJO, 9), (1602, ROJO, 10)], minutos=30)
+        r = K.Reglas()
+        peleas = K.detectar_peleas(p, r)
+        clips = K.seleccionar([peleas], r)
+        self.assertEqual([c.total for c in clips if not c.relleno], [2])
+        rellenos = [c for c in clips if c.relleno]
+        self.assertTrue(rellenos and all(c.total == 1 for c in rellenos))
+        self.assertGreaterEqual(sum(c.duracion for c in clips), 90)
+        self.assertIn(True, [c.primera_sangre for c in peleas])
+        self.assertEqual(clips, sorted(clips, key=lambda c: c.clip_inicio))
+        for a, b in zip(clips, clips[1:]):
+            self.assertLessEqual(a.clip_fin, b.clip_inicio)        # sin encimarse
 
 
 class Sinteticas(unittest.TestCase):

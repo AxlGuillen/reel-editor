@@ -122,8 +122,11 @@ class CompetitivoParams:
     game_ids: list[str]
     vod_url: str
     modo: str = "revisar"            # revisar: pausa para el ancla y los clips; auto: sigue solo
-    duracion_max_s: int = 60
-    max_por_partida: int = 3          # con un mapa por video; el presupuesto de tiempo manda
+    # Duración POR MAPA (ver kills.objetivo_s): minutos × 4 s entre el mínimo y el máximo.
+    duracion_max_s: int = 180
+    duracion_min_s: int = 90
+    duracion_auto: bool = True
+    max_por_partida: int = 8          # el presupuesto de tiempo manda
     min_kills: int = 2
     incluir_picks: bool = False
     incluir_primera_sangre: bool = False
@@ -168,10 +171,15 @@ class CompetitivoParams:
         modo = (form.get("modo") or "revisar").strip().lower()
         if modo not in MODOS:
             raise ValueError("'modo' tiene que ser 'revisar' o 'auto'.")
+        dmin = _num(form, "duracion_min_s", 90, 0, 300)
+        dmax = _num(form, "duracion_max_s", 180, 20, 300)
+        if dmin > dmax:
+            raise ValueError(f"'duracion_min_s' ({dmin}) no puede ser mayor que 'duracion_max_s' ({dmax}).")
         return cls(
             game_ids=ids, vod_url=vod, modo=modo,
-            duracion_max_s=_num(form, "duracion_max_s", 60, 20, 180),
-            max_por_partida=_num(form, "max_por_partida", 3, 1, 5),
+            duracion_max_s=dmax, duracion_min_s=dmin,
+            duracion_auto=_bool(form, "duracion_auto", True),
+            max_por_partida=_num(form, "max_por_partida", 8, 1, 12),
             min_kills=_num(form, "min_kills", 2, 1, 5),
             incluir_picks=_bool(form, "incluir_picks"),
             incluir_primera_sangre=_bool(form, "incluir_primera_sangre"),
@@ -187,6 +195,7 @@ class CompetitivoParams:
             min_kills=self.min_kills, incluir_picks=self.incluir_picks,
             incluir_primera_sangre=self.incluir_primera_sangre, pre_s=self.pre_s,
             post_s=self.post_s, duracion_max_s=self.duracion_max_s,
+            duracion_min_s=self.duracion_min_s, duracion_auto=self.duracion_auto,
             max_por_partida=self.max_por_partida,
         )
 

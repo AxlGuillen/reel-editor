@@ -35,6 +35,7 @@ CIERRE_S = 40            # nexo ≤ esto después de la última kill → la pele
 SWING_S = 20             # el oro "después" se mide esto después de la última kill
 LAG_JUGADOR_S = 5        # las kills por jugador llegan unos segundos tarde vs el total
 REMONTADA_ORO = 2000     # el ganador iba abajo por al menos esto antes de la pelea
+SEG_POR_MINUTO = 4       # duracion_auto: el video dura 4 s por minuto de partida
 OBJETIVOS_GRANDES = {"baron": "barón", "dragon_anciano": "anciano", "inhibidor": "inhibidor"}
 MULTIKILL = {3: ("triple", 25), 4: ("quadra", 40), 5: ("penta", 60)}
 
@@ -47,8 +48,13 @@ class Reglas:
     incluir_primera_sangre: bool = False
     pre_s: float = 10
     post_s: float = 5
-    duracion_max_s: float = 60
-    max_por_partida: int = 3
+    # Duración POR MAPA. Con duracion_auto el objetivo es minutos × 4 s, acotado
+    # entre el mínimo y el máximo; si no, el máximo. Si las elegibles no llegan
+    # al mínimo, se rellena con picks y la primera sangre.
+    duracion_min_s: float = 90
+    duracion_max_s: float = 180
+    duracion_auto: bool = True
+    max_por_partida: int = 8
 
 
 # --- Modelo -------------------------------------------------------------------
@@ -105,6 +111,8 @@ class Pelea:
     clip_fin: datetime
     elegible: bool = True
     forzada: bool = False             # la que cierra la serie: entra siempre
+    relleno: bool = False             # no pasó el filtro: entró para llegar a duracion_min_s
+    minutos_partida: float = 0.0      # cuánto duró SU partida (para el objetivo de duración)
 
     @property
     def bruto(self) -> int:
@@ -212,6 +220,19 @@ def partida_de_fixture(path, game_id: str | None = None) -> Partida:
 
 
 # --- Detección ----------------------------------------------------------------
+def minutos_de(p: Partida) -> float:
+    """Duración de la partida en minutos (del primer al último frame del feed)."""
+    return round((p.frames[-1].ts - p.t0).total_seconds() / 60, 2)
+
+
+def objetivo_s(reglas: Reglas, minutos: float) -> float:
+    """Cuánto tiene que durar el video de un mapa: minutos × 4 s acotado entre
+    duracion_min_s y duracion_max_s (duracion_auto), o duracion_max_s."""
+    if not reglas.duracion_auto:
+        return float(reglas.duracion_max_s)
+    return round(min(reglas.duracion_max_s, max(reglas.duracion_min_s, minutos * SEG_POR_MINUTO)), 1)
+
+
 def _kills(p: Partida) -> list[Kill]:
     out = []
     for i in range(1, len(p.frames)):
@@ -307,6 +328,7 @@ def _armar(p: Partida, grupo: list[Kill], reglas: Reglas, primera_sangre_i: int,
         desglose=desglose, puntaje=min(100, sum(desglose.values())),
         clip_inicio=antes - timedelta(seconds=reglas.pre_s),
         clip_fin=ultima + timedelta(seconds=reglas.post_s),
+        minutos_partida=minutos_de(p),
     )
 
 
@@ -347,39 +369,49 @@ def detectar_peleas(p: Partida, reglas: Reglas | None = None) -> list[Pelea]:
 
 # --- Selección ----------------------------------------------------------------
 def seleccionar(partidas: list[list[Pelea]], reglas: Reglas | None = None) -> list[Pelea]:
-    """Elige los clips del video con el presupuesto de tiempo.
+    """Elige los clips del video con un presupuesto de tiempo POR MAPA.
 
     `partidas` va en el orden de la serie: la ÚLTIMA es la decisiva y su
-    pelea de cierre entra siempre (aunque no pase el filtro). El resto se
-    rellena por puntaje (sin tope) mientras quepa en `duracion_max_s`, con hasta
-    `max_por_partida` por partida. Devuelve en orden cronológico.
+    pelea de cierre entra siempre (aunque no pase el filtro). En cada mapa,
+    las elegibles entran por puntaje (sin tope) mientras quepan en su
+    `objetivo_s`, con hasta `max_por_partida`. Si no llegan a
+    `duracion_min_s`, se rellena por puntaje con las que no pasaron el filtro
+    (picks y primera sangre), sin pasar `duracion_max_s` y sin encimarse con
+    un clip ya elegido. Devuelve en orden cronológico.
     """
     reglas = reglas or Reglas()
     orden = {id(pe): (g, pe.clip_inicio) for g, peleas in enumerate(partidas) for pe in peleas}
     elegidas: list[Pelea] = []
-    usados = 0.0
-    por_partida: dict[str, int] = {}
-
-    def tomar(pe: Pelea) -> None:
-        nonlocal usados
-        elegidas.append(pe)
-        usados += pe.duracion
-        por_partida[pe.game_id] = por_partida.get(pe.game_id, 0) + 1
-
-    if partidas and partidas[-1]:
-        cierre = next((pe for pe in reversed(partidas[-1]) if pe.cierra), None)
-        if cierre is not None:
-            cierre.forzada = True
-            tomar(cierre)
-
-    candidatas = sorted((pe for peleas in partidas for pe in peleas if pe.elegible and not pe.forzada),
-                        key=lambda pe: (-pe.bruto, orden[id(pe)]))
-    for pe in candidatas:
-        if por_partida.get(pe.game_id, 0) >= reglas.max_por_partida:
+    for g, peleas in enumerate(partidas):
+        for pe in peleas:
+            pe.forzada = pe.relleno = False
+        if not peleas:
             continue
-        if usados + pe.duracion > reglas.duracion_max_s:
-            continue
-        tomar(pe)
+        objetivo = objetivo_s(reglas, peleas[0].minutos_partida)
+        mias: list[Pelea] = []
+
+        def usados() -> float:
+            return sum(pe.duracion for pe in mias)
+
+        if g == len(partidas) - 1:
+            cierre = next((pe for pe in reversed(peleas) if pe.cierra), None)
+            if cierre is not None:
+                cierre.forzada = True
+                mias.append(cierre)
+        por_puntaje = sorted((pe for pe in peleas if not pe.forzada), key=lambda pe: (-pe.bruto, orden[id(pe)]))
+        for pe in por_puntaje:
+            if pe.elegible and len(mias) < reglas.max_por_partida and usados() + pe.duracion <= objetivo:
+                mias.append(pe)
+        for pe in por_puntaje:
+            if usados() >= reglas.duracion_min_s or len(mias) >= reglas.max_por_partida:
+                break
+            if pe.elegible or usados() + pe.duracion > reglas.duracion_max_s:
+                continue
+            if any(pe.clip_inicio < o.clip_fin and o.clip_inicio < pe.clip_fin for o in mias):
+                continue
+            pe.relleno = True
+            mias.append(pe)
+        elegidas += mias
     return sorted(elegidas, key=lambda pe: orden[id(pe)])
 
 
@@ -400,9 +432,11 @@ def _main(argv: list[str]) -> None:
             marca = "✓" if pe.elegible else " "
             print(f"  {marca} {pe.titulo:46s} puntaje {pe.puntaje:3d} (bruto {pe.bruto:3d}) · {pe.duracion:4.1f} s")
     elegidas = seleccionar(todas, reglas)
-    print(f"\nVideo ({sum(pe.duracion for pe in elegidas):.0f} s de {reglas.duracion_max_s:.0f}):")
+    objetivos = sum(objetivo_s(reglas, pe[0].minutos_partida) for pe in todas if pe)
+    print(f"\nVideo ({sum(pe.duracion for pe in elegidas):.0f} s; objetivo {objetivos:.0f} s):")
     for pe in elegidas:
-        print(f"  {pe.game_id[-3:]} · {pe.titulo}{'  [cierre de la serie]' if pe.forzada else ''}")
+        marca = "  [cierre de la serie]" if pe.forzada else "  [relleno]" if pe.relleno else ""
+        print(f"  {pe.game_id[-3:]} · {pe.titulo}{marca}")
 
 
 if __name__ == "__main__":

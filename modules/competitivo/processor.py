@@ -69,7 +69,8 @@ def _pelea_dict(p: kills.Partida, pe: kills.Pelea, n_partida: int, n: int,
         "ganador": pe.ganador, "marcador": pe.marcador, "kills": pe.total,
         "objetivo": pe.objetivo, "multikill": pe.multikill, "cierra": pe.cierra,
         "puntaje": pe.puntaje, "bruto": pe.bruto, "desglose": pe.desglose,
-        "elegible": pe.elegible, "forzada": pe.forzada, "seleccionada": id(pe) in seleccion,
+        "elegible": pe.elegible, "forzada": pe.forzada, "relleno": pe.relleno,
+        "seleccionada": id(pe) in seleccion,
         "duracion": round(pe.duracion, 1),
         "antes": _iso(pe.antes), "primera": _iso(pe.primera), "ultima": _iso(pe.ultima),
         "clip_inicio": _iso(pe.clip_inicio), "clip_fin": _iso(pe.clip_fin),
@@ -158,9 +159,13 @@ def process(job_id: str, params: CompetitivoParams) -> None:
 
         datos_partidas, clips = [], []
         for i, (p, pe_lista, ancla) in enumerate(zip(partidas, peleas, anclas), 1):
+            minutos = kills.minutos_de(p)
             datos_partidas.append({
                 "n": i, "game_id": p.game_id, "azul": p.azul, "rojo": p.rojo,
-                "inicio_utc": _iso(p.t0), **ancla,
+                "inicio_utc": _iso(p.t0), "minutos": minutos,
+                "objetivo_s": kills.objetivo_s(reglas, minutos),
+                "seleccion_s": round(sum(pe.duracion for pe in pe_lista if id(pe) in seleccion), 1),
+                **ancla,
             })
             clips += [_pelea_dict(p, pe, i, j, seleccion) for j, pe in enumerate(pe_lista, 1)]
         ids_sel = [c["id"] for c in sorted(clips, key=lambda c: (c["partida"], c["clip_inicio"]))
