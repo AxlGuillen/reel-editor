@@ -9,7 +9,7 @@ Contrato (también para que Claude lo opere solo; ver CLAUDE.md):
     GET  /frame/<job_id>/<n>      → JPG de control del ancla de la partida n
     GET  /portada/<job_id>        → portada.jpg (después de /finish)
     GET  /resumenes               → resúmenes guardados (carpeta persistente)
-    GET  /resumenes/<carpeta>/<archivo> → un archivo de un resumen guardado
+    GET  /resumenes/<ruta>        → un archivo guardado (ruta relativa, con subcarpetas)
 """
 import os
 import threading
@@ -18,7 +18,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 import config
 from core import job_manager
-from modules.competitivo import processor
+from modules.competitivo import processor, salida
 from modules.competitivo.schema import CompetitivoParams, FinishParams
 
 bp = Blueprint("competitivo", __name__, url_prefix="/api/competitivo")
@@ -85,8 +85,8 @@ def download(job_id):
     res, err = _resultado(job_id)
     if err:
         return err
-    return send_file(os.path.join(res["carpeta"], res["resumen"]), mimetype="video/mp4",
-                     as_attachment=True, download_name=f"{res['nombre']} - resumen.mp4")
+    nombre = res["resumen"] if res.get("organizada") else f"{res['nombre']} - resumen.mp4"
+    return send_file(res["video"], mimetype="video/mp4", as_attachment=True, download_name=nombre)
 
 
 @bp.get("/download/<job_id>/<int:n>")
@@ -131,11 +131,11 @@ def resumenes():
     return jsonify(carpeta=config.COMPETITIVO_FOLDER, resumenes=processor.listar_resumenes())
 
 
-@bp.get("/resumenes/<carpeta>/<archivo>")
-def resumen_archivo(carpeta, archivo):
-    base = os.path.realpath(config.COMPETITIVO_FOLDER)
-    path = os.path.realpath(os.path.join(base, os.path.basename(carpeta), os.path.basename(archivo)))
-    if not path.startswith(base + os.sep) or not os.path.isfile(path):
+@bp.get("/resumenes/<path:ruta>")
+def resumen_archivo(ruta):
+    # La ruta es relativa a COMPETITIVO_FOLDER y no puede salir de ahí.
+    path = salida.resolver(ruta)
+    if not path:
         return jsonify(error="Archivo no encontrado."), 404
     tipos = {".mp4": "video/mp4", ".json": "application/json", ".jpg": "image/jpeg"}
     return send_file(path, mimetype=tipos.get(os.path.splitext(path)[1].lower(), "application/octet-stream"),

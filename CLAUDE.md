@@ -300,7 +300,7 @@ Música (link o archivo)       ──→ baja mientras habla el avatar, sube a t
 
 ### 10. competitivo — `/api/competitivo` (pipeline, dos fases, ancla automática)
 
-Highlights de una serie de Worlds **solo con kills** (los objetivos sin pelea nunca dan clip), sacados del directo de **Ibai en YouTube** (`@Ibai_Extra`, 1080p60) con un layout vertical propio. Entrega `resumen.mp4` (por defecto **4 s por minuto de partida**, entre 90 y 180 s por mapa) y cada clip suelto en una **carpeta persistente** (`config.COMPETITIVO_FOLDER`, por defecto `~/Videos/ReelForge/Competitivo/<fecha> <A> vs <B>/`, que "Limpiar archivos" no toca), con un `info.json`.
+Highlights de una serie de Worlds **solo con kills** (los objetivos sin pelea nunca dan clip), sacados del directo de **Ibai en YouTube** (`@Ibai_Extra`, 1080p60) con un layout vertical propio. Entrega `resumen.mp4` (por defecto **4 s por minuto de partida**, entre 90 y 180 s por mapa) y cada clip suelto en una **carpeta persistente** (`config.COMPETITIVO_FOLDER`, por defecto `~/Videos/ReelForge/Competitivo/`, que "Limpiar archivos" no toca), con un `info.json`. Con `carpeta_dia` y `partido` queda **por día y partido**; sin ellos, una carpeta por serie como siempre (ver "Salida" abajo).
 
 ```
 feed lolesports (window, ~5 frames/s) ─kills.py─→ peleas + puntaje ─→ selección (presupuesto)
@@ -314,6 +314,7 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `layout.py` | Layout, análisis del tramo (cámara del set, repeticiones, contador de kills) y comando de render |
 | `fuente.py` | yt-dlp con la config del Downloader (cookies, runtimes JS, reintentos): hora de inicio del directo y tramos HLS |
 | `intro.py` | Portada (vertical, `portada.jpg`) y placa (horizontal) con plantilla fija; voz de la intro por URL; segmento "aparte" |
+| `salida.py` | Dónde queda cada resumen: estructura por día/partido o por serie, nombres limpios para Windows, publicación sin pisar (lo anterior a `_descartados`), listado y rutas seguras para `/resumenes` |
 | `schema.py` / `processor.py` / `routes.py` | Contrato estándar de dos fases |
 
 **Layout** (1080x1920, de arriba a abajo): barra de la transmisión (cámaras de jugadores + tabla de stats; en peleas, retratos con vida) con aire y esquinas redondeadas → gameplay con zoom (default **1.3×**, centrado donde el observador pone la acción, sin desenfoque) → marcador oficial → cámara del set de Ibai al 70 % del ancho. Con zoom < ~1.6 el gameplay no llena su alto (la zona limpia de la fuente mide 712 px): la barra baja, marcador y cámara suben, y lo que sobra queda arriba y abajo de todo (las franjas que tapa la UI de TikTok). Watermark opaco "parado" en la esquina inferior derecha (se recorta su margen transparente). Zonas medidas en 169 frames (ver docstring de `layout.py`); la **y de la cámara del set cambia por partida** y se detecta por las aristas del recuadro. Tope de 16 Mbps (con cq 18 salía a 34 Mbps).
@@ -342,6 +343,8 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `marca_4xl` | bool | false | el `watermark`, chico y al 40 % en la portada |
 | `intro_volumen_juego` | int | 17 | 0–100: % del audio del juego mientras habla la voz (modo `encima`) |
 | `placa_max_s` | float | 5 | 1–15: lo máximo que se ve la placa en modo `encima` (la voz sigue igual hasta `D`) |
+| `carpeta_dia` / `partido` | str | "" | máx. 80; van juntos. P. ej. "Play-In Día 3 (17-10)" y "MVK vs FUR" (el mismo para todos los mapas de la serie, no depende del lado) |
+| `titulo` | str | "" | máx. 120: el video queda "Mapa N - <titulo>.mp4" (sin título, "Mapa N.mp4") |
 
 Todos estos campos se pueden mandar también en `/finish` (lo que no llega se hereda de la fase 1; el modo `auto` los pasa con `FinishParams.desde()`).
 
@@ -362,15 +365,26 @@ GET  /api/competitivo/status/<id>  → {status, progress, stage, error, finished
 POST /api/competitivo/finish     job_id, [anchors='{"gameId": "1:22:15"|4935}'],
         [clips='["2-9","3-19"]'], [zoom, color, watermark, marca_alto,
         intro_modo, intro_audio_url, intro_volumen_juego, placa_max_s, mapa, fase, equipo_*, logo_*,
-        serie_marcador, marca_4xl]  → 202
+        serie_marcador, marca_4xl, carpeta_dia, partido, titulo]  → 202
 GET  /api/competitivo/download/<id>      → resumen.mp4   (·/<n> → clip n)
 GET  /api/competitivo/frame/<id>/<n>     → JPG de control del ancla de la partida n
 GET  /api/competitivo/portada/<id>       → portada.jpg (después de finish)
-GET  /api/competitivo/resumenes          → resúmenes guardados (carpeta persistente)
-GET  /api/competitivo/resumenes/<carpeta>/<archivo>
+GET  /api/competitivo/resumenes          → resúmenes guardados: [{estructura, nombre, dia, partido, mapa,
+        titulo, ruta, portada, clips:[{archivo, titulo, duracion, ruta}], creado, duracion_total, intro}]
+GET  /api/competitivo/resumenes/<ruta>   → cualquier archivo de ahí (ruta relativa, con subcarpetas)
 ```
 
-Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fase 2 en `finished=true` con `resultado.carpeta`. Al terminar, `status` y `resultado` traen `portada` ("portada.jpg") e `intro: {modo_usado, duracion_s, motivo, placa_s}` (también en `info.json`); `info.json` además `intro_modo_usado`. **Como lo opera Claude:** un `/process` **por mapa** (`game_ids=<uno>`) con `modo=auto`, `intro_audio_url` (la voz de Fish Audio), `mapa`, `fase`, `equipo_*`, `logo_*`, `serie_marcador`; poll hasta `finished=true`; bajar `resumen.mp4` y `portada.jpg`. Para operarlo de punta a punta: `process` con `modo=auto` → poll de `status` hasta `finished=true` (si queda en `esperando_ancla` con `aviso`, revisar el `frame` de esa partida, corregir con `anchors` y llamar `finish`). Para elegir otras peleas: tomar ids de `clips` y pasarlos en `finish`. Tiempos medidos: 3 partidas y 3 clips, fase 1 ~64 s y fase 2 ~54 s; un mapa con intro (3 clips), ~110–115 s en total. Las sesiones viven en memoria: si el server se reinicia (el modo debug recarga al cambiar código), hay que repetir la fase 1. Tests: `tests/competitivo/` (fixture real de KC-C9 G1).
+**Salida (`salida.py`).** Con `carpeta_dia` y `partido`:
+
+```
+COMPETITIVO_FOLDER/<carpeta_dia>/<partido>/Mapa N - <titulo>.mp4
+COMPETITIVO_FOLDER/<carpeta_dia>/<partido>/_extras/Mapa N/          clips, portada.jpg, info.json
+COMPETITIVO_FOLDER/<carpeta_dia>/<partido>/_extras/_descartados/    versiones anteriores
+```
+
+Los tres campos se limpian para Windows (`:` → ` -`; fuera `< > " / \ | ? *`, controles, puntos o espacios al final y nombres reservados). Se renderiza en una carpeta temporal dentro de `_extras` y **recién al terminar** se publica: el video anterior de ese mapa (`Mapa N.mp4` o `Mapa N - *.mp4`, con cualquier título) y su `_extras/Mapa N/` pasan a `_descartados/` con (2), (3)… si ya hay uno con ese nombre. Nunca se pisa nada, y si el job falla lo anterior queda intacto. `/resumenes` recorre día → partido (ignora `_extras` y `_descartados`) y sigue listando las carpetas de serie viejas con `dia`/`partido` en null. `/resumenes/<ruta>` valida con la ruta real que no salga de `COMPETITIVO_FOLDER` (`..`, absolutas u otra unidad → 404).
+
+Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fase 2 en `finished=true` con `resultado`: `carpeta` (la de clips, portada e info.json), `video` (ruta completa del resumen), `ruta` (relativa, para `/resumenes/<ruta>`), `resumen` (nombre del archivo) y `organizada`. Al terminar, `status` y `resultado` traen `portada` ("portada.jpg") e `intro: {modo_usado, duracion_s, motivo, placa_s}` (también en `info.json`); `info.json` además `intro_modo_usado`. **Como lo opera Claude:** un `/process` **por mapa** (`game_ids=<uno>`) con `modo=auto`, `intro_audio_url` (la voz de Fish Audio), `mapa`, `fase`, `equipo_*`, `logo_*`, `serie_marcador`, `carpeta_dia`, `partido` y `titulo`; poll hasta `finished=true`; el video queda en `<carpeta_dia>/<partido>/Mapa N - <titulo>.mp4` (también `GET /download/<id>` y `/portada/<id>`). Para operarlo de punta a punta: `process` con `modo=auto` → poll de `status` hasta `finished=true` (si queda en `esperando_ancla` con `aviso`, revisar el `frame` de esa partida, corregir con `anchors` y llamar `finish`). Para elegir otras peleas: tomar ids de `clips` y pasarlos en `finish`. Tiempos medidos: 3 partidas y 3 clips, fase 1 ~64 s y fase 2 ~54 s; un mapa con intro (3 clips), ~110–115 s en total. Las sesiones viven en memoria: si el server se reinicia (el modo debug recarga al cambiar código), hay que repetir la fase 1. Tests: `tests/competitivo/` (fixture real de KC-C9 G1).
 
 ### assets — blueprint de assets persistentes
 

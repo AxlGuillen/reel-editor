@@ -8,7 +8,7 @@ import unicodedata
 from dataclasses import dataclass
 
 import config
-from modules.competitivo import engine, intro, kills, layout
+from modules.competitivo import engine, intro, kills, layout, salida
 
 COLORES = set(layout.COLOR)
 MODOS = {"revisar", "auto"}
@@ -16,6 +16,7 @@ INTRO_MODOS = {"encima", "aparte", "off"}
 VOLUMEN_JUEGO_DEFECTO = round(layout.DUCK_VOL * 100)   # % del juego mientras habla la voz
 # Campos que /finish hereda de la fase 1 si no llegan (render e intro).
 CAMPOS_RENDER = ("zoom", "color", "watermark", "marca_alto")
+CAMPOS_SALIDA = ("carpeta_dia", "partido", "titulo")
 CAMPOS_INTRO = ("intro_modo", "intro_audio_url", "mapa", "fase", "equipo_azul", "equipo_rojo",
                 "logo_azul_url", "logo_rojo_url", "serie_marcador", "marca_4xl", "intro_volumen_juego",
                 "placa_max_s")
@@ -111,6 +112,31 @@ def _intro(form, base=None) -> dict:
     }
 
 
+def _nombre(form, name: str, max_len: int, default: str) -> str:
+    """Nombre de carpeta o de archivo: el texto, limpio para Windows."""
+    raw = _texto(form, name, max_len, default)
+    limpio = salida.limpiar(raw)
+    if raw and not limpio:
+        raise ValueError(f"'{name}' no tiene ningún carácter válido para un nombre de archivo.")
+    return limpio
+
+
+def _salida(form, base=None) -> dict:
+    """Carpeta de salida por día y partido (opcional). En /finish, lo que no
+    llega se hereda de la fase 1."""
+    def b(campo):
+        return getattr(base, campo) if base else ""
+
+    datos = {
+        "carpeta_dia": _nombre(form, "carpeta_dia", 80, b("carpeta_dia")),
+        "partido": _nombre(form, "partido", 80, b("partido")),
+        "titulo": _nombre(form, "titulo", 120, b("titulo")),
+    }
+    if bool(datos["carpeta_dia"]) != bool(datos["partido"]):
+        raise ValueError("'carpeta_dia' y 'partido' van juntos: mandá los dos (o ninguno).")
+    return datos
+
+
 def _color(form, default: str) -> str:
     color = (form.get("color") or default).strip().lower()
     if color not in COLORES:
@@ -151,6 +177,10 @@ class CompetitivoParams:
     marca_4xl: bool = False            # el watermark, chico y translúcido, en la portada
     intro_volumen_juego: int = VOLUMEN_JUEGO_DEFECTO   # "encima": el juego (%) mientras habla la voz
     placa_max_s: float = intro.PLACA_MAX_S             # "encima": lo máximo que se ve la placa
+    # Salida organizada (ver salida.py): <carpeta_dia>/<partido>/Mapa N - <titulo>.mp4
+    carpeta_dia: str = ""
+    partido: str = ""
+    titulo: str = ""
 
     @classmethod
     def from_form(cls, form) -> "CompetitivoParams":
@@ -190,6 +220,7 @@ class CompetitivoParams:
             post_s=_num(form, "post_s", 5, 0, 15, float),
             **_render(form),
             **_intro(form),
+            **_salida(form),
         )
 
     @property
@@ -224,13 +255,16 @@ class FinishParams:
     marca_4xl: bool = False
     intro_volumen_juego: int = VOLUMEN_JUEGO_DEFECTO
     placa_max_s: float = intro.PLACA_MAX_S
+    carpeta_dia: str = ""
+    partido: str = ""
+    titulo: str = ""
 
     @classmethod
     def desde(cls, base: CompetitivoParams) -> "FinishParams":
         """Todo heredado de la fase 1: lo usa el modo auto, que llama a finish()
         sin pasar por el form (así no se pierde ningún campo nuevo)."""
         return cls(anclas={}, clips=None,
-                   **{c: getattr(base, c) for c in CAMPOS_RENDER + CAMPOS_INTRO})
+                   **{c: getattr(base, c) for c in CAMPOS_RENDER + CAMPOS_INTRO + CAMPOS_SALIDA})
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "FinishParams":
@@ -259,4 +293,5 @@ class FinishParams:
                 raise ValueError("Elegí al menos un clip.")
         else:
             clips = None
-        return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base))
+        return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base),
+                   **_salida(form, base))

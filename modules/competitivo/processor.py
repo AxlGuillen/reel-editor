@@ -16,14 +16,15 @@ Flujo de DOS FASES con ancla por partida (como subtitles / reel_express):
   Fase 2  finish()   con las anclas (las detectadas o las que corrigió el
                      usuario) baja SOLO los tramos de los clips elegidos, ajusta
                      cada clip con sus propias kills, lo renderiza con el layout
-                     y concatena resumen.mp4. Todo queda en una carpeta
-                     persistente por serie (config.COMPETITIVO_FOLDER).
+                     y concatena resumen.mp4. Todo queda en la carpeta
+                     persistente (config.COMPETITIVO_FOLDER): por día y
+                     partido si llegan carpeta_dia y partido, o por serie
+                     (ver salida.py).
 """
 from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -31,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 
 import config
 from core import ffmpeg_runner, job_manager
-from modules.competitivo import fuente, intro, kills, layout
+from modules.competitivo import fuente, intro, kills, layout, salida
 from modules.competitivo.schema import CompetitivoParams, FinishParams
 
 OFFSET_FORMULA_S = 38      # vod ≈ (utc − inicio del directo) + 38 s (medido en KC-C9 G3, día 1)
@@ -189,23 +190,6 @@ def process(job_id: str, params: CompetitivoParams) -> None:
 
 
 # --- Fase 2 ---------------------------------------------------------------------
-def _carpeta_salida(partidas: list[dict], mapa: int | None = None) -> str:
-    """<fecha> <A> vs <B> (· Mapa N si el trabajo es de un solo mapa, que es como
-    lo opera Claude: un /process por mapa)."""
-    primera = partidas[0]
-    fecha = datetime.fromisoformat(primera["inicio_utc"]).astimezone().strftime("%Y-%m-%d")
-    nombre = f"{fecha} {primera['azul']} vs {primera['rojo']}"
-    if mapa and len(partidas) == 1:
-        nombre += f" · Mapa {mapa}"
-    nombre = re.sub(r'[<>:"/\\|?*]+', "", nombre).strip()
-    base = os.path.join(config.COMPETITIVO_FOLDER, nombre)
-    destino, n = base, 2
-    while os.path.exists(destino):
-        destino, n = f"{base} ({n})", n + 1
-    os.makedirs(destino)
-    return destino
-
-
 def _render_con_respaldo(render, enc: intro.Encuentro, carpeta: str):
     """render_portada / render_placa; si falla con logos, de nuevo con los
     códigos de los equipos: la portada nunca tumba el job."""
@@ -235,7 +219,7 @@ def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
 
 def finish(job_id: str, fp: FinishParams) -> None:
     sesion = _SESIONES.get(job_id)
-    temp = salida = None
+    temp = dest = None
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe (¿se reinició el servidor?). Volvé a generar la propuesta.")
@@ -277,8 +261,9 @@ def finish(job_id: str, fp: FinishParams) -> None:
         modo_intro = fp.intro_modo if voz else "off"
         intro_info = {"modo_pedido": fp.intro_modo, "modo_usado": modo_intro,
                       "duracion_s": voz.D if voz else None, "motivo": None, "placa_s": None}
-        salida = _carpeta_salida(sesion["partidas"], fp.mapa)
-        intro.guardar_portada(portada, salida)
+        dest = salida.preparar(sesion["partidas"], fp.mapa, job_id, fp.carpeta_dia, fp.partido, fp.titulo)
+        carpeta = dest.carpeta
+        intro.guardar_portada(portada, carpeta)
         marca = os.path.join(config.WATERMARKS_FOLDER, fp.watermark) if fp.watermark else None
         intro_mp4 = None
         placa = _render_con_respaldo(intro.render_placa, enc, temp) if modo_intro == "encima" else None
@@ -340,13 +325,13 @@ def finish(job_id: str, fp: FinishParams) -> None:
                                                                    fp.placa_max_s)
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
                 render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
-                cmd = layout.build_command(tramo, os.path.join(salida, archivo), an.vivo_desde, dur,
+                cmd = layout.build_command(tramo, os.path.join(carpeta, archivo), an.vivo_desde, dur,
                                            an.camara_y, **render)
                 lo, hi = 5 + int(85 * (k - 1) / n), 5 + int(85 * k / n)
                 con_intro = k == 1 and modo_intro == "encima"
                 ffmpeg_runner.run(cmd, job_id, total_duration=dur,
                                   progress_range=(lo, (lo + hi) // 2 if con_intro else hi))
-                en_resumen.append(os.path.join(salida, archivo))
+                en_resumen.append(os.path.join(carpeta, archivo))
                 if con_intro:
                     # El clip suelto queda limpio; la versión con la intro encima es
                     # solo para el resumen.
@@ -380,7 +365,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
             for ruta in partes:
                 ruta = ruta.replace("\\", "/").replace("'", "'\\''")
                 fh.write(f"file '{ruta}'\n")
-        resumen = os.path.join(salida, "resumen.mp4")
+        resumen = dest.resumen
         ffmpeg_runner.run(layout.build_concat(lista, resumen),
                           job_id, total_duration=sum(h["duracion"] for h in hechos) + (voz.D if intro_mp4 else 0),
                           progress_range=(92, 99))
@@ -393,6 +378,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
             "creado": datetime.now(timezone.utc).isoformat(),
             "serie": f"{sesion['partidas'][0]['azul']} vs {sesion['partidas'][0]['rojo']}",
             "mapa": fp.mapa,
+            "dia": fp.carpeta_dia or None, "partido": fp.partido or None, "titulo": fp.titulo or None,
+            "video": dest.ruta_video,
             "equipos": {"azul": enc.azul, "rojo": enc.rojo},
             "vod": {**sesion["vod"], "inicio_utc": _iso(inicio), "url": params.vod_url},
             "partidas": [{**d, "ancla_usada_s": round(offsets[d["game_id"]] + (
@@ -405,23 +392,27 @@ def finish(job_id: str, fp: FinishParams) -> None:
             "duracion_total": duracion_total,
             "parametros": {**asdict(params), "render": asdict(fp)},
         }
-        with open(os.path.join(salida, "info.json"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(carpeta, "info.json"), "w", encoding="utf-8") as fh:
             json.dump(info, fh, ensure_ascii=False, indent=2)
+        # Organizada: lo anterior de este mapa pasa a _descartados y lo nuevo
+        # queda en su lugar (recién ahora, cuando ya está todo hecho).
+        salida.publicar(dest)
         intro_corto = {"modo_usado": modo_intro, "duracion_s": intro_info["duracion_s"],
                        "motivo": intro_info["motivo"], "placa_s": intro_info["placa_s"]}
         job_manager.update_job(
             job_id, status="done", progress=100, stage="listo", finished=True,
-            output_path=resumen, portada="portada.jpg", intro=intro_corto,
-            resultado={"carpeta": salida, "nombre": os.path.basename(salida),
-                       "resumen": "resumen.mp4", "portada": "portada.jpg", "intro": intro_corto,
+            output_path=dest.video_final, portada="portada.jpg", intro=intro_corto,
+            resultado={"carpeta": dest.carpeta, "nombre": os.path.basename(dest.carpeta),
+                       "video": dest.video_final, "ruta": dest.ruta_video,
+                       "resumen": os.path.basename(dest.video_final), "organizada": dest.organizada,
+                       "portada": "portada.jpg", "intro": intro_corto,
                        "clips": hechos, "duracion_total": duracion_total},
         )
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
-        # Sin info.json, la carpeta de la serie quedó a medias: se borra (si no,
-        # el reintento terminaba en "… (2)" con una carpeta rota al lado).
-        if salida and not os.path.isfile(os.path.join(salida, "info.json")):
-            shutil.rmtree(salida, ignore_errors=True)
+        # Lo que quedó a medias se borra (si no, el reintento terminaba en
+        # "… (2)" con una carpeta rota al lado); lo publicado antes, nunca.
+        salida.descartar(dest)
     finally:
         if temp:
             shutil.rmtree(temp, ignore_errors=True)
@@ -430,26 +421,4 @@ def finish(job_id: str, fp: FinishParams) -> None:
 # --- Resúmenes guardados ----------------------------------------------------------
 def listar_resumenes() -> list[dict]:
     """Los resúmenes de la carpeta persistente, del más nuevo al más viejo."""
-    base = config.COMPETITIVO_FOLDER
-    if not os.path.isdir(base):
-        return []
-    out = []
-    for nombre in os.listdir(base):
-        info_path = os.path.join(base, nombre, "info.json")
-        if not os.path.isfile(info_path):
-            continue
-        try:
-            with open(info_path, encoding="utf-8") as fh:
-                info = json.load(fh)
-        except (OSError, ValueError):
-            continue
-        out.append({
-            "nombre": nombre, "serie": info.get("serie"), "creado": info.get("creado"),
-            "duracion_total": info.get("duracion_total"),
-            "clips": [{"archivo": c["archivo"], "titulo": c["titulo"], "duracion": c["duracion"]}
-                      for c in info.get("clips", [])],
-            "resumen": "resumen.mp4" if os.path.isfile(os.path.join(base, nombre, "resumen.mp4")) else None,
-            "portada": "portada.jpg" if os.path.isfile(os.path.join(base, nombre, "portada.jpg")) else None,
-            "intro": info.get("intro_modo_usado"),
-        })
-    return sorted(out, key=lambda r: r["creado"] or "", reverse=True)
+    return salida.listar()
