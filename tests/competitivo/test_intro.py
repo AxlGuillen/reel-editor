@@ -33,6 +33,18 @@ class ValidacionIntro(unittest.TestCase):
         self.assertEqual((p.intro_modo, p.intro_audio_url, p.mapa, p.fase), ("encima", "", 1, ""))
         self.assertEqual((p.equipo_azul, p.logo_azul_url, p.serie_marcador, p.marca_4xl), ("", "", "", False))
         self.assertEqual(p.intro_volumen_juego, 17)
+        self.assertEqual(p.placa_max_s, 5.0)
+
+    def test_placa_max(self):
+        self.assertEqual(_base(placa_max_s="1").placa_max_s, 1.0)
+        self.assertEqual(_base(placa_max_s="7.5").placa_max_s, 7.5)
+        for malo in ("0.9", "15.5", "cinco"):
+            with self.assertRaises(ValueError, msg=malo):
+                _base(placa_max_s=malo)
+        base = _base(placa_max_s="8")
+        self.assertEqual(FinishParams.from_form({}, base).placa_max_s, 8.0)          # se hereda
+        self.assertEqual(FinishParams.from_form({"placa_max_s": "3"}, base).placa_max_s, 3.0)
+        self.assertEqual(FinishParams.desde(base).placa_max_s, 8.0)                 # modo auto
 
     def test_volumen_del_juego(self):
         self.assertEqual(_base(intro_volumen_juego="0").intro_volumen_juego, 0)
@@ -295,15 +307,15 @@ def _ffprobe(path: str) -> dict:
     return {"video": s["video"], "audio": s["audio"], "duracion": float(d["format"]["duration"])}
 
 
-def _sinteticos(carpeta: str, voz_s: float = 3.0) -> tuple[str, str]:
+def _sinteticos(carpeta: str, voz_s: float = 3.0, tramo_s: float = 12) -> tuple[str, str]:
     """Una voz (seno) y un tramo 1920x1080@60 etiquetado bt709/tv como el VOD de Ibai."""
     voz = os.path.join(carpeta, "voz.mp3")
     subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi",
                     "-i", f"sine=f=330:d={voz_s}", "-af", "volume=0.2", "-c:a", "libmp3lame", voz], check=True)
     tramo = os.path.join(carpeta, "tramo.mp4")
     subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error",
-                    "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=60:d=12",
-                    "-f", "lavfi", "-i", "sine=f=440:d=12", "-shortest",
+                    "-f", "lavfi", "-i", f"testsrc2=s=1920x1080:r=60:d={tramo_s}",
+                    "-f", "lavfi", "-i", f"sine=f=440:d={tramo_s}", "-shortest",
                     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                     "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
                     "-color_range", "tv", "-c:a", "aac", tramo], check=True)
@@ -539,6 +551,59 @@ class IntroEncima(unittest.TestCase):
         self.assertEqual(I.fin_de_placa(4.0, 10.0), 4.0)        # la voz termina antes: la intro entera
         self.assertEqual(I.fin_de_placa(9.0, 4.2), 3.7)         # kill antes de D: kill − 0.5 s
         self.assertEqual(I.fin_de_placa(9.0, 3.0), 2.5)
+        self.assertEqual(I.fin_de_placa(15.0, 10.0), 5.0)       # placa_max_s (default 5)
+        self.assertEqual(I.fin_de_placa(15.0, 10.0, 8), 8.0)
+        self.assertEqual(I.fin_de_placa(15.0, 10.0, 15), 9.5)
+
+
+class PlacaMaxima(unittest.TestCase):
+    """Voz larga (D = 15 s) y primera kill a los 10 s: la placa dura 5 s
+    (placa_max_s) y el juego sigue bajado hasta los 15 s."""
+
+    @classmethod
+    def setUpClass(cls):
+        from modules.competitivo import layout
+        cls.L = layout
+        cls.tmp = tempfile.TemporaryDirectory()
+        d = cls.tmp.name
+        _, cls.tramo = _sinteticos(d, tramo_s=20)
+        silencio = os.path.join(d, "silencio.mp3")
+        subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        "anullsrc=r=48000:cl=stereo", "-t", "14.6", "-c:a", "libmp3lame", silencio], check=True)
+        placa = I.render_placa(I.Encuentro(mapa=1, codigo_azul="KC", codigo_rojo="C9"),
+                               os.path.join(d, "placa"), fondo=None)
+        cls.D = 15.0
+        cls.placa_s = I.fin_de_placa(cls.D, 10.0)
+        cls.intro = layout.IntroEncima(placa=placa, voz=silencio, D=cls.D, placa_fin=cls.placa_s)
+        cls.limpio = os.path.join(d, "limpio.mp4")
+        ffmpeg_runner.capture(layout.build_command(cls.tramo, cls.limpio, 0.0, 20.0, layout.CAMARA_Y_DEFECTO))
+        cls.con = os.path.join(d, "con.mp4")
+        ffmpeg_runner.capture(layout.build_command(cls.tramo, cls.con, 0.0, 20.0, layout.CAMARA_Y_DEFECTO,
+                                                   intro=cls.intro))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_modo_y_comando(self):
+        self.assertEqual(self.placa_s, 5.0)
+        self.assertEqual(I.modo_para_clip1(self.D, 20.0, 10.0), ("encima", None))
+        cmd = self.L.build_command(self.tramo, "x.mp4", 0.0, 20.0, self.L.CAMARA_Y_DEFECTO, intro=self.intro)
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        self.assertEqual(cmd[cmd.index(self.intro.placa) - 2], "5.000")
+        self.assertIn("enable='between(t,0,5.000)'", fc)
+        self.assertIn("(t-15.000)/0.4", fc)
+
+    def test_placa_5_s_y_ducking_hasta_15(self):
+        frame, rms = IntroEncima._frame, IntroEncima._rms
+        g = self.L.geometria(1.3)
+        y0 = self.L.ARRIBA_H + g.extra_arriba
+        zona = (slice(y0 + 200, y0 + g.juego_h - 200), slice(200, 880))
+        self.assertGreater(abs(frame(self, self.con, 2.0)[zona] - frame(self, self.limpio, 2.0)[zona]).mean(), 20)
+        self.assertLess(abs(frame(self, self.con, 5.6)[zona] - frame(self, self.limpio, 5.6)[zona]).mean(), 3)
+        lleno = rms(self, self.con, 16.0, 3.0)
+        self.assertAlmostEqual(rms(self, self.con, 6.0, 8.5) - lleno, -15.39, delta=1.0)   # bajado hasta D
+        self.assertAlmostEqual(lleno, rms(self, self.limpio, 16.0, 3.0), delta=0.5)
 
 
 if __name__ == "__main__":

@@ -336,7 +336,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                         intro_info.update(modo_usado="aparte", motivo=motivo)
                         intro_mp4 = render_aparte()
                     else:
-                        intro_info["placa_s"] = intro.fin_de_placa(voz.D, t_kill - an.vivo_desde)
+                        intro_info["placa_s"] = intro.fin_de_placa(voz.D, t_kill - an.vivo_desde,
+                                                                   fp.placa_max_s)
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
                 render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
                 cmd = layout.build_command(tramo, os.path.join(salida, archivo), an.vivo_desde, dur,
@@ -407,7 +408,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
         with open(os.path.join(salida, "info.json"), "w", encoding="utf-8") as fh:
             json.dump(info, fh, ensure_ascii=False, indent=2)
         intro_corto = {"modo_usado": modo_intro, "duracion_s": intro_info["duracion_s"],
-                       "motivo": intro_info["motivo"]}
+                       "motivo": intro_info["motivo"], "placa_s": intro_info["placa_s"]}
         job_manager.update_job(
             job_id, status="done", progress=100, stage="listo", finished=True,
             output_path=resumen, portada="portada.jpg", intro=intro_corto,

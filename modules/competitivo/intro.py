@@ -538,6 +538,7 @@ def preparar_voz(url: str, carpeta: str) -> Voz:
 
 KILL_MIN_S = 3.0         # "encima" necesita que la primera kill del clip 1 caiga después de esto
 PLACA_ANTES_S = 0.5      # la placa se va al menos esto antes de la primera kill
+PLACA_MAX_S = 5.0        # default de placa_max_s: la placa nunca dura más que esto
 
 
 def modo_para_clip1(D: float, dur_clip: float, t_primera_kill: float) -> tuple[str, str | None]:
@@ -555,10 +556,11 @@ def modo_para_clip1(D: float, dur_clip: float, t_primera_kill: float) -> tuple[s
     return "encima", None
 
 
-def fin_de_placa(D: float, t_primera_kill: float) -> float:
-    """Hasta cuándo se ve la placa en "encima": la intro entera o hasta medio
-    segundo antes de la primera kill, lo que llegue primero."""
-    return round(min(D, t_primera_kill - PLACA_ANTES_S), 3)
+def fin_de_placa(D: float, t_primera_kill: float, maximo: float = PLACA_MAX_S) -> float:
+    """Hasta cuándo se ve la placa en "encima": lo primero entre el fin de la
+    intro, medio segundo antes de la primera kill y `maximo` (placa_max_s).
+    Solo se va la placa: la voz y el juego bajado siguen hasta D."""
+    return round(min(D, t_primera_kill - PLACA_ANTES_S, maximo), 3)
 
 
 def sting() -> str | None:
