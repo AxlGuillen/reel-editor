@@ -25,6 +25,7 @@ from modules.subtitles.routes import bp as subtitles_bp
 from modules.competitivo.routes import bp as competitivo_bp
 from modules.beatmap.routes import bp as beatmap_bp
 from modules.edicion.routes import bp as edicion_bp
+from modules.anime_edit.routes import bp as anime_edit_bp
 
 
 def create_app() -> Flask:
@@ -52,6 +53,7 @@ def create_app() -> Flask:
     app.register_blueprint(competitivo_bp)
     app.register_blueprint(beatmap_bp)
     app.register_blueprint(edicion_bp)
+    app.register_blueprint(anime_edit_bp)
 
     @app.route("/")
     def index():

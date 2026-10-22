@@ -45,7 +45,10 @@ def cancion(path: str, **kw) -> str:
     return path
 
 
-COLORES = ("red", "green", "blue", "yellow", "magenta", "cyan", "white", "orange")
+# Vecinos distintos en brillo Y en tono: el scdet de FFmpeg mira sobre todo la
+# luma (rojo → verde puros casi no la cambian) y PySceneDetect promedia tono,
+# saturación y brillo (rojo → amarillo puros solo cambian el tono).
+COLORES = ("0xC0392B", "0xF7DC6F", "0x1F3A93", "0xECF0F1", "0x111111", "0x48C9B0", "0x8E44AD", "0xF39C12")
 
 
 def video_planos(path: str, duraciones: list[float], w: int = 640, h: int = 360,

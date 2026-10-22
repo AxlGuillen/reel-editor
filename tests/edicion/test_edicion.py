@@ -144,7 +144,7 @@ class Render(unittest.TestCase):
                 Segmento(cls.video, ritmo.impacto(2.2, 3.6, 1.5), "b"),
                 Segmento(cls.video, ritmo.rampa(4.1, 5.9, 1.3), "c", vf=R.vf_vertical_blur(540, 960))]
         cls.edl = Edl(segs, ancho=540, alto=960, fps=30, musica=cls.musica, musica_desde=1.0,
-                      eventos=[Evento(1.0, "flash"), Evento(1.0, "zoom"), Evento(2.5, "shake"), Evento(2.5, "rgb")],
+                      eventos=[Evento(0.5, "flash"), Evento(1.0, "zoom"), Evento(2.5, "shake"), Evento(2.5, "rgb")],
                       textos=[Texto(0.1, 0.9, "survive"), Texto(1.0, 2.0, "Caliste", "kill", sub="Xayah")],
                       look="dorado", glow=0.4, viñeta=True, volumen_original=0.2)
         cls.out = os.path.join(cls.tmp, "out.mp4")
@@ -165,8 +165,9 @@ class Render(unittest.TestCase):
     def test_el_flash_cae_en_su_cuadro(self):
         fr = S.frames_gris(self.out, 30)
         brillo = fr.mean(axis=(1, 2))
-        self.assertEqual(int(np.argmax(brillo[20:40])) + 20, 30)
-        self.assertGreater(brillo[30], brillo[27] + 60)
+        # el flash va en 0.5 s, en medio del primer plano (cuadro 15 a 30 fps)
+        self.assertEqual(int(np.argmax(brillo[5:25])) + 5, 15)
+        self.assertGreater(brillo[15], brillo[12] + 60)
 
     def test_los_cortes_caen_donde_planeo(self):
         fr = S.frames_gris(self.out, 30)
