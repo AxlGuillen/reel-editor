@@ -138,7 +138,11 @@ class MontajeParams:
         if not self.carpeta:
             raise ValueError(f"No subiste «{nombre}» ni diste 'carpeta_capas'.")
         real = os.path.realpath(os.path.join(self.carpeta, archivo))
-        if os.path.commonpath([self.carpeta, real]) != self.carpeta:
+        try:
+            dentro = os.path.commonpath([self.carpeta, real]) == self.carpeta
+        except ValueError:          # otra unidad en Windows
+            dentro = False
+        if not dentro:
             raise ValueError(f"«{archivo}» está fuera de la carpeta de capas.")
         if not os.path.isfile(real) or not config.allowed_capa_file(real):
             raise ValueError(f"No existe la capa «{archivo}» (o no es mov, webm, mp4, mkv ni png).")
