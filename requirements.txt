@@ -11,6 +11,11 @@ faster-whisper>=1.2
 # Lee de cada fuente de assets/fonts el nombre que busca libass y sus métricas
 # (modules/subtitles/fonts.py). Sin esto los subtítulos caían a Arial.
 fonttools>=4.40
+# Análisis musical de los edits (beats, compases, energía): modules/beatmap.
+librosa>=0.10
+# Opcionales (los edits funcionan sin ellos; /api/edicion/opciones dice cuáles hay):
+#   pip install beat-this          beats y downbeats con red neuronal (más precisos)
+#   pip install audio-separator    separar la voz para transcribir la letra
 
 # GPU (Windows + NVIDIA): DLLs de CUDA que ctranslate2 necesita en runtime.
 # El processor de subtitles las agrega al PATH automáticamente.

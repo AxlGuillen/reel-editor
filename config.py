@@ -34,6 +34,29 @@ THUMBS_FOLDER = os.path.join(BASE_DIR, "cache", "thumbs")
 COMPETITIVO_FOLDER = os.environ.get("REELFORGE_COMPETITIVO_FOLDER") or os.path.join(
     os.path.expanduser("~"), "Videos", "ReelForge", "Competitivo")
 
+# Análisis de música (beatmap): se cachea por huella del archivo, así la misma
+# canción no se vuelve a analizar en cada edit (temporal: cache/).
+BEATMAPS_FOLDER = os.path.join(BASE_DIR, "cache", "beatmaps")
+
+# LUTs (.cube) para la gradación de los edits: persistentes y versionables.
+LUTS_FOLDER = os.path.join(ASSETS_FOLDER, "luts")
+
+# Edits de anime y montajes: carpeta PERSISTENTE, como la de competitivo.
+# Override: REELFORGE_EDITS_FOLDER.
+EDITS_FOLDER = os.environ.get("REELFORGE_EDITS_FOLDER") or os.path.join(
+    os.path.expanduser("~"), "Videos", "ReelForge", "Edits")
+
+# Montaje: las capas animadas (flyers, láminas) se leen in situ desde esta raíz
+# (p. ej. presentations/<deck>/video-out/laminas). Ninguna ruta puede salir de
+# aquí. Override: REELFORGE_CAPAS_FOLDER.
+CAPAS_FOLDER = os.environ.get("REELFORGE_CAPAS_FOLDER") or os.path.expanduser("~")
+
+# Binarios externos OPCIONALES (ncnn-vulkan: corren en NVIDIA, AMD e Intel, y en
+# Mac). Sin ellos los edits funcionan igual: la cámara lenta duplica cuadros y
+# las fuentes chicas se escalan con lanczos. Override con la ruta completa.
+RIFE_PATH = os.environ.get("REELFORGE_RIFE") or shutil.which("rife-ncnn-vulkan") or ""
+REALESRGAN_PATH = os.environ.get("REELFORGE_REALESRGAN") or shutil.which("realesrgan-ncnn-vulkan") or ""
+
 MAX_UPLOAD_SIZE_MB = 2000
 MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
@@ -95,6 +118,9 @@ ALLOWED_WATERMARK_EXTENSIONS = {"png"}
 ALLOWED_FONT_EXTENSIONS = {"ttf", "otf"}
 # Imágenes usables como fondo (p. ej. el fondo del segmento 1 en hook_reel).
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
+# Capas del montaje: video con alfa (ProRes 4444 .mov, VP9 .webm) o una imagen.
+ALLOWED_CAPA_EXTENSIONS = {"mov", "webm", "mp4", "mkv", "png"}
+ALLOWED_LUT_EXTENSIONS = {"cube"}
 
 # Lienzo vertical de salida (9:16)
 OUTPUT_WIDTH = 1080
@@ -123,6 +149,10 @@ def allowed_image_file(filename: str) -> bool:
 
 def allowed_font_file(filename: str) -> bool:
     return _has_allowed_ext(filename, ALLOWED_FONT_EXTENSIONS)
+
+
+def allowed_capa_file(filename: str) -> bool:
+    return _has_allowed_ext(filename, ALLOWED_CAPA_EXTENSIONS)
 
 
 # Fuente por defecto, EXPLÍCITA. Antes se tomaba "la primera de la carpeta" en
