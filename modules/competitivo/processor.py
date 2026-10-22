@@ -31,9 +31,12 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 import config
-from core import ffmpeg_runner, job_manager
+from core import ffmpeg_runner, file_utils, job_manager
+from modules.beatmap import processor as beatmap
+from modules.competitivo import edit as edit_plan
 from modules.competitivo import fuente, intro, kills, layout, salida
-from modules.competitivo.schema import CompetitivoParams, FinishParams
+from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
+from modules.editing import render as editing
 
 OFFSET_FORMULA_S = 38      # vod ≈ (utc − inicio del directo) + 38 s (medido en KC-C9 G3, día 1)
 VENTANA_ANCLA_S = 30       # margen del tramo que se baja para calcular el ancla
@@ -76,6 +79,9 @@ def _pelea_dict(p: kills.Partida, pe: kills.Pelea, n_partida: int, n: int,
         "antes": _iso(pe.antes), "primera": _iso(pe.primera), "ultima": _iso(pe.ultima),
         "clip_inicio": _iso(pe.clip_inicio), "clip_fin": _iso(pe.clip_fin),
         "eventos": [[_iso(p.frames[k.i].ts), _lado(p, k.equipo)] for k in pe.kills],
+        # Who made each kill of `eventos` (for the edit mode titles).
+        "authors": kills.kill_authors(p, pe),
+        "counts": [k.cantidad for k in pe.kills],
     }
 
 
@@ -416,6 +422,154 @@ def finish(job_id: str, fp: FinishParams) -> None:
     finally:
         if temp:
             shutil.rmtree(temp, ignore_errors=True)
+
+
+# --- Edit mode ------------------------------------------------------------------
+def _offsets(sesion: dict, anchors: dict[str, float]) -> dict[str, float]:
+    """Offset of each game (vod = utc − start + offset) from its anchor."""
+    inicio: datetime = sesion["vod"]["inicio_utc"]
+    out = {}
+    for d in sesion["partidas"]:
+        anchor = anchors.get(d["game_id"], d["ancla_s"])
+        fb = datetime.fromisoformat(d["primera_kill_utc"])
+        out[d["game_id"]] = anchor - (fb - inicio).total_seconds()
+    return out
+
+
+def _chosen_clips(sesion: dict, ids: list[str] | None) -> list[dict]:
+    by_id = {c["id"]: c for c in sesion["clips"]}
+    ids = ids or [c["id"] for c in sesion["clips"] if c["seleccionada"]]
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise RuntimeError(f"No existe el clip {missing[0]}.")
+    chosen = sorted((by_id[i] for i in ids), key=lambda c: (c["partida"], c["clip_inicio"]))
+    if not chosen:
+        raise RuntimeError("No hay clips para el edit.")
+    return chosen
+
+
+def _edit_destination(ep: EditParams, sesion: dict) -> str:
+    """Where the edit ends up. With day and match, next to the summaries as
+    "Edit Mapa N - <title>.mp4" (it does not start with "Mapa", so publicar()
+    never moves it to _descartados); otherwise in EDITS_FOLDER per series."""
+    name = f"Edit Mapa {ep.mapa}" + (f" - {ep.titulo}" if ep.titulo else "") + ".mp4"
+    if ep.carpeta_dia and ep.partido:
+        folder = os.path.join(config.COMPETITIVO_FOLDER, ep.carpeta_dia, ep.partido)
+    else:
+        d = sesion["partidas"][0]
+        date = datetime.fromisoformat(d["inicio_utc"]).astimezone().strftime("%Y-%m-%d")
+        folder = os.path.join(config.EDITS_FOLDER, salida.limpiar(f"{date} {d['azul']} vs {d['rojo']}"))
+    os.makedirs(folder, exist_ok=True)
+    return salida._unico(folder, name)
+
+
+def edit_text_y(zoom: float) -> float:
+    """Height of the kill titles: the top third of the gameplay (it does not
+    cover the center, where the observer puts the fight)."""
+    g = layout.geometria(zoom)
+    return (layout.ARRIBA_H + g.extra_arriba + g.juego_h * 0.3) / layout.H
+
+
+def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = None) -> None:
+    """The phase 1 fights to the rhythm of a song (see competitivo/edit.py).
+
+    Downloads the same spans as the summary (with the per-clip fine
+    adjustment), but instead of the layout with the casters it builds an EDL
+    where each kill lands on a beat and the key fight on the drop, and renders
+    it with the editing engine."""
+    sesion = _SESIONES.get(phase1_id)
+    temp = downloaded = None
+    try:
+        if not sesion:
+            raise RuntimeError("La sesión ya no existe (¿se reinició el servidor?). Volvé a generar la propuesta.")
+        params: CompetitivoParams = sesion["params"]
+        inicio: datetime = sesion["vod"]["inicio_utc"]
+        offsets = _offsets(sesion, ep.anchors)
+        chosen = _chosen_clips(sesion, ep.clips)
+        temp = os.path.join(sesion["carpeta"], f"edit_{job_id}")
+        os.makedirs(temp, exist_ok=True)
+        job_manager.update_job(job_id, status="processing", progress=1, finished=False, stage="Preparando la música…")
+        if ep.music:
+            music_path = downloaded = beatmap.download_music(job_id, ep.music)
+        if not music_path:
+            raise RuntimeError("Falta la música del edit.")
+        bm = beatmap.get(music_path, ep.engine, ep.lyrics, job_id=job_id)
+        job_manager.update_job(job_id, status="processing", progress=12, stage="Bajando los tramos del VOD…")
+
+        def window(c):
+            off = offsets[c["game_id"]]
+            a = _vod(datetime.fromisoformat(c["clip_inicio"]), inicio, off) - MARGEN_CLIP_S
+            b = _vod(datetime.fromisoformat(c["clip_fin"]), inicio, off) + MARGEN_CLIP_S
+            return a, b
+
+        clips: list[edit_plan.EditClip] = []
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = [ex.submit(fuente.bajar_tramo, params.vod_url, *window(c),
+                                 os.path.join(temp, f"tramo_{k:02d}")) for k, c in enumerate(chosen, 1)]
+            for k, (c, fut) in enumerate(zip(chosen, futures), 1):
+                job_manager.update_job(job_id, stage=f"Pelea {k}/{len(chosen)}: bajando y sincronizando…",
+                                       progress=12 + int(18 * (k - 1) / len(chosen)))
+                span = fut.result()
+                off = offsets[c["game_id"]]
+                a, _ = window(c)
+                seen = layout.cambios_kills(span)
+                expected = [(_vod(datetime.fromisoformat(ts), inicio, off) - a, side) for ts, side in c["eventos"]]
+                shift, matches = layout.estimar_desfase(seen, expected, rango=RANGO_AJUSTE_S)
+                if matches < min(2, len(expected)):
+                    shift = 0.0
+                start = _vod(datetime.fromisoformat(c["clip_inicio"]), inicio, off) - a + shift
+                end = _vod(datetime.fromisoformat(c["clip_fin"]), inicio, off) - a + shift
+                t_kill = _vod(datetime.fromisoformat(c["primera"]), inicio, off) - a + shift
+                span_dur = ffmpeg_runner.probe_duration(span) or (end + MARGEN_CLIP_S)
+                an = layout.analizar(span, t_kill, max(0.0, start - 4), min(span_dur, end))
+                authors = c.get("authors") or [None] * len(c["eventos"])
+                counts = c.get("counts") or [1] * len(c["eventos"])
+                ks = [edit_plan.EditKill(t - ep.kill_lead_s + shift, side, (au or {}).get("player", ""),
+                                         (au or {}).get("champion", ""), n)
+                      for (t, side), au, n in zip(expected, authors, counts)]
+                clips.append(edit_plan.EditClip(
+                    c["id"], span, an.vivo_desde, an.vivo_hasta, ks, c["puntaje"], c.get("multikill"),
+                    c.get("cierra", False), c["titulo"],
+                    layout.edit_geometry(an.camara_y, ep.zoom, ep.with_camera)))
+
+        job_manager.update_job(job_id, stage="Armando el edit al ritmo…", progress=30)
+        op = edit_plan.EditOptions(style=ep.style, speed=ep.speed, max_duration_s=ep.max_duration_s,
+                                   align_drop=ep.align_drop, music_start=ep.music_start, text=ep.text,
+                                   music_accents=ep.music_accents, title=ep.edit_title)
+        res = edit_plan.plan(clips, bm, op)
+        edl = res.edl
+        edl.music = music_path
+        edl.look, edl.lut, edl.glow = ep.look, ep.lut, ep.glow
+        edl.original_volume = ep.game_volume / 100
+        watermark = os.path.join(config.WATERMARKS_FOLDER, ep.watermark) if ep.watermark else None
+        edl.watermark, edl.watermark_height = watermark, ep.marca_alto
+        destination = _edit_destination(ep, sesion)
+        render_info = editing.render(edl, destination, job_id, os.path.join(temp, "render"), progress=(30, 99),
+                                     intensity=ep.intensity, text_y=edit_text_y(ep.zoom),
+                                     watermark_crop=layout.recorte_marca(watermark) if watermark else None)
+        result = {
+            "video": destination, "folder": os.path.dirname(destination), "name": os.path.basename(destination),
+            "download_name": os.path.basename(destination), "total_duration": render_info["dur"],
+            "music_start": round(res.music_start, 3), "drop_aligned": res.drop_aligned,
+            "bpm": bm["bpm"], "used_clips": res.used, "dropped_clips": res.dropped,
+            "warning": res.warning, "edl": edl.to_dict(),
+        }
+        with open(os.path.splitext(destination)[0] + ".json", "w", encoding="utf-8") as fh:
+            json.dump({**result, "created": datetime.now(timezone.utc).isoformat(),
+                       "params": {k: v for k, v in asdict(ep).items() if k not in ("music", "lyrics")}},
+                      fh, ensure_ascii=False, indent=2, default=str)
+        # `resultado` and `aviso` are the keys the competitivo status already exposes.
+        job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
+                               output_path=destination, resultado=result, aviso=res.warning)
+    except Exception as exc:  # noqa: BLE001
+        job_manager.update_job(job_id, status="error", error=str(exc))
+    finally:
+        if temp:
+            shutil.rmtree(temp, ignore_errors=True)
+        if downloaded:
+            file_utils.cleanup_paths(downloaded)
+        elif music_path and music_path.startswith(config.UPLOAD_FOLDER):
+            file_utils.cleanup_paths(music_path)
 
 
 # --- Resúmenes guardados ----------------------------------------------------------

@@ -1,0 +1,49 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-activity"/></svg> Beatmap</h1>
+  <p class="subtitle">El ritmo de una canción: beats, compases, secciones y el drop (lo que usan los edits)</p>
+</div>
+
+<section class="card">
+  <div class="ed-file">
+    <input type="file" id="bm-audio" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.mp4,.mov,.mkv" hidden>
+    <button type="button" id="bm-audio-btn" class="btn-secondary">Elegir canción</button>
+    <span id="bm-audio-name" class="file-name"></span>
+    <span class="ed-or">o</span>
+    <input type="url" id="bm-url" class="ed-input" style="flex:1 1 260px" placeholder="Link de la canción (YouTube, TikTok…)">
+  </div>
+  <div class="ed-row">
+    <label class="control"><span>Motor de beats</span>
+      <select id="bm-engine">
+        <option value="auto">Automático (Beat This! si está)</option>
+        <option value="librosa">librosa</option>
+        <option value="beat_this">Beat This!</option>
+      </select>
+    </label>
+    <label class="control"><span>Idioma de la letra</span>
+      <select id="bm-language">
+        <option value="auto">Detectar</option><option value="es">Español</option><option value="en">Inglés</option>
+        <option value="ja">Japonés</option><option value="pt">Portugués</option>
+      </select>
+    </label>
+  </div>
+  <label class="control-check"><input type="checkbox" id="bm-lyrics"> Sacar la letra palabra por palabra (Whisper)</label>
+  <button id="bm-process-btn" class="btn-primary">Analizar</button>
+  <p class="hint">El preview trae un pitido en cada beat (agudo en el primero de cada compás) y un destello por beat: sirve para validar la rejilla de oído antes de un edit.</p>
+</section>
+
+<div id="bm-progress-wrap" class="card hidden">
+  <div class="progress-bar"><div id="bm-progress-fill"></div></div>
+  <p id="bm-progress-label">Analizando… 0%</p>
+</div>
+
+<div id="bm-result-wrap" class="card card-accent hidden">
+  <div id="bm-stats" class="ed-stats"></div>
+  <div id="bm-sections" class="ed-sections"></div>
+  <video id="bm-video" class="ed-video" controls></video>
+  <p style="margin-top:12px">
+    <a id="bm-json-btn" class="btn-secondary" download>beatmap.json</a>
+    <a id="bm-download-btn" class="btn-secondary" download>Preview</a>
+  </p>
+</div>
+
+<div id="bm-error-wrap" class="card error hidden"><p id="bm-error-msg"></p></div>

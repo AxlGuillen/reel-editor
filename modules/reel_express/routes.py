@@ -9,6 +9,7 @@ from core import file_utils, job_manager
 from modules.library.routes import resolve_clip
 from modules.reel_express import processor
 from modules.reel_express.schema import ReelExpressParams
+from modules.montage.schema import MontageParams
 from modules.subtitles.schema import SubtitlesParams
 
 bp = Blueprint("reel_express", __name__, url_prefix="/api/reel-express")
@@ -96,6 +97,9 @@ def finish():
 
     try:
         sub_params = SubtitlesParams.from_form(data)
+        # Animated layers (montage) in the SAME pass that burns the subtitles:
+        # read from `layers_folder` (the JSON cannot carry files).
+        montage = MontageParams.from_form(data) if data.get("layers") else None
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
@@ -106,6 +110,7 @@ def finish():
     thread = threading.Thread(
         target=processor.finish,
         args=(job_id, base_path, segments, sub_params, output_path),
+        kwargs={"montage": montage},
         daemon=True,
     )
     thread.start()

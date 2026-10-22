@@ -40,6 +40,7 @@ from modules.downloader import processor as downloader_processor
 from modules.sound_drop import processor as sound_drop_processor
 from modules.watermark import processor as watermark_processor
 from modules.subtitles import processor as subtitles_processor
+from modules.montage import processor as montage_processor
 from modules.insert import processor as insert_processor
 
 
@@ -490,13 +491,19 @@ def process(job_id: str, clip_path: str, params: ReelExpressParams, *,
 
 
 def finish(job_id: str, base_path: str, segments: list[dict],
-           subtitle_params, output_path: str) -> None:
+           subtitle_params, output_path: str, montage=None) -> None:
     """Fase 2: quema los subtítulos editados sobre el video base → reel final.
 
     Reusa el render_job del módulo subtitles (arma el .ass y lo quema) y luego
-    borra el video base.
+    borra el video base. With `montage` (MontageParams), the animated layers
+    go in the same pass as the subtitles, which stay on top of them.
     """
-    subtitles_processor.render_job(
-        job_id, base_path, segments, subtitle_params, output_path
-    )
+    if montage is not None:
+        montage.subtitles = True
+        montage.sub_params = subtitle_params
+        montage_processor.process(job_id, base_path, montage, segments)
+    else:
+        subtitles_processor.render_job(
+            job_id, base_path, segments, subtitle_params, output_path
+        )
     file_utils.cleanup_paths(base_path)

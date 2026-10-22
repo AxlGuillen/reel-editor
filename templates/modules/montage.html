@@ -1,0 +1,52 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-layers"/></svg> Montaje</h1>
+  <p class="subtitle">Flyers y láminas animadas (con transparencia) sobre un video vertical, en su palabra o su segundo</p>
+</div>
+
+<section class="card">
+  <div class="ed-file">
+    <input type="file" id="mt-video" accept="video/*,.mp4,.mov,.mkv" hidden>
+    <button type="button" id="mt-video-btn" class="btn-secondary">Video base</button>
+    <span id="mt-video-name" class="file-name"></span>
+  </div>
+  <div class="ed-file">
+    <input type="file" id="mt-layers" accept=".mov,.webm,.mp4,.mkv,.png" multiple hidden>
+    <button type="button" id="mt-layers-btn" class="btn-secondary">Capas (mov, webm, png)</button>
+    <span id="mt-layers-name" class="file-name"></span>
+    <span class="ed-or">o</span>
+    <input id="mt-folder" class="ed-input" style="flex:1 1 260px" placeholder="Carpeta de capas (p. ej. …/presentations/lux/video-out/laminas)">
+  </div>
+  <label class="control"><span>Capas (JSON)</span>
+    <textarea id="mt-layers-json" class="ed-textarea">[
+  {"file": "flyer-1.mov", "word": "rey demonio"},
+  {"file": "flyer-2.mov", "start": 33.3, "end": 46}
+]</textarea>
+  </label>
+  <p class="hint">Cada capa: <code>file</code> (o <code>id</code> del manifest.json de la carpeta) y cuándo entra: <code>start</code> (s) o <code>word</code> (+ <code>n</code>, la n-ésima vez). Sale en <code>end</code>, <code>end_word</code> o cuando entra la siguiente (tope de 12 s). Con palabras se transcribe el video.</p>
+  <div class="ed-row">
+    <label class="control"><span>Caja</span>
+      <select id="mt-mode"><option value="box">Abajo, centrada</option><option value="band">Franja (como Lux)</option></select>
+    </label>
+    <label class="control"><span>Ancho <em id="mt-width-val">720</em> px</span>
+      <input type="range" id="mt-width" min="200" max="1080" step="10" value="720">
+    </label>
+    <label class="control"><span>Margen abajo <em id="mt-bottom-val">0</em> px</span>
+      <input type="range" id="mt-bottom" min="0" max="900" step="10" value="0">
+    </label>
+  </div>
+  <label class="control-check"><input type="checkbox" id="mt-subs"> Quemar subtítulos en la misma pasada (transcribe el video)</label>
+  <button id="mt-process-btn" class="btn-primary">Montar</button>
+</section>
+
+<div id="mt-progress-wrap" class="card hidden">
+  <div class="progress-bar"><div id="mt-progress-fill"></div></div>
+  <p id="mt-progress-label">Montando… 0%</p>
+</div>
+
+<div id="mt-result-wrap" class="card card-accent hidden">
+  <p class="success">✓ Listo</p>
+  <video id="mt-preview" class="ed-video" controls></video>
+  <p><a id="mt-download-btn" class="btn-primary" download>Descargar</a></p>
+</div>
+
+<div id="mt-error-wrap" class="card error hidden"><p id="mt-error-msg"></p></div>

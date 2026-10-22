@@ -25,7 +25,7 @@ App web **local** para procesar clips de gaming (League of Legends, Valorant) pa
 reel-editor/
 ├── app.py                      ← Entry point Flask: registra blueprints, /api/cleanup, errores JSON
 ├── config.py                   ← Config global (paths, FFmpeg/ffprobe, extensiones, fuente)
-├── requirements.txt            ← Flask, yt-dlp, faster-whisper
+├── requirements.txt            ← Flask, yt-dlp, faster-whisper, librosa, scenedetect
 ├── setup.bat                   ← Windows: crea el venv e instala todo (doble click)
 ├── Iniciar ReelForge.bat       ← Windows: levanta el server y abre el browser
 │
@@ -34,7 +34,8 @@ reel-editor/
 │   ├── competitivo/            ← fondo_portada.png y sting.mp3 opcionales (intro del módulo competitivo)
 │   ├── fonts/                  ← fuentes de subtítulos (Poppins Bold/ExtraBold/Black, Anton,
 │   │                             Archivo Black); SOLO archivos de fuente (libass los abre todos)
-│   └── font_licenses/          ← licencias OFL de las fuentes (fuera de fonts/ a propósito)
+│   ├── font_licenses/          ← licencias OFL de las fuentes (fuera de fonts/ a propósito)
+│   └── luts/                   ← LUTs .cube para la gradación de los edits (opcionales)
 │
 ├── modules/                    ← Cada feature es un módulo independiente
 │   ├── reel_express/           ← PIPELINE: encadena vertical+audio+mezcla+watermark+subs
@@ -49,23 +50,34 @@ reel-editor/
 │   ├── assets/                 ← CRUD de watermarks + fuente (blueprint, no procesa video)
 │   ├── library/                ← Librería de clips: lista la carpeta local de capturas (sin upload)
 │   ├── timeline/               ← Historial del proyecto leído de git (vista informativa)
-│   └── competitivo/            ← PIPELINE: highlights de Worlds (solo kills) desde el VOD de Ibai
+│   ├── competitivo/            ← PIPELINE: highlights de Worlds (solo kills) desde el VOD de Ibai;
+│   │                             edit.py = modo edit (las peleas al ritmo de una canción)
+│   ├── beatmap/                ← Ritmo de una canción: beats, compases, secciones, drop, letra
+│   ├── editing/                ← MOTOR de los edits: EDL → render en dos pasadas (sin routes de proceso)
+│   ├── anime_edit/             ← PIPELINE: pelea de anime + canción → variantes de edit (2 fases)
+│   └── montage/                ← Montaje: capas animadas con alfa sobre un video, por palabra o segundo
 │
 │   Cada módulo que procesa video tiene los mismos tres archivos:
 │       routes.py      ← Blueprint Flask con sus endpoints
 │       processor.py   ← Lógica del módulo (FFmpeg / yt-dlp / whisper)
 │       schema.py      ← Parámetros y validación del módulo
-│   assets, library y timeline son solo routes.py: no procesan nada.
+│   assets, library y timeline son solo routes.py: no procesan nada. editing es
+│   un motor (edl, timing, effects, titles, render) que usan competitivo y anime_edit.
 │
 ├── cookies/                    ← cookies.txt de yt-dlp. SENSIBLE: gitignored
 ├── cache/thumbs/               ← miniaturas de la librería de clips (temporal)
+├── cache/beatmaps/             ← análisis de canciones cacheados por huella (temporal)
+├── docs/edits.md               ← beatmap, motor, modo edit, anime_edit y montage en detalle
 │
 ├── tests/                      ← unittest (sin pytest): python -m unittest discover -s tests -t .
-│   └── competitivo/            ← detección de peleas (fixture real), layout, sincronía, validación
+│   ├── synthetic.py            ← canciones y videos sintéticos (tempo y cortes conocidos)
+│   ├── competitivo/            ← detección de peleas (fixture real), layout, sincronía, validación, edit
+│   └── beatmap/ editing/ anime_edit/ montage/
 │
 ├── core/
 │   ├── ffmpeg_runner.py        ← Único lugar que ejecuta FFmpeg + helpers ffprobe
 │   ├── job_manager.py          ← Estado de los jobs (en memoria, thread-safe)
+│   ├── external.py             ← Único lugar que ejecuta RIFE y Real-ESRGAN (opcionales)
 │   └── file_utils.py           ← Helpers de archivos temporales
 │
 ├── static/
@@ -386,6 +398,18 @@ Los tres campos se limpian para Windows (`:` → ` -`; fuera `< > " / \ | ? *`, 
 
 Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fase 2 en `finished=true` con `resultado`: `carpeta` (la de clips, portada e info.json), `video` (ruta completa del resumen), `ruta` (relativa, para `/resumenes/<ruta>`), `resumen` (nombre del archivo) y `organizada`. Al terminar, `status` y `resultado` traen `portada` ("portada.jpg") e `intro: {modo_usado, duracion_s, motivo, placa_s}` (también en `info.json`); `info.json` además `intro_modo_usado`. **Como lo opera Claude:** un `/process` **por mapa** (`game_ids=<uno>`) con `modo=auto`, `intro_audio_url` (la voz de Fish Audio), `mapa`, `fase`, `equipo_*`, `logo_*`, `serie_marcador`, `carpeta_dia`, `partido` y `titulo`; poll hasta `finished=true`; el video queda en `<carpeta_dia>/<partido>/Mapa N - <titulo>.mp4` (también `GET /download/<id>` y `/portada/<id>`). Para operarlo de punta a punta: `process` con `modo=auto` → poll de `status` hasta `finished=true` (si queda en `esperando_ancla` con `aviso`, revisar el `frame` de esa partida, corregir con `anchors` y llamar `finish`). Para elegir otras peleas: tomar ids de `clips` y pasarlos en `finish`. Tiempos medidos: 3 partidas y 3 clips, fase 1 ~64 s y fase 2 ~54 s; un mapa con intro (3 clips), ~110–115 s en total. Las sesiones viven en memoria: si el server se reinicia (el modo debug recarga al cambiar código), hay que repetir la fase 1. Tests: `tests/competitivo/` (fixture real de KC-C9 G1).
 
+### 11. Edits al ritmo: beatmap, editing, anime_edit, montage y el modo edit de competitivo
+
+**El detalle está en [`docs/edits.md`](docs/edits.md)** (contratos, algoritmos, presets, cómo los opera Claude). Lo esencial:
+
+- **beatmap** (`/api/beatmap`): beats, primer tiempo de cada compás, energía, secciones (`intro`/`verse`/`chorus`/`bridge`/`outro`), drop, subidas (`buildups`) y la letra palabra por palabra (`words`) → `beatmap.json`, cacheado por huella en `cache/beatmaps/`. `beatmap.processor.get()` es lo que usan los demás. Preview con pitidos para validar la rejilla.
+- **editing** (motor, `/api/editing/options`): una EDL (`Segment` con `Piece` a velocidad, `Event` flash/zoom/shake/rgb y `Text`) que arman los **planificadores puros** y que `render.py` ejecuta en dos pasadas: por plano (geometría y retime cuadrado al cuadro, intermedios mkv con PCM) y final (LUT/look, glow, acentos, ASS, watermark y música). RIFE / Real-ESRGAN por `core/external.py` si están.
+- **competitivo — modo edit** (`POST /api/competitivo/edit`, job nuevo): con la sesión de la fase 1 y una canción, cada kill cae en un beat, cada pelea arranca en un primer tiempo y la pelea clave cae en el drop. Letreros NOMBRE · CAMPEÓN (el feed guarda el campeón; `kills.kill_authors()`), sin la cámara de Ibai por defecto y sin su voz. Queda como `Edit Mapa N - <titulo>.mp4`.
+- **anime_edit** (`/api/anime-edit`, dos fases): fase 1 analiza la canción y detecta los planos (PySceneDetect o `scdet`) con puntaje y **hojas de cuadros numeradas** para que Claude elija; fase 2 renderiza variantes (`impact`, `velocity`, `cinematic`, `lyrics`) con el héroe en el drop. Salida en `EDITS_FOLDER/<title>/`.
+- **montage** (`/api/montage`): capas con alfa (ProRes 4444, VP9, PNG) sobre un video vertical, por segundo o por PALABRA de la transcripción, con las reglas de suiza y Lux; también como `layers` en el `/finish` de Reel Express (misma pasada que los subtítulos).
+
+La regla: **el LLM elige momentos y estilo, nunca tiempos.** Los tiempos los calcula el código.
+
 ### assets — blueprint de assets persistentes
 
 No procesa video: gestiona la **librería de watermarks** y la **fuente**.
@@ -427,7 +451,7 @@ POST /api/<modulo>/process       → 202 { job_id }   (corre en thread)
 GET  /api/<modulo>/status/<id>   → { status, progress, error, [stage], [segments], [title] }
 GET  /api/<modulo>/download/<id> → archivo (mimetype correcto, as_attachment)
 ```
-`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express`, `hook_reel` y `competitivo` usan `/process` + `/finish`. Global: `POST /api/cleanup` vacía las carpetas temporales.
+`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express`, `hook_reel`, `competitivo` y `anime_edit` usan `/process` + `/finish` (competitivo suma `/edit`, que abre un job nuevo). Global: `POST /api/cleanup` vacía las carpetas temporales.
 
 ---
 
@@ -488,6 +512,11 @@ COOKIES_FOLDER / COOKIES_FILE      # cookies.txt de yt-dlp (sensible, gitignored
 CLIPS_LIBRARY_FOLDER               # carpeta de capturas (env REELFORGE_CLIPS_FOLDER)
 THUMBS_FOLDER                      # cache/thumbs/ (miniaturas de la librería)
 COMPETITIVO_FOLDER                 # resúmenes de competitivo, PERSISTENTE (env REELFORGE_COMPETITIVO_FOLDER)
+EDITS_FOLDER                       # edits de anime y de series sin día, PERSISTENTE (env REELFORGE_EDITS_FOLDER)
+BEATMAPS_FOLDER                    # cache/beatmaps/ (análisis de canciones)
+LUTS_FOLDER                        # assets/luts/ (.cube)
+LAYERS_FOLDER                      # raíz de las carpetas de capas del montaje (env REELFORGE_LAYERS_FOLDER, default ~)
+RIFE_PATH / REALESRGAN_PATH        # binarios opcionales (env REELFORGE_RIFE / REELFORGE_REALESRGAN o el PATH)
 MAX_UPLOAD_SIZE_MB = 2000
 FFMPEG_PATH   = os.environ.get("FFMPEG_PATH")  or _resolve_ffmpeg()
 FFPROBE_PATH  = os.environ.get("FFPROBE_PATH") or _resolve_ffprobe()
@@ -506,7 +535,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 13 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 17 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
@@ -514,7 +543,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## UI
 
-`index.html` es un **app shell**: una **sidebar dividida en secciones** (`.nav-section`: Automático / Módulos / Tools Specific videos / Tools / Sistema) con un nav item por módulo, y un `<section class="module-view">` por módulo (parciales con `{% include %}`). `app.js` muestra una vista a la vez (busca `.nav-item`). La vista por defecto es **Reel Express**.
+`index.html` es un **app shell**: una **sidebar dividida en secciones** (`.nav-section`: Automático / Edits / Módulos / Tools Specific videos / Tools / Sistema) con un nav item por módulo, y un `<section class="module-view">` por módulo (parciales con `{% include %}`). `app.js` muestra una vista a la vez (busca `.nav-item`). La vista por defecto es **Reel Express**.
 
 Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onDone, onError})` de `shared.js` (POST + polling). Los flujos de dos fases (subtitles, reel_express, hook_reel) usan un poller propio porque el status trae `segments`. `shared.js` además concentra lo compartido entre módulos: el estilo de subtítulos (`SubStyle`: llena el parcial `templates/modules/_sub_style.html`, que Subtítulos, Reel Express y Reel Frase incluyen con prefijos `sub-`/`rx-sub-`/`hk-sub-`; arma los params; recuerda el estilo en localStorage y lo sincroniza entre módulos; dibuja la muestra animada apoyada en la misma línea base que libass), el preview de la placa del HUD en canvas (`drawHudPlate`), el selector de archivos (`openFilePicker`) y la galería de la librería de clips (`openClipLibrary` / `appendClip`). Las vistas **Info** e **Historial** no procesan nada: solo leen su endpoint y pintan. El **editor de segmentos** (`SubtitleEditor` en `subtitle_editor.js`) es compartido por subtitles y reel_express. Sin librerías frontend externas (solo Vanilla JS).
 
@@ -525,6 +554,8 @@ Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onD
 - **FFmpeg** y **ffprobe** en el PATH (o resueltos por `config.py`). ffprobe es necesario para el speed match, resoluciones y duración exacta; sin él, varias features degradan en vez de crashear.
 - **yt-dlp** (pip) para el downloader. Se actualiza seguido: `pip install -U yt-dlp`.
 - **fonttools** (pip) para leer familia y métricas de las fuentes de subtítulos.
+- **librosa** (pip) para beatmap y **scenedetect + opencv-python-headless** para los planos de anime_edit (sin scenedetect cae al `scdet` de FFmpeg).
+- **Opcionales** de los edits: `beat-this` (beats con red neuronal), `audio-separator` (voz para la letra), y los binarios `rife-ncnn-vulkan` / `realesrgan-ncnn-vulkan`. `GET /api/editing/options` dice cuáles hay.
 - **faster-whisper** (pip) para subtitles. La 1ª transcripción descarga el modelo (~1.6 GB turbo). En Mac corre en **CPU** (CTranslate2 no usa Metal/GPU); modelos chicos (small/medium) son más livianos.
 
 ---
@@ -556,9 +587,26 @@ carpeta entera: arrastraría `venv/` y, peor, `cookies/`).
 
 ---
 
+## Idioma del código
+
+Desde el 22 de octubre de 2026 **el código nuevo se escribe en inglés**. La documentación y lo que ve el usuario siguen en español.
+
+| Qué | Idioma |
+|---|---|
+| Identificadores, nombres de archivos y carpetas, rutas de la API, campos de los formularios y claves del JSON | Inglés |
+| Comentarios y docstrings | Inglés |
+| Mensajes de commit | Inglés |
+| Mensajes de error, `stage` de los jobs y textos de la UI | Español |
+| `CLAUDE.md`, `README` de `assets/` y `docs/` | Español |
+
+- **Ya están en inglés:** `beatmap`, `editing`, `anime_edit`, `montage`, `core/external.py`, el modo edit de competitivo (`competitivo/edit.py`, `EditParams`, `/edit` y lo que suma en `kills.py` y `layout.py`) y sus tests (`tests/synthetic.py`).
+- **El código viejo en español** (competitivo, subtitles, reel_express…) **se migra cuando se toca**, no en un refactor aparte. Al tocarlo, se traduce lo que el cambio toca y se deja el resto como está.
+- **Los contratos públicos no se rompen al traducir.** Un campo del formulario, una clave del status o una ruta que ya consume algo (la UI, Claude, otro repo) se cambia solo junto con quien la consume, en el mismo cambio. Por eso el modo edit sigue aceptando `carpeta_dia`, `partido`, `titulo`, `mapa`, `anchors` y `marca_alto` (los comparte con `/finish`) y su status sigue usando `resultado`, `aviso` y `modo`.
+- Lo que viene de fuera conserva su forma: el `manifest.json` de presentations (`archivo`, `laminas`) y las palabras en español de las transcripciones (los números escritos de `montage/layers.py`).
+
 ## Convenciones de desarrollo
 
-- **Commits por bloques lógicos**, con prefijos `feat(modulo): …` / `fix: …` / `chore: …` / `refactor: …` / `docs: …`.
+- **Commits por bloques lógicos**, con prefijos `feat(modulo): …` / `fix: …` / `chore: …` / `refactor: …` / `docs: …`. En inglés (ver «Idioma del código»).
 - **Verificar end-to-end** antes de dar por hecho un módulo: import check + prueba real por HTTP (process → status → download) + casos de validación.
 - El procesamiento corre en threads; si se necesita concurrencia robusta o persistencia, migrar `job_manager` a una store externa.
 - `uploads/`, `outputs/`, `downloads/` son temporales (`.gitignore`) y se vacían con el botón "Limpiar archivos" (`/api/cleanup`). `assets/` es persistente.

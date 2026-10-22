@@ -19,6 +19,16 @@ The sidebar is split into sections.
 | ⚡ | **Reel Express** | The whole chain at once: takes your 16:9 clip + audio (link or file), makes it vertical, mixes the audio, adds text/watermark and karaoke subtitles. Before finishing it lets you **review and fix the subtitles** (or skip the review for a faster single-pass render). |
 | 🎬 | **Reel Frase** | Two clips chained with background music: clip 1 carries the voice and sets its own length, clip 2 gets stretched to the length you pick. The music ducks under the voice and jumps to full volume at the cut. |
 
+**Edits** — music-synced edits (details in [`docs/edits.md`](docs/edits.md))
+
+| | Module | What it does |
+|---|---|---|
+| ✨ | **Anime Edit** | A fight clip + a song → several edit variants (impact, velocity, cinematic, lyrics). Finds the shots, lets you pick them on a numbered contact sheet and puts the hero shot, frozen and in slow motion, on the song's drop. Cuts, flashes, zooms and shakes land on the beat; the lyrics show up as giant gradient words. |
+| 🧱 | **Montaje** (montage) | Animated layers with transparency (ProRes 4444, VP9, PNG) over a finished vertical video, each one entering at a second or at a **word** of the transcript. Also available inside Reel Express's subtitle pass. |
+| 📈 | **Beatmap** | A song's rhythm: beats, bar starts, sections (intro, verse, chorus, bridge), the drop and the lyrics word by word, plus a beep preview to check the grid by ear. |
+
+The competitive module (Worlds highlights, API only) also has an **edit mode**: every kill lands on a beat and the key fight lands on the drop, with player · champion labels.
+
 **Modules** — building blocks
 
 | | Module | What it does |

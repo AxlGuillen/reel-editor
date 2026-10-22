@@ -34,6 +34,29 @@ THUMBS_FOLDER = os.path.join(BASE_DIR, "cache", "thumbs")
 COMPETITIVO_FOLDER = os.environ.get("REELFORGE_COMPETITIVO_FOLDER") or os.path.join(
     os.path.expanduser("~"), "Videos", "ReelForge", "Competitivo")
 
+# Song analysis (beatmap): cached by file fingerprint, so the same song is not
+# analyzed again for every edit (temporary: cache/).
+BEATMAPS_FOLDER = os.path.join(BASE_DIR, "cache", "beatmaps")
+
+# LUTs (.cube) for color grading the edits: persistent and versionable.
+LUTS_FOLDER = os.path.join(ASSETS_FOLDER, "luts")
+
+# Anime edits and edits of series without a day folder: PERSISTENT, like the
+# competitivo folder. Override: REELFORGE_EDITS_FOLDER.
+EDITS_FOLDER = os.environ.get("REELFORGE_EDITS_FOLDER") or os.path.join(
+    os.path.expanduser("~"), "Videos", "ReelForge", "Edits")
+
+# Montage: animated layers (flyers, slides) are read in place from inside this
+# root (e.g. presentations/<deck>/video-out/laminas). No path may leave it.
+# Override: REELFORGE_LAYERS_FOLDER.
+LAYERS_FOLDER = os.environ.get("REELFORGE_LAYERS_FOLDER") or os.path.expanduser("~")
+
+# OPTIONAL external binaries (ncnn-vulkan: run on NVIDIA, AMD, Intel and Mac).
+# Without them the edits still work: slow motion repeats frames and small
+# sources are scaled with lanczos. Override with the full path.
+RIFE_PATH = os.environ.get("REELFORGE_RIFE") or shutil.which("rife-ncnn-vulkan") or ""
+REALESRGAN_PATH = os.environ.get("REELFORGE_REALESRGAN") or shutil.which("realesrgan-ncnn-vulkan") or ""
+
 MAX_UPLOAD_SIZE_MB = 2000
 MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
@@ -95,6 +118,9 @@ ALLOWED_WATERMARK_EXTENSIONS = {"png"}
 ALLOWED_FONT_EXTENSIONS = {"ttf", "otf"}
 # Imágenes usables como fondo (p. ej. el fondo del segmento 1 en hook_reel).
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
+# Montage layers: video with alpha (ProRes 4444 .mov, VP9 .webm) or an image.
+ALLOWED_LAYER_EXTENSIONS = {"mov", "webm", "mp4", "mkv", "png"}
+ALLOWED_LUT_EXTENSIONS = {"cube"}
 
 # Lienzo vertical de salida (9:16)
 OUTPUT_WIDTH = 1080
@@ -123,6 +149,10 @@ def allowed_image_file(filename: str) -> bool:
 
 def allowed_font_file(filename: str) -> bool:
     return _has_allowed_ext(filename, ALLOWED_FONT_EXTENSIONS)
+
+
+def allowed_layer_file(filename: str) -> bool:
+    return _has_allowed_ext(filename, ALLOWED_LAYER_EXTENSIONS)
 
 
 # Fuente por defecto, EXPLÍCITA. Antes se tomaba "la primera de la carpeta" en

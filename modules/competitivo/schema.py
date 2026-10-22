@@ -268,30 +268,122 @@ class FinishParams:
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "FinishParams":
-        anclas = {}
-        crudo = form.get("anchors") or form.get("anclas") or "{}"
-        try:
-            datos = json.loads(crudo) if isinstance(crudo, str) else dict(crudo)
-        except (TypeError, ValueError):
-            raise ValueError("'anchors' tiene que ser un JSON {gameId: segundo}.")
-        for gid, valor in datos.items():
-            if gid not in base.game_ids:
-                raise ValueError(f"El ancla {gid} no es de esta serie.")
-            try:
-                anclas[gid] = engine.parse_vod_time(valor)
-            except (TypeError, ValueError):
-                raise ValueError(f"Ancla inválida para {gid}: usá segundos (4935) o 1:22:15.")
-        clips = form.get("clips")
-        if clips not in (None, ""):
-            try:
-                clips = json.loads(clips) if isinstance(clips, str) else list(clips)
-            except (TypeError, ValueError):
-                raise ValueError("'clips' tiene que ser una lista JSON de ids.")
-            if not isinstance(clips, list) or not all(isinstance(c, str) for c in clips):
-                raise ValueError("'clips' tiene que ser una lista de ids (texto).")
-            if not clips:
-                raise ValueError("Elegí al menos un clip.")
-        else:
-            clips = None
+        anclas, clips = _anclas_y_clips(form, base)
         return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base),
                    **_salida(form, base))
+
+
+def _anclas_y_clips(form, base: CompetitivoParams) -> tuple[dict[str, float], list[str] | None]:
+    """`anchors` ({gameId: segundo o h:mm:ss}) y `clips` (lista de ids) de la
+    fase 2: los comparten /finish y /edit."""
+    anclas = {}
+    crudo = form.get("anchors") or form.get("anclas") or "{}"
+    try:
+        datos = json.loads(crudo) if isinstance(crudo, str) else dict(crudo)
+    except (TypeError, ValueError):
+        raise ValueError("'anchors' tiene que ser un JSON {gameId: segundo}.")
+    for gid, valor in datos.items():
+        if gid not in base.game_ids:
+            raise ValueError(f"El ancla {gid} no es de esta serie.")
+        try:
+            anclas[gid] = engine.parse_vod_time(valor)
+        except (TypeError, ValueError):
+            raise ValueError(f"Ancla inválida para {gid}: usá segundos (4935) o 1:22:15.")
+    clips = form.get("clips")
+    if clips not in (None, ""):
+        try:
+            clips = json.loads(clips) if isinstance(clips, str) else list(clips)
+        except (TypeError, ValueError):
+            raise ValueError("'clips' tiene que ser una lista JSON de ids.")
+        if not isinstance(clips, list) or not all(isinstance(c, str) for c in clips):
+            raise ValueError("'clips' tiene que ser una lista de ids (texto).")
+        if not clips:
+            raise ValueError("Elegí al menos un clip.")
+    else:
+        clips = None
+    return anclas, clips
+
+
+@dataclass
+class EditParams:
+    """Edit mode (/edit): the phase 1 fights cut to the rhythm of a song.
+
+    The new fields are in English; the ones shared with /finish (carpeta_dia,
+    partido, titulo, mapa, zoom, watermark, marca_alto) keep their names."""
+    anchors: dict[str, float]
+    clips: list[str] | None
+    music: object | None = None       # DownloaderParams of the link; None → `music` file
+    music_start: float | None = None  # s of the song; None = automatic (drop)
+    align_drop: bool = True
+    engine: str = "auto"
+    lyrics: object | None = None      # LyricsParams (only if text is "lyrics" or "both")
+    style: str = "impact"
+    text: str = "kills"
+    speed: float = 1.0
+    max_duration_s: float = 60
+    intensity: float = 1.0
+    look: str = "vivid"
+    lut: str = ""
+    glow: float = 0.25
+    with_camera: bool = False
+    zoom: float = 1.3
+    game_volume: int = 0
+    kill_lead_s: float = 0.25
+    music_accents: bool = True
+    watermark: str = ""
+    marca_alto: int = layout.MARCA_ALTO_DEFECTO
+    edit_title: str = ""
+    carpeta_dia: str = ""
+    partido: str = ""
+    titulo: str = ""
+    mapa: int = 1
+
+    @classmethod
+    def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
+        from modules.beatmap.analysis import ENGINES
+        from modules.beatmap.schema import LyricsParams, music_from_form
+        from modules.competitivo.edit import STYLES, TEXT_MODES
+        from modules.editing import effects
+
+        anchors, clips = _anclas_y_clips(form, base)
+
+        def choice(name, options, default):
+            value = str(form.get(name) or default).strip().lower()
+            if value not in options:
+                raise ValueError(f"'{name}' tiene que ser uno de: {', '.join(options)}.")
+            return value
+
+        start = form.get("music_start")
+        if start in (None, "", "auto"):
+            start = None
+        else:
+            try:
+                start = engine.parse_vod_time(start)
+            except (TypeError, ValueError):
+                raise ValueError("'music_start' va en segundos (12.5), en m:ss o 'auto'.")
+        text = choice("text", TEXT_MODES, "kills")
+        look = choice("look", list(effects.LOOKS), "vivid")
+        lut = os.path.basename(str(form.get("lut") or "").strip())
+        if lut and lut not in effects.luts():
+            raise ValueError(f"No existe el LUT «{lut}» en assets/luts.")
+        return cls(
+            anchors=anchors, clips=clips, music=music_from_form(form), music_start=start,
+            align_drop=_bool(form, "align_drop", True),
+            engine=choice("engine", ENGINES, "auto"),
+            lyrics=LyricsParams.from_form(form, lyrics_default=text in ("lyrics", "both")),
+            style=choice("style", STYLES, "impact"), text=text,
+            speed=_num(form, "speed", 1.0, 0.5, 2.0, float),
+            max_duration_s=_num(form, "max_duration_s", 60, 10, 180, float),
+            intensity=_num(form, "intensity", 1.0, 0.0, 1.5, float),
+            look=look, lut=lut, glow=_num(form, "glow", 0.25, 0.0, 1.0, float),
+            with_camera=_bool(form, "with_camera", False),
+            zoom=_num(form, "zoom", base.zoom, 0.8, 2.2, float),
+            game_volume=_num(form, "game_volume", 0, 0, 100),
+            kill_lead_s=_num(form, "kill_lead_s", 0.25, 0.0, 1.0, float),
+            music_accents=_bool(form, "music_accents", True),
+            watermark=_marca(form) if form.get("watermark") is not None else base.watermark,
+            marca_alto=_num(form, "marca_alto", base.marca_alto, 80, 400),
+            edit_title=_texto(form, "edit_title", 60, ""),
+            mapa=_num(form, "mapa", base.mapa, 1, 5),
+            **_salida(form, base),
+        )

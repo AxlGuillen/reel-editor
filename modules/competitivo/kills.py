@@ -67,6 +67,7 @@ class Partida:
     # kills por jugador en cada frame (alineado con `frames`), None sin datos
     kills_jugador: list[dict[int, int]] | None = None
     nombres: dict[int, str] = field(default_factory=dict)   # participantId → "C9 Blaber"
+    champions: dict[int, str] = field(default_factory=dict) # participantId → "XinZhao"
 
     def __post_init__(self):
         self._ts = [f.ts for f in self.frames]
@@ -201,22 +202,29 @@ def fetch_partida(game_id: str, step_s: int = 10, max_min: int = 80,
     kills_jugador = [{p["participantId"]: p.get("kills", 0)
                       for lado in ("blueTeam", "redTeam") for p in f[lado].get("participants", [])}
                      for f in ordenados]
-    nombres = {}
+    nombres, champions = {}, {}
     for lado in ("blueTeamMetadata", "redTeamMetadata"):
         for p in meta[lado]["participantMetadata"]:
             nombres[p["participantId"]] = p.get("summonerName", "").strip()
+            champions[p["participantId"]] = p.get("championId", "").strip()
     azul, rojo = engine.team_codes(meta)
-    return Partida(game_id, azul, rojo, frames, kills_jugador, nombres)
+    return Partida(game_id, azul, rojo, frames, kills_jugador, nombres, champions)
 
 
 def partida_de_fixture(path, game_id: str | None = None) -> Partida:
     """Timeline guardado (formato compacto de engine.load_fixture, sin jugadores)."""
     meta, frames = engine.load_fixture(path)
     azul, rojo = engine.team_codes(meta)
-    if game_id is None:
-        with open(path, encoding="utf-8") as fh:
-            game_id = json.load(fh)["meta"].get("id", "fixture")
-    return Partida(game_id, azul, rojo, frames)
+    with open(path, encoding="utf-8") as fh:
+        crudo = json.load(fh)["meta"]
+    game_id = game_id or crudo.get("id", "fixture")
+    # "KC Canna|Rumble": blue side are participants 1–5; red side, 6–10.
+    nombres, champions = {}, {}
+    for base, lado in ((1, "blue"), (6, "red")):
+        for k, txt in enumerate(crudo.get(lado, [])):
+            name, _, champion = str(txt).partition("|")
+            nombres[base + k], champions[base + k] = name.strip(), champion.strip()
+    return Partida(game_id, azul, rojo, frames, nombres=nombres, champions=champions)
 
 
 # --- Detección ----------------------------------------------------------------
@@ -396,6 +404,44 @@ def detectar_peleas(p: Partida, reglas: Reglas | None = None) -> list[Pelea]:
         elegible = out[i].elegible
         out[i] = _armar(p, out[i].kills, reglas, fb, cierra=True)
         out[i].elegible = elegible
+    return out
+
+
+def kill_authors(p: Partida, pe: Pelea) -> list[dict | None]:
+    """Who made each kill of the fight (one entry per Kill, in order):
+    {"player": "Caliste", "champion": "MissFortune"}, or None if the feed has
+    no per-player kills (the compact fixture, for example).
+
+    Per-player kills arrive a few seconds late (LAG_JUGADOR_S) and in a fight
+    several land together, so the author cannot be read frame by frame. It is
+    done per team: each increase of a player's counter (in feed order) is
+    assigned to the team's kills in chronological order. Participants 1–5 are
+    blue and 6–10 red."""
+    if not p.kills_jugador:
+        return [None] * len(pe.kills)
+    i_before = pe.kills[0].i - 1
+    i_end = p.indice(p.frames[pe.kills[-1].i].ts + timedelta(seconds=LAG_JUGADOR_S))
+    increases: dict[str, list[tuple[int, int]]] = {p.azul: [], p.rojo: []}
+    prev = dict(p.kills_jugador[i_before])
+    for i in range(i_before + 1, i_end + 1):
+        current = p.kills_jugador[i]
+        for pid, n in sorted(current.items()):
+            for _ in range(max(0, n - prev.get(pid, 0))):
+                increases[p.azul if pid <= 5 else p.rojo].append((i, pid))
+        prev = dict(current)
+    out: list[dict | None] = []
+    used = {p.azul: 0, p.rojo: 0}
+    for k in pe.kills:
+        queue = increases.get(k.equipo, [])
+        j = used.get(k.equipo, 0)
+        if j < len(queue):
+            pid = queue[j][1]
+            name = p.nombres.get(pid, "")
+            out.append({"player": name.split(" ", 1)[-1] if " " in name else name,
+                        "champion": p.champions.get(pid, "")})
+        else:
+            out.append(None)
+        used[k.equipo] = j + k.cantidad
     return out
 
 
