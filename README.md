@@ -24,7 +24,7 @@ The sidebar is split into sections.
 | | Module | What it does |
 |---|---|---|
 | ✨ | **Anime Edit** | A fight clip + a song → several edit variants (impact, velocity, cinematic, lyrics). Finds the shots, lets you pick them on a numbered contact sheet and puts the hero shot, frozen and in slow motion, on the song's drop. Cuts, flashes, zooms and shakes land on the beat; the lyrics show up as giant gradient words. |
-| 🧱 | **Montaje** | Animated layers with transparency (ProRes 4444, VP9, PNG) over a finished vertical video, each one entering at a second or at a **word** of the transcript. Also available inside Reel Express's subtitle pass. |
+| 🧱 | **Montaje** (montage) | Animated layers with transparency (ProRes 4444, VP9, PNG) over a finished vertical video, each one entering at a second or at a **word** of the transcript. Also available inside Reel Express's subtitle pass. |
 | 📈 | **Beatmap** | A song's rhythm: beats, bar starts, sections (intro, verse, chorus, bridge), the drop and the lyrics word by word, plus a beep preview to check the grid by ear. |
 
 The competitive module (Worlds highlights, API only) also has an **edit mode**: every kill lands on a beat and the key fight lands on the drop, with player · champion labels.
