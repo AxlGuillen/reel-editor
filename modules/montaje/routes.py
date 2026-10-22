@@ -67,9 +67,9 @@ def process():
                 raise ValueError(f"Video: extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}")
             video_path = file_utils.save_upload(video)
             guardados.append(video_path)
+        # Sin segments (ni en el form ni en el job base), el video se transcribe
+        # si hace falta: capas en palabras o subtítulos.
         segments = _segments(base_job)
-        if params.subtitulos and not segments and not params.necesita_transcripcion:
-            raise ValueError("Para quemar subtítulos mandá 'segments' (o un job_id que los tenga).")
     except ValueError as exc:
         file_utils.cleanup_paths(*guardados)
         return jsonify(error=str(exc)), 400

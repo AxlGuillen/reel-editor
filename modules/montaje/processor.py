@@ -90,7 +90,7 @@ def process(job_id: str, video_path: str, params: MontajeParams, segments: list[
         dur = ffmpeg_runner.probe_duration(video_path)
         if not dur:
             raise RuntimeError("No se pudo leer la duración del video.")
-        if params.necesita_transcripcion and not segments:
+        if (params.necesita_transcripcion or params.subtitulos) and not segments:
             job_manager.update_job(job_id, progress=5, stage="Transcribiendo para ubicar las palabras…")
             segments = subtitles.transcribe(video_path, params.sub_params)
         capas = preparar(params, dur, segments)

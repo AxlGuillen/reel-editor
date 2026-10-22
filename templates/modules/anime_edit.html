@@ -1,0 +1,95 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-sparkles"/></svg> Anime Edit</h1>
+  <p class="subtitle">Una pelea + una canción → varias versiones del edit, con los cortes y los golpes al ritmo</p>
+</div>
+
+<!-- Fase 1: material -->
+<section id="ae-fase1" class="card">
+  <h2>1. Video y canción</h2>
+  <div class="ed-file">
+    <input type="file" id="ae-video" accept="video/*,.mp4,.mov,.mkv" hidden>
+    <button type="button" id="ae-video-btn" class="btn-secondary">Elegir video</button>
+    <button type="button" id="ae-lib-btn" class="btn-secondary">De mis capturas</button>
+    <span id="ae-video-name" class="file-name"></span>
+    <span class="ed-or">o</span>
+    <input type="url" id="ae-video-url" class="ed-input" style="flex:1 1 240px" placeholder="Link del video">
+  </div>
+  <div class="ed-file">
+    <input type="file" id="ae-musica" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg" hidden>
+    <button type="button" id="ae-musica-btn" class="btn-secondary">Elegir canción</button>
+    <span id="ae-musica-name" class="file-name"></span>
+    <span class="ed-or">o</span>
+    <input type="url" id="ae-musica-url" class="ed-input" style="flex:1 1 240px" placeholder="Link de la canción">
+  </div>
+  <div class="ed-checks">
+    <label class="control-check"><input type="checkbox" id="ae-musica-video"> La canción es el audio del video</label>
+    <label class="control-check"><input type="checkbox" id="ae-letra" checked> Sacar la letra (palabras gigantes)</label>
+  </div>
+  <div class="ed-row">
+    <label class="control"><span>Idioma de la letra</span>
+      <select id="ae-idioma">
+        <option value="auto">Detectar</option><option value="en">Inglés</option><option value="es">Español</option>
+        <option value="ja">Japonés</option><option value="pt">Portugués</option>
+      </select>
+    </label>
+  </div>
+  <button id="ae-process-btn" class="btn-primary">Analizar</button>
+</section>
+
+<div id="ae-progress-wrap" class="card hidden">
+  <div class="progress-bar"><div id="ae-progress-fill"></div></div>
+  <p id="ae-progress-label">Procesando… 0%</p>
+</div>
+
+<!-- Fase 2: selección y variantes -->
+<section id="ae-fase2" class="card hidden">
+  <h2>2. Planos y variantes</h2>
+  <div id="ae-stats" class="ed-stats"></div>
+  <div id="ae-secciones" class="ed-secciones"></div>
+  <p class="hint">Click en un plano para usarlo o quitarlo; ★ marca el héroe (va en el drop, congelado y en cámara lenta). Van en el orden del video.</p>
+  <div id="ae-grid" class="ed-grid"></div>
+
+  <span class="dl-label">Variantes</span>
+  <div id="ae-variantes" class="ed-checks"></div>
+  <div class="ed-row">
+    <label class="control"><span>Formato</span>
+      <select id="ae-formato">
+        <option value="vertical">Vertical (clip sobre fondo difuminado)</option>
+        <option value="vertical_lleno">Vertical lleno (recorta los lados)</option>
+        <option value="horizontal">Horizontal 16:9</option>
+      </select>
+    </label>
+    <label class="control"><span>Duración <em id="ae-dur-val">30</em> s</span>
+      <input type="range" id="ae-dur" min="10" max="90" step="1" value="30">
+    </label>
+    <label class="control"><span>Intensidad <em id="ae-int-val">1.0</em></span>
+      <input type="range" id="ae-int" min="0" max="1.5" step="0.1" value="1">
+    </label>
+  </div>
+  <div class="ed-row">
+    <label class="control"><span>Look</span><select id="ae-look"><option value="">El de cada variante</option></select></label>
+    <label class="control"><span>Texto</span>
+      <select id="ae-texto"><option value="auto">El de cada variante</option><option value="letra">Letra</option><option value="off">Sin texto</option></select>
+    </label>
+    <label class="control"><span>FPS</span>
+      <select id="ae-fps"><option>30</option><option>60</option><option>24</option></select>
+    </label>
+  </div>
+  <div class="ed-row">
+    <label class="control"><span>Título (nombre de la carpeta)</span><input id="ae-titulo" class="ed-input" placeholder="Levi vs Kenny"></label>
+    <label class="control"><span>Arranque de la canción (s, vacío = automático)</span><input id="ae-desde" class="ed-input" placeholder="auto"></label>
+  </div>
+  <div class="ed-checks">
+    <label class="control-check"><input type="checkbox" id="ae-interpolar" checked> Cámara lenta con RIFE (si está instalado)</label>
+    <label class="control-check"><input type="checkbox" id="ae-escalar"> Escalar con Real-ESRGAN (fuentes &lt; 1080p)</label>
+  </div>
+  <button id="ae-finish-btn" class="btn-primary">Renderizar variantes</button>
+</section>
+
+<section id="ae-result" class="card card-accent hidden">
+  <p class="success">✓ Listo</p>
+  <p id="ae-carpeta" class="file-name"></p>
+  <div id="ae-videos" class="ed-variantes"></div>
+</section>
+
+<div id="ae-error-wrap" class="card error hidden"><p id="ae-error-msg"></p></div>

@@ -153,13 +153,17 @@ def hojas(carpeta: str, n_planos: int) -> list[str]:
     salidas = []
     for h, inicio in enumerate(range(1, n_planos + 1, POR_HOJA), 1):
         out = os.path.join(carpeta, f"hoja_{h:02d}.jpg")
-        ffmpeg_runner.capture([
-            config.FFMPEG_PATH, "-v", "error", "-y", "-start_number", str(inicio),
-            "-i", os.path.join(carpeta, "plano_%04d.jpg"), "-frames:v", "1", "-vf",
-            f"scale={THUMB_W}:180:force_original_aspect_ratio=decrease,pad={THUMB_W}:180:(ow-iw)/2:(oh-ih)/2,"
-            f"drawtext=fontfile='{fuente}':text='%{{eif\\:n+{inicio}\\:d}}':x=8:y=6:fontsize=34:"
-            "fontcolor=yellow:box=1:boxcolor=black@0.7:boxborderw=6,"
-            f"tile=8x6:padding=4:color=black",
-            out], cwd=config.BASE_DIR)
+        caja = f"scale={THUMB_W}:180:force_original_aspect_ratio=decrease,pad={THUMB_W}:180:(ow-iw)/2:(oh-ih)/2,"
+        numero = (f"drawtext=fontfile='{fuente}':text='%{{eif\\:n+{inicio}\\:d}}':x=8:y=6:fontsize=34:"
+                  "fontcolor=yellow:box=1:boxcolor=black@0.7:boxborderw=6,")
+        base = [config.FFMPEG_PATH, "-v", "error", "-y", "-start_number", str(inicio),
+                "-i", os.path.join(carpeta, "plano_%04d.jpg"), "-frames:v", "1", "-vf"]
+        try:
+            ffmpeg_runner.capture(base + [caja + numero + "tile=8x6:padding=4:color=black", out],
+                                  cwd=config.BASE_DIR)
+        except RuntimeError:
+            # FFmpeg sin freetype (sin drawtext): la hoja sale sin los números;
+            # el orden es el mismo (de izquierda a derecha, fila por fila).
+            ffmpeg_runner.capture(base + [caja + "tile=8x6:padding=4:color=black", out], cwd=config.BASE_DIR)
         salidas.append(out)
     return salidas
