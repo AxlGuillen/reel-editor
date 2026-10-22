@@ -9,6 +9,7 @@ from core import file_utils, job_manager
 from modules.library.routes import resolve_clip
 from modules.reel_express import processor
 from modules.reel_express.schema import ReelExpressParams
+from modules.montaje.schema import MontajeParams
 from modules.subtitles.schema import SubtitlesParams
 
 bp = Blueprint("reel_express", __name__, url_prefix="/api/reel-express")
@@ -96,6 +97,9 @@ def finish():
 
     try:
         sub_params = SubtitlesParams.from_form(data)
+        # Capas animadas (montaje) en la MISMA pasada que quema los subtítulos:
+        # se leen de `carpeta_capas` (el JSON no puede traer archivos).
+        montaje = MontajeParams.from_form(data) if data.get("capas") else None
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
@@ -106,6 +110,7 @@ def finish():
     thread = threading.Thread(
         target=processor.finish,
         args=(job_id, base_path, segments, sub_params, output_path),
+        kwargs={"montaje": montaje},
         daemon=True,
     )
     thread.start()
