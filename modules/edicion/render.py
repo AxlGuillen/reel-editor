@@ -65,8 +65,11 @@ def build_pase1(seg: Segmento, out: str, ancho: int, alto: int, fps: int,
     cmd = [config.FFMPEG_PATH, "-y", "-ss", f"{ss:.3f}", "-t", f"{b - ss + 0.3:.3f}", "-i", seg.fuente]
     k = len(seg.piezas)
     geo = seg.vf or vf_cubrir(ancho, alto)
-    # Un vf con varias ramas (split…) va entre etiquetas propias.
-    partes = [f"[0:v]{geo},setsar=1,format=yuv420p,split={k}" + "".join(f"[p{i}]" for i in range(k))]
+    # Un grafo que ya nombra su entrada ([0:v]…, como el layout de competitivo)
+    # va tal cual; si no, se le antepone. Su última cadena tiene que quedar
+    # abierta: acá se le suma el retime.
+    cabeza = geo if geo.startswith("[") else f"[0:v]{geo}"
+    partes = [f"{cabeza},setsar=1,format=yuv420p,split={k}" + "".join(f"[p{i}]" for i in range(k))]
     for i, p in enumerate(seg.piezas):
         rel = p.desde - ss
         n = _n(p.dur, fps)

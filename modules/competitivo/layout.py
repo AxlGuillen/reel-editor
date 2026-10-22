@@ -337,9 +337,13 @@ def recorte_marca(png: str) -> tuple[int, int, int, int] | None:
 def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
                          marca: tuple[int, int, int, int] | None = None,
                          marca_alto: int = MARCA_ALTO_DEFECTO,
-                         placa_idx: int | None = None, D: float | None = None) -> str:
+                         placa_idx: int | None = None, D: float | None = None,
+                         camara: bool = True) -> str:
     """filter_complex del layout: entra [0:v] (1920x1080) y, si hay watermark,
     [1:v] (el PNG); sale [vout] 1080x1920 yuv420p.
+
+    `camara=False` (modo edit): en el lugar de la cámara del set de Ibai va el
+    gameplay difuminado y oscurecido. La geometría es la misma.
 
     `placa_idx`/`D`: intro "encima": la placa (entrada `placa_idx`, imagen en
     loop de largo D) va centrada sobre el gameplay durante [0, D], entra con
@@ -370,15 +374,23 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
         # Marcador oficial a todo el ancho.
         f"[s_marcador]crop={mw}:{mh}:{mx}:{my},scale={W}:{MARCADOR_H}:flags=lanczos,"
         "format=yuv420p,setsar=1[marcador]",
-        # Cámara del set al 70 % sobre su versión difuminada.
-        f"[s_camara]crop={CAMARA_W}:{CAMARA_H}:{CAMARA_X}:{camara_y},split[cam_a][cam_b]",
-        f"[cam_a]scale={W // 4}:{_even(camara_h / 4)},gblur=sigma=5,eq=brightness=-0.25,"
-        f"scale={W}:{camara_h}:flags=bilinear[cam_fondo]",
-        f"[cam_b]scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos[cam_frente]",
-        # La cámara sube pegada al marcador; lo que sobra queda abajo.
-        "[cam_fondo][cam_frente]overlay=(W-w)/2:0,format=yuv420p,setsar=1[camara]",
-        "[arriba][juego][marcador][camara]vstack=4[pila]",
     ]
+    if camara:
+        partes += [
+            # Cámara del set al 70 % sobre su versión difuminada.
+            f"[s_camara]crop={CAMARA_W}:{CAMARA_H}:{CAMARA_X}:{camara_y},split[cam_a][cam_b]",
+            f"[cam_a]scale={W // 4}:{_even(camara_h / 4)},gblur=sigma=5,eq=brightness=-0.25,"
+            f"scale={W}:{camara_h}:flags=bilinear[cam_fondo]",
+            f"[cam_b]scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos[cam_frente]",
+            # La cámara sube pegada al marcador; lo que sobra queda abajo.
+            "[cam_fondo][cam_frente]overlay=(W-w)/2:0,format=yuv420p,setsar=1[camara]",
+        ]
+    else:
+        jx, jy, jw, jh = JUEGO
+        partes.append(f"[s_camara]crop={jw}:{jh}:{jx}:{jy},scale={W // 4}:{_even(camara_h / 4)},"
+                      f"gblur=sigma=8,eq=brightness=-0.3,scale={W}:{camara_h}:flags=bilinear,"
+                      "format=yuv420p,setsar=1[camara]")
+    partes.append("[arriba][juego][marcador][camara]vstack=4[pila]")
     pila = "[pila]"
     if placa_idx is not None and D:
         cy = ARRIBA_H + g.extra_arriba + g.juego_h // 2
@@ -398,6 +410,14 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
     else:
         partes.append(f"{pila}{SALIDA}[vout]")
     return ";".join(partes)
+
+
+def geometria_edit(camara_y: int, zoom: float = 1.3, camara: bool = False) -> str:
+    """El layout como geometría de un plano del modo edit (edicion/render.py):
+    sin color (lo pone el look del edit), sin watermark (va al final, quieto)
+    y con la última cadena abierta para que el render le sume el retime."""
+    fc = build_filter_complex(camara_y, zoom, "off", None, camara=camara)
+    return fc[: -len("[vout]")] if fc.endswith("[vout]") else fc
 
 
 def build_concat(lista: str, out: str) -> list[str]:
