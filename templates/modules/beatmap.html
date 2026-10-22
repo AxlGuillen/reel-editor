@@ -13,20 +13,20 @@
   </div>
   <div class="ed-row">
     <label class="control"><span>Motor de beats</span>
-      <select id="bm-motor">
+      <select id="bm-engine">
         <option value="auto">Automático (Beat This! si está)</option>
         <option value="librosa">librosa</option>
         <option value="beat_this">Beat This!</option>
       </select>
     </label>
     <label class="control"><span>Idioma de la letra</span>
-      <select id="bm-idioma">
+      <select id="bm-language">
         <option value="auto">Detectar</option><option value="es">Español</option><option value="en">Inglés</option>
         <option value="ja">Japonés</option><option value="pt">Portugués</option>
       </select>
     </label>
   </div>
-  <label class="control-check"><input type="checkbox" id="bm-letra"> Sacar la letra palabra por palabra (Whisper)</label>
+  <label class="control-check"><input type="checkbox" id="bm-lyrics"> Sacar la letra palabra por palabra (Whisper)</label>
   <button id="bm-process-btn" class="btn-primary">Analizar</button>
   <p class="hint">El preview trae un pitido en cada beat (agudo en el primero de cada compás) y un destello por beat: sirve para validar la rejilla de oído antes de un edit.</p>
 </section>
@@ -38,7 +38,7 @@
 
 <div id="bm-result-wrap" class="card card-accent hidden">
   <div id="bm-stats" class="ed-stats"></div>
-  <div id="bm-secciones" class="ed-secciones"></div>
+  <div id="bm-sections" class="ed-sections"></div>
   <video id="bm-video" class="ed-video" controls></video>
   <p style="margin-top:12px">
     <a id="bm-json-btn" class="btn-secondary" download>beatmap.json</a>

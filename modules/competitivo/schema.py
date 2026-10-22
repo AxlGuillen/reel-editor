@@ -306,30 +306,33 @@ def _anclas_y_clips(form, base: CompetitivoParams) -> tuple[dict[str, float], li
 
 @dataclass
 class EditParams:
-    """Modo edit (/edit): las peleas de la fase 1 al ritmo de una canción."""
-    anclas: dict[str, float]
+    """Edit mode (/edit): the phase 1 fights cut to the rhythm of a song.
+
+    The new fields are in English; the ones shared with /finish (carpeta_dia,
+    partido, titulo, mapa, zoom, watermark, marca_alto) keep their names."""
+    anchors: dict[str, float]
     clips: list[str] | None
-    musica: object | None = None      # DownloaderParams del link; None → archivo `musica`
-    musica_desde: float | None = None # s de la canción; None = automático (drop)
-    alinear_drop: bool = True
-    motor: str = "auto"
-    letra: object | None = None       # LetraParams (solo si texto es "letra" o "ambos")
-    estilo: str = "impacto"
-    texto: str = "kills"
-    velocidad: float = 1.0
-    duracion_max_s: float = 60
-    intensidad: float = 1.0
-    look: str = "vivo"
+    music: object | None = None       # DownloaderParams of the link; None → `music` file
+    music_start: float | None = None  # s of the song; None = automatic (drop)
+    align_drop: bool = True
+    engine: str = "auto"
+    lyrics: object | None = None      # LyricsParams (only if text is "lyrics" or "both")
+    style: str = "impact"
+    text: str = "kills"
+    speed: float = 1.0
+    max_duration_s: float = 60
+    intensity: float = 1.0
+    look: str = "vivid"
     lut: str = ""
     glow: float = 0.25
-    con_camara: bool = False
+    with_camera: bool = False
     zoom: float = 1.3
-    volumen_juego: int = 0
-    adelanto_kill_s: float = 0.25
-    acentos_musica: bool = True
+    game_volume: int = 0
+    kill_lead_s: float = 0.25
+    music_accents: bool = True
     watermark: str = ""
     marca_alto: int = layout.MARCA_ALTO_DEFECTO
-    titulo_edit: str = ""
+    edit_title: str = ""
     carpeta_dia: str = ""
     partido: str = ""
     titulo: str = ""
@@ -337,50 +340,50 @@ class EditParams:
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
-        from modules.beatmap.analisis import MOTORES
-        from modules.beatmap.schema import LetraParams, musica_de_form
-        from modules.competitivo.edit import ESTILOS, TEXTOS
-        from modules.edicion import efectos
+        from modules.beatmap.analysis import ENGINES
+        from modules.beatmap.schema import LyricsParams, music_from_form
+        from modules.competitivo.edit import STYLES, TEXT_MODES
+        from modules.editing import effects
 
-        anclas, clips = _anclas_y_clips(form, base)
+        anchors, clips = _anclas_y_clips(form, base)
 
-        def opcion(nombre, opciones, defecto):
-            valor = str(form.get(nombre) or defecto).strip().lower()
-            if valor not in opciones:
-                raise ValueError(f"'{nombre}' tiene que ser uno de: {', '.join(opciones)}.")
-            return valor
+        def choice(name, options, default):
+            value = str(form.get(name) or default).strip().lower()
+            if value not in options:
+                raise ValueError(f"'{name}' tiene que ser uno de: {', '.join(options)}.")
+            return value
 
-        desde = form.get("musica_desde")
-        if desde in (None, "", "auto"):
-            desde = None
+        start = form.get("music_start")
+        if start in (None, "", "auto"):
+            start = None
         else:
             try:
-                desde = engine.parse_vod_time(desde)
+                start = engine.parse_vod_time(start)
             except (TypeError, ValueError):
-                raise ValueError("'musica_desde' va en segundos (12.5), en m:ss o 'auto'.")
-        texto = opcion("texto", TEXTOS, "kills")
-        look = opcion("look", list(efectos.LOOKS), "vivo")
+                raise ValueError("'music_start' va en segundos (12.5), en m:ss o 'auto'.")
+        text = choice("text", TEXT_MODES, "kills")
+        look = choice("look", list(effects.LOOKS), "vivid")
         lut = os.path.basename(str(form.get("lut") or "").strip())
-        if lut and lut not in efectos.luts():
+        if lut and lut not in effects.luts():
             raise ValueError(f"No existe el LUT «{lut}» en assets/luts.")
         return cls(
-            anclas=anclas, clips=clips, musica=musica_de_form(form), musica_desde=desde,
-            alinear_drop=_bool(form, "alinear_drop", True),
-            motor=opcion("motor", MOTORES, "auto"),
-            letra=LetraParams.from_form(form, letra_defecto=texto in ("letra", "ambos")),
-            estilo=opcion("estilo", ESTILOS, "impacto"), texto=texto,
-            velocidad=_num(form, "velocidad", 1.0, 0.5, 2.0, float),
-            duracion_max_s=_num(form, "duracion_max_s", 60, 10, 180, float),
-            intensidad=_num(form, "intensidad", 1.0, 0.0, 1.5, float),
+            anchors=anchors, clips=clips, music=music_from_form(form), music_start=start,
+            align_drop=_bool(form, "align_drop", True),
+            engine=choice("engine", ENGINES, "auto"),
+            lyrics=LyricsParams.from_form(form, lyrics_default=text in ("lyrics", "both")),
+            style=choice("style", STYLES, "impact"), text=text,
+            speed=_num(form, "speed", 1.0, 0.5, 2.0, float),
+            max_duration_s=_num(form, "max_duration_s", 60, 10, 180, float),
+            intensity=_num(form, "intensity", 1.0, 0.0, 1.5, float),
             look=look, lut=lut, glow=_num(form, "glow", 0.25, 0.0, 1.0, float),
-            con_camara=_bool(form, "con_camara", False),
+            with_camera=_bool(form, "with_camera", False),
             zoom=_num(form, "zoom", base.zoom, 0.8, 2.2, float),
-            volumen_juego=_num(form, "volumen_juego", 0, 0, 100),
-            adelanto_kill_s=_num(form, "adelanto_kill_s", 0.25, 0.0, 1.0, float),
-            acentos_musica=_bool(form, "acentos_musica", True),
+            game_volume=_num(form, "game_volume", 0, 0, 100),
+            kill_lead_s=_num(form, "kill_lead_s", 0.25, 0.0, 1.0, float),
+            music_accents=_bool(form, "music_accents", True),
             watermark=_marca(form) if form.get("watermark") is not None else base.watermark,
             marca_alto=_num(form, "marca_alto", base.marca_alto, 80, 400),
-            titulo_edit=_texto(form, "titulo_edit", 60, ""),
+            edit_title=_texto(form, "edit_title", 60, ""),
             mapa=_num(form, "mapa", base.mapa, 1, 5),
             **_salida(form, base),
         )

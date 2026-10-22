@@ -1,35 +1,35 @@
 (function () {
-// ReelForge — montaje: capas animadas sobre un video vertical.
-const MT_API = "/api/montaje";
+// ReelForge — montage: animated layers over a vertical video.
+const MT_API = "/api/montage";
 let mtVideo = null;
-let mtCapas = [];
+let mtLayers = [];
 
 el("mt-video-btn").addEventListener("click", () =>
   openFilePicker("clip", el("mt-video"), (f) => { mtVideo = f; el("mt-video-name").textContent = f.name; }));
 el("mt-video").addEventListener("change", (e) => {
   if (e.target.files[0]) { mtVideo = e.target.files[0]; el("mt-video-name").textContent = mtVideo.name; }
 });
-el("mt-capas-btn").addEventListener("click", () => el("mt-capas").click());
-el("mt-capas").addEventListener("change", (e) => {
-  mtCapas = [...e.target.files];
-  el("mt-capas-name").textContent = mtCapas.map((f) => f.name).join(", ");
+el("mt-layers-btn").addEventListener("click", () => el("mt-layers").click());
+el("mt-layers").addEventListener("change", (e) => {
+  mtLayers = [...e.target.files];
+  el("mt-layers-name").textContent = mtLayers.map((f) => f.name).join(", ");
 });
-["ancho", "abajo"].forEach((k) => el(`mt-${k}`).addEventListener("input", () => {
+["width", "bottom"].forEach((k) => el(`mt-${k}`).addEventListener("input", () => {
   el(`mt-${k}-val`).textContent = el(`mt-${k}`).value;
 }));
 
 el("mt-process-btn").addEventListener("click", () => {
-  if (!mtVideo) return error("Elegí el video base.");
-  const capas = el("mt-capas-json").value;
-  try { JSON.parse(capas); } catch { return error("El JSON de las capas no es válido."); }
+  if (!mtVideo) return showError("Elegí el video base.");
+  const layers = el("mt-layers-json").value;
+  try { JSON.parse(layers); } catch { return showError("El JSON de las capas no es válido."); }
   const form = new FormData();
   form.append("video", mtVideo);
-  mtCapas.forEach((f) => form.append("capas_archivos", f));
-  if (el("mt-carpeta").value.trim()) form.append("carpeta_capas", el("mt-carpeta").value.trim());
-  form.append("capas", capas);
-  form.append("caja", JSON.stringify({ modo: el("mt-modo").value, ancho: +el("mt-ancho").value,
-    abajo: +el("mt-abajo").value }));
-  if (el("mt-subs").checked) form.append("subtitulos", "1");
+  mtLayers.forEach((f) => form.append("layer_files", f));
+  if (el("mt-folder").value.trim()) form.append("layers_folder", el("mt-folder").value.trim());
+  form.append("layers", layers);
+  form.append("box", JSON.stringify({ mode: el("mt-mode").value, width: +el("mt-width").value,
+    bottom: +el("mt-bottom").value }));
+  if (el("mt-subs").checked) form.append("subtitles", "1");
   ["mt-result-wrap", "mt-error-wrap"].forEach((id) => el(id).classList.add("hidden"));
   el("mt-progress-wrap").classList.remove("hidden");
   el("mt-process-btn").disabled = true;
@@ -45,11 +45,11 @@ el("mt-process-btn").addEventListener("click", () => {
       el("mt-download-btn").href = `${MT_API}/download/${jobId}`;
       el("mt-result-wrap").classList.remove("hidden");
     },
-    onError: error,
+    onError: showError,
   });
 });
 
-function error(msg) {
+function showError(msg) {
   el("mt-progress-wrap").classList.add("hidden");
   el("mt-process-btn").disabled = false;
   el("mt-error-msg").textContent = msg;

@@ -34,26 +34,26 @@ THUMBS_FOLDER = os.path.join(BASE_DIR, "cache", "thumbs")
 COMPETITIVO_FOLDER = os.environ.get("REELFORGE_COMPETITIVO_FOLDER") or os.path.join(
     os.path.expanduser("~"), "Videos", "ReelForge", "Competitivo")
 
-# Análisis de música (beatmap): se cachea por huella del archivo, así la misma
-# canción no se vuelve a analizar en cada edit (temporal: cache/).
+# Song analysis (beatmap): cached by file fingerprint, so the same song is not
+# analyzed again for every edit (temporary: cache/).
 BEATMAPS_FOLDER = os.path.join(BASE_DIR, "cache", "beatmaps")
 
-# LUTs (.cube) para la gradación de los edits: persistentes y versionables.
+# LUTs (.cube) for color grading the edits: persistent and versionable.
 LUTS_FOLDER = os.path.join(ASSETS_FOLDER, "luts")
 
-# Edits de anime y montajes: carpeta PERSISTENTE, como la de competitivo.
-# Override: REELFORGE_EDITS_FOLDER.
+# Anime edits and edits of series without a day folder: PERSISTENT, like the
+# competitivo folder. Override: REELFORGE_EDITS_FOLDER.
 EDITS_FOLDER = os.environ.get("REELFORGE_EDITS_FOLDER") or os.path.join(
     os.path.expanduser("~"), "Videos", "ReelForge", "Edits")
 
-# Montaje: las capas animadas (flyers, láminas) se leen in situ desde esta raíz
-# (p. ej. presentations/<deck>/video-out/laminas). Ninguna ruta puede salir de
-# aquí. Override: REELFORGE_CAPAS_FOLDER.
-CAPAS_FOLDER = os.environ.get("REELFORGE_CAPAS_FOLDER") or os.path.expanduser("~")
+# Montage: animated layers (flyers, slides) are read in place from inside this
+# root (e.g. presentations/<deck>/video-out/laminas). No path may leave it.
+# Override: REELFORGE_LAYERS_FOLDER.
+LAYERS_FOLDER = os.environ.get("REELFORGE_LAYERS_FOLDER") or os.path.expanduser("~")
 
-# Binarios externos OPCIONALES (ncnn-vulkan: corren en NVIDIA, AMD e Intel, y en
-# Mac). Sin ellos los edits funcionan igual: la cámara lenta duplica cuadros y
-# las fuentes chicas se escalan con lanczos. Override con la ruta completa.
+# OPTIONAL external binaries (ncnn-vulkan: run on NVIDIA, AMD, Intel and Mac).
+# Without them the edits still work: slow motion repeats frames and small
+# sources are scaled with lanczos. Override with the full path.
 RIFE_PATH = os.environ.get("REELFORGE_RIFE") or shutil.which("rife-ncnn-vulkan") or ""
 REALESRGAN_PATH = os.environ.get("REELFORGE_REALESRGAN") or shutil.which("realesrgan-ncnn-vulkan") or ""
 
@@ -118,8 +118,8 @@ ALLOWED_WATERMARK_EXTENSIONS = {"png"}
 ALLOWED_FONT_EXTENSIONS = {"ttf", "otf"}
 # Imágenes usables como fondo (p. ej. el fondo del segmento 1 en hook_reel).
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
-# Capas del montaje: video con alfa (ProRes 4444 .mov, VP9 .webm) o una imagen.
-ALLOWED_CAPA_EXTENSIONS = {"mov", "webm", "mp4", "mkv", "png"}
+# Montage layers: video with alpha (ProRes 4444 .mov, VP9 .webm) or an image.
+ALLOWED_LAYER_EXTENSIONS = {"mov", "webm", "mp4", "mkv", "png"}
 ALLOWED_LUT_EXTENSIONS = {"cube"}
 
 # Lienzo vertical de salida (9:16)
@@ -151,8 +151,8 @@ def allowed_font_file(filename: str) -> bool:
     return _has_allowed_ext(filename, ALLOWED_FONT_EXTENSIONS)
 
 
-def allowed_capa_file(filename: str) -> bool:
-    return _has_allowed_ext(filename, ALLOWED_CAPA_EXTENSIONS)
+def allowed_layer_file(filename: str) -> bool:
+    return _has_allowed_ext(filename, ALLOWED_LAYER_EXTENSIONS)
 
 
 # Fuente por defecto, EXPLÍCITA. Antes se tomaba "la primera de la carpeta" en

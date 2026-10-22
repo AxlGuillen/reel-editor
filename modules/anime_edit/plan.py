@@ -1,14 +1,14 @@
-"""Planificador de un edit de anime (puro): planos elegidos + beatmap + preset → EDL.
+"""Anime edit planner (pure): chosen shots + beatmap + preset → EDL.
 
-  1. Ventana de la canción: arranca en un primer tiempo de modo que el drop
-     caiga hacia el 35 % del edit (entre 4 y 15 s) y termina en un compás.
-  2. Puntos de corte según el preset: cada `paso` beats según la sección (o
-     en cada palabra cantada), medio beat en las subidas, y siempre en el drop.
-  3. El drop es del plano héroe (el que eligió Claude o el de más puntaje):
-     dura un compás, con congelado y cámara lenta (RIFE si está).
-  4. Los demás tramos se llenan con los planos en el orden elegido (la
-     historia de la pelea); si se acaban, se repiten tomando otra parte.
-  5. Acentos y letra según el preset.
+  1. Song window: starts on a downbeat so the drop lands around 35 % of the
+     edit (between 4 and 15 s) and ends on a bar.
+  2. Cut points per preset: every `step` beats per section (or on every sung
+     word), half a beat in the buildups, and always on the drop.
+  3. The drop belongs to the hero shot (the one Claude picked or the highest
+     score): it lasts a bar, with a freeze and slow motion (RIFE if present).
+  4. The other spans are filled with the shots in the chosen order (the story
+     of the fight); if they run out, they repeat using another part.
+  5. Accents and lyrics per preset.
 """
 from __future__ import annotations
 
@@ -17,35 +17,35 @@ import re
 from dataclasses import dataclass
 
 from modules.anime_edit.presets import PRESETS, Preset
-from modules.beatmap import analisis
-from modules.edicion import render, ritmo
-from modules.edicion.edl import Edl, Evento, Pieza, Segmento, Texto
+from modules.beatmap import analysis
+from modules.editing import render, timing
+from modules.editing.edl import Edl, Event, Piece, Segment, Text
 
-FORMATOS = {
-    "vertical": (1080, 1920),          # el clip a lo ancho sobre su copia difuminada
-    "vertical_lleno": (1080, 1920),    # recorta los lados y llena el cuadro
-    "horizontal": (1920, 1080),        # 16:9, como el edit de referencia
+FORMATS = {
+    "vertical": (1080, 1920),          # the clip full width over its blurred copy
+    "vertical_fill": (1080, 1920),     # crops the sides and fills the frame
+    "horizontal": (1920, 1080),        # 16:9, like the reference edit
 }
-DROP_FRACCION, DROP_MIN_S, DROP_MAX_S = 0.35, 4.0, 15.0
-MIN_CORTE_S = 0.15
-BORDE_PLANO_S = 0.04                  # no usar el primer/último cuadro (el corte)
-MAX_EVENTOS = 220                     # las expresiones de FFmpeg crecen con cada uno
+DROP_FRACTION, DROP_MIN_S, DROP_MAX_S = 0.35, 4.0, 15.0
+MIN_CUT_S = 0.15
+SHOT_EDGE_S = 0.04                    # skip the first/last frame (the cut)
+MAX_EVENTS = 220                      # FFmpeg expressions grow with each one
 
 
 @dataclass
-class Opciones:
-    formato: str = "vertical"
+class PlanOptions:
+    format: str = "vertical"
     fps: int = 30
-    duracion_s: float = 30
-    musica_desde: float | None = None
-    texto: str = "auto"                # auto (el del preset) | letra | off
-    look: str | None = None            # None = el del preset
-    heroe: int | None = None           # id del plano héroe
-    interpolar: bool = True
+    duration_s: float = 30
+    music_start: float | None = None
+    text: str = "auto"                 # auto (the preset's) | lyrics | off
+    look: str | None = None            # None = the preset's
+    hero: int | None = None            # id of the hero shot
+    interpolate: bool = True
 
 
-def _beat_en(beats: list[float], i: float) -> float:
-    """Tiempo del beat (fraccionario) i, interpolando entre beats."""
+def _beat_at(beats: list[float], i: float) -> float:
+    """Time of the (fractional) beat i, interpolating between beats."""
     k = int(math.floor(i))
     if k >= len(beats) - 1:
         per = beats[-1] - beats[-2] if len(beats) > 1 else 0.5
@@ -53,192 +53,191 @@ def _beat_en(beats: list[float], i: float) -> float:
     return beats[k] + (i - k) * (beats[k + 1] - beats[k])
 
 
-def ventana(bm: dict, dur: float, musica_desde: float | None) -> tuple[float, float]:
-    """(desde, dur) de la canción para el edit, de compás a compás."""
+def song_window(bm: dict, dur: float, music_start: float | None) -> tuple[float, float]:
+    """(start, dur) of the song for the edit, bar to bar."""
     downs = bm["downbeats"] or bm["beats"]
-    if musica_desde is not None:
-        desde = min(downs, key=lambda d: abs(d - musica_desde))
+    if music_start is not None:
+        start = min(downs, key=lambda d: abs(d - music_start))
     elif bm.get("drop") is not None:
-        quiero = bm["drop"] - min(DROP_MAX_S, max(DROP_MIN_S, DROP_FRACCION * dur))
-        antes = [d for d in downs if d <= quiero + 1e-6]
-        desde = antes[-1] if antes else downs[0]
+        wanted = bm["drop"] - min(DROP_MAX_S, max(DROP_MIN_S, DROP_FRACTION * dur))
+        before = [d for d in downs if d <= wanted + 1e-6]
+        start = before[-1] if before else downs[0]
     else:
-        desde = downs[0]
-    fin = min(desde + dur, bm["duracion"])
-    cierres = [d for d in downs if desde + 4 <= d <= fin + 1e-6]
-    if cierres:
-        fin = cierres[-1]
-    if fin - desde < 2:
+        start = downs[0]
+    end = min(start + dur, bm["duration"])
+    closings = [d for d in downs if start + 4 <= d <= end + 1e-6]
+    if closings:
+        end = closings[-1]
+    if end - start < 2:
         raise ValueError("La canción es muy corta para ese edit.")
-    return desde, fin - desde
+    return start, end - start
 
 
-def cortes(bmw: dict, preset: Preset) -> list[float]:
-    """Puntos de corte en la ventana (tiempo de la salida), con 0 y el final."""
-    dur = bmw["duracion"]
+def cut_points(bmw: dict, preset: Preset) -> list[float]:
+    """Cut points in the window (output time), with 0 and the end."""
+    dur = bmw["duration"]
     beats = bmw["beats"]
     out = {0.0, round(dur, 3)}
-    if preset.cortes == "palabras" and bmw.get("palabras"):
-        compas = 4 * analisis.periodo(bmw)
-        ultimo = 0.0
-        for w in bmw["palabras"]:
-            if w["inicio"] - ultimo >= 0.3:
-                out.add(round(w["inicio"], 3))
-                ultimo = w["inicio"]
-        # Donde no se canta (puentes, intro), cortes en los compases.
+    if preset.cuts == "words" and bmw.get("words"):
+        bar = 4 * analysis.period(bmw)
+        last = 0.0
+        for w in bmw["words"]:
+            if w["start"] - last >= 0.3:
+                out.add(round(w["start"], 3))
+                last = w["start"]
+        # Where nothing is sung (bridges, intro), cuts on the bars.
         for d in bmw["downbeats"]:
-            vecinos = sorted(out)
-            hueco = min((abs(d - c) for c in vecinos), default=99)
-            if hueco > compas:
+            gap = min((abs(d - c) for c in sorted(out)), default=99)
+            if gap > bar:
                 out.add(round(d, 3))
     elif beats:
         i = 0.0
         while True:
-            t = _beat_en(beats, i)
+            t = _beat_at(beats, i)
             if t >= dur:
                 break
             out.add(round(t, 3))
-            paso = preset.paso_subida if analisis.en_subida(bmw, t) else \
-                preset.paso.get(analisis.seccion_en(bmw, t), 2)
-            i += paso
+            step = preset.buildup_step if analysis.in_buildup(bmw, t) else \
+                preset.step.get(analysis.section_at(bmw, t), 2)
+            i += step
     if bmw.get("drop") is not None:
         out.add(round(bmw["drop"], 3))
-    limpios = []
+    clean = []
     for c in sorted(out):
         if c > dur:
             continue
-        if limpios and c - limpios[-1] < MIN_CORTE_S:
+        if clean and c - clean[-1] < MIN_CUT_S:
             continue
-        limpios.append(c)
-    if limpios[-1] < dur - 1e-6:
-        limpios.append(round(dur, 3))
-    return limpios
+        clean.append(c)
+    if clean[-1] < dur - 1e-6:
+        clean.append(round(dur, 3))
+    return clean
 
 
-def _ventana_plano(plano: dict, src: float, usos: int) -> tuple[float, float]:
-    """Tramo de `src` s del plano centrado en su pico; en cada repetición,
-    corrido hacia adelante (no se ve dos veces lo mismo)."""
-    a, b = plano["desde"] + BORDE_PLANO_S, plano["hasta"] - BORDE_PLANO_S
-    largo = max(0.0, b - a)
-    src = min(src, largo)
-    inicio = plano["pico"] - src * 0.4 + usos * src * 0.6
-    if largo > src:
-        inicio = a + ((inicio - a) % (largo - src + 1e-9))
-    inicio = min(max(inicio, a), b - src)
-    return inicio, inicio + src
+def _shot_span(shot: dict, src: float, uses: int) -> tuple[float, float]:
+    """Span of `src` s of the shot centered on its peak; on each repetition,
+    shifted forward (the same thing is not seen twice)."""
+    a, b = shot["start"] + SHOT_EDGE_S, shot["end"] - SHOT_EDGE_S
+    length = max(0.0, b - a)
+    src = min(src, length)
+    start = shot["peak"] - src * 0.4 + uses * src * 0.6
+    if length > src:
+        start = a + ((start - a) % (length - src + 1e-9))
+    start = min(max(start, a), b - src)
+    return start, start + src
 
 
-def _piezas(desde: float, hasta: float, dur: float, perfil: str) -> list[Pieza]:
-    """Llena `dur` con el tramo; si es muy corto, lo que falta queda congelado al final."""
-    src = hasta - desde
-    if src >= dur * ritmo.VEL_MIN * 0.999:
-        return ritmo.rampa(desde, hasta, dur, perfil)
-    usado = src / ritmo.VEL_MIN
-    return ritmo.rampa(desde, hasta, usado, "constante") + [Pieza(hasta, hasta, dur - usado)]
+def _pieces(start: float, end: float, dur: float, profile: str) -> list[Piece]:
+    """Fills `dur` with the span; if it is too short, the rest stays frozen at the end."""
+    src = end - start
+    if src >= dur * timing.MIN_SPEED * 0.999:
+        return timing.ramp(start, end, dur, profile)
+    used = src / timing.MIN_SPEED
+    return timing.ramp(start, end, used, "constant") + [Piece(end, end, dur - used)]
 
 
-def _limpiar(palabra: str) -> str:
-    return re.sub(r"[^\w'¿?¡!áéíóúñüÁÉÍÓÚÑÜ-]", "", palabra)
+def _clean_word(word: str) -> str:
+    return re.sub(r"[^\w'¿?¡!áéíóúñüÁÉÍÓÚÑÜ-]", "", word)
 
 
-def planear(fuente: str, planos: list[dict], bm: dict, preset_id: str, op: Opciones) -> tuple[Edl, dict]:
-    """EDL de una variante. `planos` en el orden elegido (con sus medidas)."""
+def plan(source: str, shots: list[dict], bm: dict, preset_id: str, op: PlanOptions) -> tuple[Edl, dict]:
+    """EDL of one variant. `shots` in the chosen order (with their measures)."""
     if preset_id not in PRESETS:
         raise ValueError(f"Variante desconocida: {preset_id!r}. Opciones: {', '.join(PRESETS)}.")
-    if op.formato not in FORMATOS:
-        raise ValueError(f"Formato inválido: {op.formato!r}. Opciones: {', '.join(FORMATOS)}.")
-    if not planos:
+    if op.format not in FORMATS:
+        raise ValueError(f"Formato inválido: {op.format!r}. Opciones: {', '.join(FORMATS)}.")
+    if not shots:
         raise ValueError("Elegí al menos un plano.")
     preset = PRESETS[preset_id]
-    desde, dur = ventana(bm, op.duracion_s, op.musica_desde)
-    bmw = analisis.recortar(bm, desde, dur)
-    puntos = cortes(bmw, preset)
-    per = analisis.periodo(bmw)
+    start, dur = song_window(bm, op.duration_s, op.music_start)
+    bmw = analysis.window(bm, start, dur)
+    points = cut_points(bmw, preset)
+    per = analysis.period(bmw)
 
-    heroe = next((p for p in planos if p["id"] == op.heroe), None) or max(planos, key=lambda p: p["puntaje"])
-    resto = [p for p in planos if p is not heroe] or [heroe]
+    hero = next((p for p in shots if p["id"] == op.hero), None) or max(shots, key=lambda p: p["score"])
+    others = [p for p in shots if p is not hero] or [hero]
     drop = bmw.get("drop")
 
-    # Tramos [a, b) de la salida; el del drop se alarga hasta un compás.
-    tramos = list(zip(puntos, puntos[1:]))
+    # Output spans [a, b); the drop one is extended up to a bar.
+    spans = list(zip(points, points[1:]))
     if drop is not None:
-        i = next((k for k, (a, _) in enumerate(tramos) if abs(a - drop) < 1e-3), None)
+        i = next((k for k, (a, _) in enumerate(spans) if abs(a - drop) < 1e-3), None)
         if i is not None:
-            fin = tramos[i][1]
+            end = spans[i][1]
             j = i
-            while j + 1 < len(tramos) and fin - drop < 4 * per - 1e-3:
+            while j + 1 < len(spans) and end - drop < 4 * per - 1e-3:
                 j += 1
-                fin = tramos[j][1]
-            tramos[i:j + 1] = [(drop, fin)]
+                end = spans[j][1]
+            spans[i:j + 1] = [(drop, end)]
 
-    ancho, alto = FORMATOS[op.formato]
-    vf = {"vertical": render.vf_vertical_blur(ancho, alto),
-          "vertical_lleno": render.vf_cubrir(ancho, alto),
-          "horizontal": render.vf_cubrir(ancho, alto)}[op.formato]
-    segmentos, usos, k = [], {}, 0
-    for a, b in tramos:
+    width, height = FORMATS[op.format]
+    vf = {"vertical": render.vf_vertical_blur(width, height),
+          "vertical_fill": render.vf_cover(width, height),
+          "horizontal": render.vf_cover(width, height)}[op.format]
+    segments, uses, k = [], {}, 0
+    for a, b in spans:
         d = b - a
-        es_heroe = drop is not None and abs(a - drop) < 1e-3
-        plano = heroe if es_heroe else resto[k % len(resto)]
-        if not es_heroe:
+        is_hero = drop is not None and abs(a - drop) < 1e-3
+        shot = hero if is_hero else others[k % len(others)]
+        if not is_hero:
             k += 1
-        n = usos.get(plano["id"], 0)
-        usos[plano["id"]] = n + 1
-        if es_heroe:
-            s0, s1 = _ventana_plano(plano, d * 0.8, n)
-            piezas = ritmo.impacto(s0, s1, d, congelado=0.1, lento=d * 0.5, vel_lenta=0.35)
+        n = uses.get(shot["id"], 0)
+        uses[shot["id"]] = n + 1
+        if is_hero:
+            s0, s1 = _shot_span(shot, d * 0.8, n)
+            pieces = timing.impact(s0, s1, d, freeze=0.1, slow=d * 0.5, slow_speed=0.35)
         else:
-            s0, s1 = _ventana_plano(plano, d * preset.velocidad, n)
-            piezas = _piezas(s0, s1, d, preset.perfil)
-        piezas = ritmo.acotar(piezas, 0.0, ritmo.VEL_MAX)
-        segmentos.append(Segmento(fuente, piezas, f"plano {plano['id']}", vf,
-                                  interpolar=op.interpolar and (es_heroe or preset.perfil != "constante")))
+            s0, s1 = _shot_span(shot, d * preset.speed, n)
+            pieces = _pieces(s0, s1, d, preset.profile)
+        pieces = timing.clamp_speeds(pieces, 0.0, timing.MAX_SPEED)
+        segments.append(Segment(source, pieces, f"plano {shot['id']}", vf,
+                                interpolate=op.interpolate and (is_hero or preset.profile != "constant")))
 
-    eventos = _acentos(preset, bmw, [a for a, _ in tramos], drop)
-    texto = preset.texto if op.texto == "auto" else op.texto
-    textos = []
-    if texto == "letra":
-        palabras = bmw.get("palabras") or []
-        for w, sig in zip(palabras, palabras[1:] + [None]):
-            fin = min(sig["inicio"] if sig else w["fin"] + 0.3, w["inicio"] + 1.2, dur)
-            limpia = _limpiar(w["texto"])
-            if limpia and fin - w["inicio"] >= 0.08:
-                textos.append(Texto(w["inicio"], fin, limpia, "palabra"))
-    edl = Edl(segmentos, ancho=ancho, alto=alto, fps=op.fps, eventos=eventos, textos=textos,
-              musica_desde=desde, look=op.look or preset.look, glow=preset.glow)
-    info = {"variante": preset_id, "musica_desde": round(desde, 3), "dur": round(dur, 3),
-            "cortes": len(tramos), "heroe": heroe["id"] if drop is not None else None,
-            "drop": round(drop, 3) if drop is not None else None, "palabras": len(textos)}
+    events = _accents(preset, bmw, [a for a, _ in spans], drop)
+    text = preset.text if op.text == "auto" else op.text
+    texts = []
+    if text == "lyrics":
+        words = bmw.get("words") or []
+        for w, nxt in zip(words, words[1:] + [None]):
+            end = min(nxt["start"] if nxt else w["end"] + 0.3, w["start"] + 1.2, dur)
+            word = _clean_word(w["text"])
+            if word and end - w["start"] >= 0.08:
+                texts.append(Text(w["start"], end, word, "word"))
+    edl = Edl(segments, width=width, height=height, fps=op.fps, events=events, texts=texts,
+              music_start=start, look=op.look or preset.look, glow=preset.glow)
+    info = {"variant": preset_id, "music_start": round(start, 3), "dur": round(dur, 3),
+            "cuts": len(spans), "hero": hero["id"] if drop is not None else None,
+            "drop": round(drop, 3) if drop is not None else None, "words": len(texts)}
     return edl, info
 
 
-def _acentos(preset: Preset, bmw: dict, inicios: list[float], drop: float | None) -> list[Evento]:
-    coro = [s for s in bmw["secciones"] if s["tipo"] == "coro"]
+def _accents(preset: Preset, bmw: dict, starts: list[float], drop: float | None) -> list[Event]:
+    choruses = [s for s in bmw["sections"] if s["type"] == "chorus"]
 
-    def en_coro(t):
-        return any(s["inicio"] <= t < s["fin"] for s in coro)
+    def in_chorus(t):
+        return any(s["start"] <= t < s["end"] for s in choruses)
 
-    ev: list[Evento] = []
+    ev: list[Event] = []
     if drop is not None:
-        ev += [Evento(drop, "flash", 1.0, 0.2), Evento(drop, "zoom", 1.0, 0.35)]
-    if preset.flash == "compases_coro":
-        ev += [Evento(d, "flash", 0.4, 0.12) for d in bmw["downbeats"] if en_coro(d) and d != drop]
-    elif preset.flash == "cortes":
-        ev += [Evento(t, "flash", 0.45, 0.12) for t in inicios if t > 0 and t != drop]
-    if preset.zoom == "cortes_coro":
-        ev += [Evento(t, "zoom", 0.5, 0.2) for t in inicios if en_coro(t) and t != drop]
-    elif preset.zoom == "beats_coro":
-        ev += [Evento(b, "zoom", 0.35, 0.18) for b in bmw["beats"] if en_coro(b) and b != drop]
-    if preset.shake == "golpes_coro":
-        ev += [Evento(g, "shake", 0.5, 0.2) for g in bmw.get("golpes", []) if en_coro(g)]
+        ev += [Event(drop, "flash", 1.0, 0.2), Event(drop, "zoom", 1.0, 0.35)]
+    if preset.flash == "chorus_bars":
+        ev += [Event(d, "flash", 0.4, 0.12) for d in bmw["downbeats"] if in_chorus(d) and d != drop]
+    elif preset.flash == "cuts":
+        ev += [Event(t, "flash", 0.45, 0.12) for t in starts if t > 0 and t != drop]
+    if preset.zoom == "chorus_cuts":
+        ev += [Event(t, "zoom", 0.5, 0.2) for t in starts if in_chorus(t) and t != drop]
+    elif preset.zoom == "chorus_beats":
+        ev += [Event(b, "zoom", 0.35, 0.18) for b in bmw["beats"] if in_chorus(b) and b != drop]
+    if preset.shake == "chorus_hits":
+        ev += [Event(g, "shake", 0.5, 0.2) for g in bmw.get("hits", []) if in_chorus(g)]
     if preset.shake and drop is not None:
-        ev.append(Evento(drop, "shake", 1.0, 0.45))
+        ev.append(Event(drop, "shake", 1.0, 0.45))
     if preset.rgb == "drop" and drop is not None:
-        ev.append(Evento(drop, "rgb", 1.0, 0.3))
-    elif preset.rgb == "cortes_coro":
-        ev += [Evento(t, "rgb", 0.8, 0.12) for t in inicios if en_coro(t)]
+        ev.append(Event(drop, "rgb", 1.0, 0.3))
+    elif preset.rgb == "chorus_cuts":
+        ev += [Event(t, "rgb", 0.8, 0.12) for t in starts if in_chorus(t)]
     ev.sort(key=lambda e: e.t)
-    if len(ev) > MAX_EVENTOS:
-        # Se quedan los más fuertes (el drop siempre gana).
-        ev = sorted(sorted(ev, key=lambda e: -e.intensidad)[:MAX_EVENTOS], key=lambda e: e.t)
+    if len(ev) > MAX_EVENTS:
+        # The strongest stay (the drop always wins).
+        ev = sorted(sorted(ev, key=lambda e: -e.intensity)[:MAX_EVENTS], key=lambda e: e.t)
     return ev

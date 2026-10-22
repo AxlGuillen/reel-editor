@@ -338,12 +338,12 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
                          marca: tuple[int, int, int, int] | None = None,
                          marca_alto: int = MARCA_ALTO_DEFECTO,
                          placa_idx: int | None = None, D: float | None = None,
-                         camara: bool = True) -> str:
+                         camera: bool = True) -> str:
     """filter_complex del layout: entra [0:v] (1920x1080) y, si hay watermark,
     [1:v] (el PNG); sale [vout] 1080x1920 yuv420p.
 
-    `camara=False` (modo edit): en el lugar de la cámara del set de Ibai va el
-    gameplay difuminado y oscurecido. La geometría es la misma.
+    `camera=False` (edit mode): Ibai's set camera is replaced by the blurred,
+    darkened gameplay. The geometry is the same.
 
     `placa_idx`/`D`: intro "encima": la placa (entrada `placa_idx`, imagen en
     loop de largo D) va centrada sobre el gameplay durante [0, D], entra con
@@ -375,7 +375,7 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
         f"[s_marcador]crop={mw}:{mh}:{mx}:{my},scale={W}:{MARCADOR_H}:flags=lanczos,"
         "format=yuv420p,setsar=1[marcador]",
     ]
-    if camara:
+    if camera:
         partes += [
             # Cámara del set al 70 % sobre su versión difuminada.
             f"[s_camara]crop={CAMARA_W}:{CAMARA_H}:{CAMARA_X}:{camara_y},split[cam_a][cam_b]",
@@ -412,11 +412,11 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
     return ";".join(partes)
 
 
-def geometria_edit(camara_y: int, zoom: float = 1.3, camara: bool = False) -> str:
-    """El layout como geometría de un plano del modo edit (edicion/render.py):
-    sin color (lo pone el look del edit), sin watermark (va al final, quieto)
-    y con la última cadena abierta para que el render le sume el retime."""
-    fc = build_filter_complex(camara_y, zoom, "off", None, camara=camara)
+def edit_geometry(camara_y: int, zoom: float = 1.3, camera: bool = False) -> str:
+    """The layout as the geometry of an edit-mode shot (editing/render.py):
+    no color (the edit's look sets it), no watermark (it goes at the end,
+    static) and with the last chain open so the render can append the retime."""
+    fc = build_filter_complex(camara_y, zoom, "off", None, camera=camera)
     return fc[: -len("[vout]")] if fc.endswith("[vout]") else fc
 
 

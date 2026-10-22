@@ -1,4 +1,4 @@
-"""Parámetros de anime_edit (fase 1: material y canción; fase 2: el edit)."""
+"""anime_edit parameters (phase 1: footage and song; phase 2: the edit)."""
 from __future__ import annotations
 
 import json
@@ -7,14 +7,14 @@ import re
 from dataclasses import dataclass, field
 
 import config
-from modules.anime_edit.plan import FORMATOS
+from modules.anime_edit.plan import FORMATS
 from modules.anime_edit.presets import PRESETS
-from modules.beatmap.analisis import MOTORES
-from modules.beatmap.schema import LetraParams, _bool, musica_de_form
+from modules.beatmap.analysis import ENGINES
+from modules.beatmap.schema import LyricsParams, music_from_form, to_bool
 from modules.downloader.schema import DownloaderParams
-from modules.edicion import efectos
+from modules.editing import effects
 
-TEXTOS = ("auto", "letra", "off")
+TEXT_MODES = ("auto", "lyrics", "off")
 
 
 def _num(form, name: str, default, lo, hi, cast=float):
@@ -30,27 +30,27 @@ def _num(form, name: str, default, lo, hi, cast=float):
     return value
 
 
-def _lista(form, name: str):
+def _list(form, name: str):
     raw = form.get(name)
     if raw in (None, ""):
         return None
     if isinstance(raw, list):
         return raw
     try:
-        valor = json.loads(raw)
+        value = json.loads(raw)
     except (TypeError, ValueError):
-        valor = [x for x in re.split(r"[\s,;]+", str(raw)) if x]
-    return valor if isinstance(valor, list) else [valor]
+        value = [x for x in re.split(r"[\s,;]+", str(raw)) if x]
+    return value if isinstance(value, list) else [value]
 
 
 @dataclass
 class AnimeEditParams:
-    """Fase 1: el video (archivo, librería o link), la canción y si se saca la letra."""
-    video: DownloaderParams | None = None       # link del video; None → archivo o librería
-    musica: DownloaderParams | None = None      # link de la canción; None → archivo
-    musica_del_video: bool = False              # la canción es el audio del propio video
-    motor: str = "auto"
-    letra: LetraParams = field(default_factory=LetraParams)
+    """Phase 1: the video (file, library or link), the song and whether to extract the lyrics."""
+    video: DownloaderParams | None = None       # video link; None → file or library
+    music: DownloaderParams | None = None       # song link; None → file
+    music_from_video: bool = False              # the song is the video's own audio
+    engine: str = "auto"
+    lyrics: LyricsParams = field(default_factory=LyricsParams)
 
     @classmethod
     def from_form(cls, form) -> "AnimeEditParams":
@@ -61,91 +61,92 @@ class AnimeEditParams:
                 raise ValueError("'video_url' tiene que ser un link http(s).")
             video = DownloaderParams.from_form({"url": url, "format": "video", "quality": "1080",
                                                 "cookies_browser": form.get("cookies_browser") or ""})
-        motor = str(form.get("motor") or "auto").strip().lower()
-        if motor not in MOTORES:
-            raise ValueError(f"Motor inválido: {motor!r}. Opciones: {', '.join(MOTORES)}.")
-        return cls(video=video, musica=musica_de_form(form),
-                   musica_del_video=_bool(form, "musica_del_video", False), motor=motor,
-                   letra=LetraParams.from_form(form, letra_defecto=True))
+        engine = str(form.get("engine") or "auto").strip().lower()
+        if engine not in ENGINES:
+            raise ValueError(f"Motor inválido: {engine!r}. Opciones: {', '.join(ENGINES)}.")
+        return cls(video=video, music=music_from_form(form),
+                   music_from_video=to_bool(form, "music_from_video", False), engine=engine,
+                   lyrics=LyricsParams.from_form(form, lyrics_default=True))
 
 
 @dataclass
 class FinishParams:
-    """Fase 2: qué planos, en qué orden, y cómo se ve cada variante."""
-    seleccion: list[int] | None = None          # ids en orden; None = la propuesta
-    heroe: int | None = None
-    variantes: list[str] = field(default_factory=lambda: ["impacto"])
-    formato: str = "vertical"
-    duracion_s: float = 30
-    musica_desde: float | None = None
-    texto: str = "auto"
+    """Phase 2: which shots, in what order, and how each variant looks."""
+    selection: list[int] | None = None          # ids in order; None = the proposal
+    hero: int | None = None
+    variants: list[str] = field(default_factory=lambda: ["impact"])
+    format: str = "vertical"
+    duration_s: float = 30
+    music_start: float | None = None
+    text: str = "auto"
     look: str | None = None
     lut: str = ""
-    intensidad: float = 1.0
+    intensity: float = 1.0
     fps: int = 30
-    interpolar: bool = True
-    escalar: bool = False
-    volumen_original: int = 0
+    interpolate: bool = True
+    upscale: bool = False
+    original_volume: int = 0
     watermark: str = ""
-    marca_alto: int = 150
-    titulo: str = ""
+    watermark_height: int = 150
+    title: str = ""
 
     @classmethod
-    def from_form(cls, form, ids_validos: set[int]) -> "FinishParams":
-        sel = _lista(form, "seleccion")
+    def from_form(cls, form, valid_ids: set[int]) -> "FinishParams":
+        sel = _list(form, "selection")
         if sel is not None:
             try:
                 sel = [int(x) for x in sel]
             except (TypeError, ValueError):
-                raise ValueError("'seleccion' es una lista de números de plano, p. ej. [3, 7, 12].")
-            malos = [x for x in sel if x not in ids_validos]
-            if malos:
-                raise ValueError(f"No existe el plano {malos[0]}.")
+                raise ValueError("'selection' es una lista de números de plano, p. ej. [3, 7, 12].")
+            bad = [x for x in sel if x not in valid_ids]
+            if bad:
+                raise ValueError(f"No existe el plano {bad[0]}.")
             if not sel:
                 raise ValueError("Elegí al menos un plano.")
-        heroe = form.get("heroe")
-        if heroe not in (None, ""):
+        hero = form.get("hero")
+        if hero not in (None, ""):
             try:
-                heroe = int(heroe)
+                hero = int(hero)
             except (TypeError, ValueError):
-                raise ValueError("'heroe' es el número de un plano.")
-            if heroe not in ids_validos:
-                raise ValueError(f"No existe el plano {heroe}.")
+                raise ValueError("'hero' es el número de un plano.")
+            if hero not in valid_ids:
+                raise ValueError(f"No existe el plano {hero}.")
         else:
-            heroe = None
-        variantes = _lista(form, "variantes") or ["impacto"]
-        malas = [v for v in variantes if v not in PRESETS]
-        if malas:
-            raise ValueError(f"Variante desconocida: {malas[0]!r}. Opciones: {', '.join(PRESETS)}.")
-        if len(variantes) > 6:
+            hero = None
+        variants = _list(form, "variants") or ["impact"]
+        bad_variants = [v for v in variants if v not in PRESETS]
+        if bad_variants:
+            raise ValueError(f"Variante desconocida: {bad_variants[0]!r}. Opciones: {', '.join(PRESETS)}.")
+        if len(variants) > 6:
             raise ValueError("Máximo 6 variantes por vez.")
-        formato = str(form.get("formato") or "vertical").strip().lower()
-        if formato not in FORMATOS:
-            raise ValueError(f"Formato inválido: {formato!r}. Opciones: {', '.join(FORMATOS)}.")
-        texto = str(form.get("texto") or "auto").strip().lower()
-        if texto not in TEXTOS:
-            raise ValueError(f"'texto' tiene que ser uno de: {', '.join(TEXTOS)}.")
+        fmt = str(form.get("format") or "vertical").strip().lower()
+        if fmt not in FORMATS:
+            raise ValueError(f"Formato inválido: {fmt!r}. Opciones: {', '.join(FORMATS)}.")
+        text = str(form.get("text") or "auto").strip().lower()
+        if text not in TEXT_MODES:
+            raise ValueError(f"'text' tiene que ser uno de: {', '.join(TEXT_MODES)}.")
         look = str(form.get("look") or "").strip().lower() or None
-        if look and look not in efectos.LOOKS:
-            raise ValueError(f"Look desconocido: {look!r}. Opciones: {', '.join(efectos.LOOKS)}.")
+        if look and look not in effects.LOOKS:
+            raise ValueError(f"Look desconocido: {look!r}. Opciones: {', '.join(effects.LOOKS)}.")
         lut = os.path.basename(str(form.get("lut") or "").strip())
-        if lut and lut not in efectos.luts():
+        if lut and lut not in effects.luts():
             raise ValueError(f"No existe el LUT «{lut}» en assets/luts.")
-        desde = form.get("musica_desde")
-        if desde in (None, "", "auto"):
-            desde = None
+        start = form.get("music_start")
+        if start in (None, "", "auto"):
+            start = None
         else:
-            desde = _num(form, "musica_desde", None, 0, 3600)
+            start = _num(form, "music_start", None, 0, 3600)
         fps = _num(form, "fps", 30, 24, 60, int)
         if fps not in (24, 30, 60):
             raise ValueError("'fps' tiene que ser 24, 30 o 60.")
-        marca = os.path.basename(str(form.get("watermark") or "").strip())
-        if marca and not os.path.isfile(os.path.join(config.WATERMARKS_FOLDER, marca)):
-            raise ValueError(f"No existe el watermark «{marca}» en assets/watermarks.")
-        titulo = " ".join(str(form.get("titulo") or "").split())[:80]
-        return cls(seleccion=sel, heroe=heroe, variantes=list(dict.fromkeys(variantes)), formato=formato,
-                   duracion_s=_num(form, "duracion_s", 30, 5, 180), musica_desde=desde, texto=texto,
-                   look=look, lut=lut, intensidad=_num(form, "intensidad", 1.0, 0, 1.5),
-                   fps=fps, interpolar=_bool(form, "interpolar", True), escalar=_bool(form, "escalar", False),
-                   volumen_original=_num(form, "volumen_original", 0, 0, 100, int),
-                   watermark=marca, marca_alto=_num(form, "marca_alto", 150, 60, 400, int), titulo=titulo)
+        watermark = os.path.basename(str(form.get("watermark") or "").strip())
+        if watermark and not os.path.isfile(os.path.join(config.WATERMARKS_FOLDER, watermark)):
+            raise ValueError(f"No existe el watermark «{watermark}» en assets/watermarks.")
+        title = " ".join(str(form.get("title") or "").split())[:80]
+        return cls(selection=sel, hero=hero, variants=list(dict.fromkeys(variants)), format=fmt,
+                   duration_s=_num(form, "duration_s", 30, 5, 180), music_start=start, text=text,
+                   look=look, lut=lut, intensity=_num(form, "intensity", 1.0, 0, 1.5),
+                   fps=fps, interpolate=to_bool(form, "interpolate", True), upscale=to_bool(form, "upscale", False),
+                   original_volume=_num(form, "original_volume", 0, 0, 100, int),
+                   watermark=watermark, watermark_height=_num(form, "watermark_height", 150, 60, 400, int),
+                   title=title)

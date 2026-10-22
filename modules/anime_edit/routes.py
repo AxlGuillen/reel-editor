@@ -1,18 +1,18 @@
-"""Blueprint Flask de anime_edit (/api/anime-edit).
+"""Flask blueprint of anime_edit (/api/anime-edit).
 
-Contrato (también para que Claude lo opere solo; ver CLAUDE.md):
-    POST /process              → 202 {job_id}  fase 1. Video: `video` (archivo), `library_clip`
-                                               o `video_url`. Canción: `musica`, `musica_url`
-                                               o `musica_del_video=1`. [letra, idioma, motor]
-    GET  /status/<job_id>      → al terminar la fase 1: planos, propuesta, heroe, hojas, beatmap;
-                                 al terminar la fase 2: resultado {carpeta, variantes}
-    GET  /hoja/<job_id>/<n>    → JPG con 48 planos numerados (n desde 1)
-    GET  /thumb/<job_id>/<id>  → miniatura de un plano
-    POST /finish               → 202  job_id + [seleccion, heroe, variantes, formato, duracion_s,
-                                 musica_desde, texto, look, lut, intensidad, fps, interpolar,
-                                 escalar, volumen_original, watermark, marca_alto, titulo]
-    GET  /download/<job_id>/<n> → la variante n (desde 1)
-    GET  /presets              → las variantes disponibles
+Contract (also so Claude can drive it on its own; see CLAUDE.md):
+    POST /process              → 202 {job_id}  phase 1. Video: `video` (file), `library_clip`
+                                               or `video_url`. Song: `music`, `music_url`
+                                               or `music_from_video=1`. [lyrics, language, engine]
+    GET  /status/<job_id>      → after phase 1: shots, proposal, hero, sheets, beatmap;
+                                 after phase 2: result {folder, variants}
+    GET  /sheet/<job_id>/<n>   → JPG with 48 numbered shots (n from 1)
+    GET  /thumb/<job_id>/<id>  → thumbnail of a shot
+    POST /finish               → 202  job_id + [selection, hero, variants, format, duration_s,
+                                 music_start, text, look, lut, intensity, fps, interpolate,
+                                 upscale, original_volume, watermark, watermark_height, title]
+    GET  /download/<job_id>/<n> → variant n (from 1)
+    GET  /presets              → the available variants
 """
 import os
 import threading
@@ -44,36 +44,36 @@ def process():
         if not config.allowed_file(video.filename):
             return jsonify(error=f"Video: extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"), 400
         video_path = file_utils.save_upload(video)
-    musica_path = None
-    if not params.musica and not params.musica_del_video:
-        musica = request.files.get("musica")
-        if not musica or not musica.filename:
-            return jsonify(error="Falta la canción: subí 'musica', mandá 'musica_url' o usá musica_del_video=1."), 400
-        if not config.allowed_audio_file(musica.filename):
+    music_path = None
+    if not params.music and not params.music_from_video:
+        music = request.files.get("music")
+        if not music or not music.filename:
+            return jsonify(error="Falta la canción: subí 'music', mandá 'music_url' o usá music_from_video=1."), 400
+        if not config.allowed_audio_file(music.filename):
             return jsonify(error=f"Música: extensión no permitida. Usar: {sorted(config.ALLOWED_AUDIO_EXTENSIONS)}"), 400
-        musica_path = file_utils.save_upload(musica)
+        music_path = file_utils.save_upload(music)
     job_id = job_manager.create_job(video_path or params.video.url, output_path="")
-    threading.Thread(target=processor.process, args=(job_id, video_path, musica_path, params),
-                     kwargs={"conservar_video": library_path is not None}, daemon=True).start()
+    threading.Thread(target=processor.process, args=(job_id, video_path, music_path, params),
+                     kwargs={"keep_video": library_path is not None}, daemon=True).start()
     return jsonify(job_id=job_id), 202
 
 
 @bp.post("/finish")
 def finish():
-    datos = request.get_json(silent=True) or request.form
-    job_id = str(datos.get("job_id") or "").strip()
+    data = request.get_json(silent=True) or request.form
+    job_id = str(data.get("job_id") or "").strip()
     job = job_manager.get_job(job_id)
-    sesion = processor._SESIONES.get(job_id)
-    if not job or not sesion:
+    session = processor._SESSIONS.get(job_id)
+    if not job or not session:
         return jsonify(error="Sesión no encontrada. Volvé a analizar el video."), 404
     if job["status"] == "processing":
         return jsonify(error="Ese trabajo todavía está procesando."), 409
     try:
-        fp = FinishParams.from_form(datos, {p["id"] for p in sesion["planos"]})
+        fp = FinishParams.from_form(data, {p["id"] for p in session["shots"]})
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     job_manager.update_job(job_id, status="processing", progress=0, finished=False, error=None,
-                           resultado=None, stage="Preparando el edit…")
+                           result=None, stage="Preparando el edit…")
     threading.Thread(target=processor.finish, args=(job_id, fp), daemon=True).start()
     return jsonify(job_id=job_id), 202
 
@@ -84,24 +84,24 @@ def status(job_id):
     if not job:
         return jsonify(error="job_id no encontrado"), 404
     return jsonify(status=job["status"], progress=job["progress"], stage=job.get("stage"),
-                   error=job["error"], finished=bool(job.get("finished")), planos=job.get("planos"),
-                   propuesta=job.get("propuesta"), heroe=job.get("heroe"), hojas=job.get("hojas"),
-                   beatmap=job.get("beatmap"), video_dur=job.get("video_dur"),
-                   resultado=job.get("resultado"))
+                   error=job["error"], finished=bool(job.get("finished")), shots=job.get("shots"),
+                   proposal=job.get("proposal"), hero=job.get("hero"), sheets=job.get("sheets"),
+                   beatmap=job.get("beatmap"), video_duration=job.get("video_duration"),
+                   result=job.get("result"))
 
 
-@bp.get("/hoja/<job_id>/<int:n>")
-def hoja(job_id, n):
-    sesion = processor._SESIONES.get(job_id)
-    if not sesion or not 1 <= n <= len(sesion["hojas"]):
+@bp.get("/sheet/<job_id>/<int:n>")
+def sheet(job_id, n):
+    session = processor._SESSIONS.get(job_id)
+    if not session or not 1 <= n <= len(session["sheets"]):
         return jsonify(error="Esa hoja no existe."), 404
-    return send_file(sesion["hojas"][n - 1], mimetype="image/jpeg", max_age=0)
+    return send_file(session["sheets"][n - 1], mimetype="image/jpeg", max_age=0)
 
 
-@bp.get("/thumb/<job_id>/<int:plano>")
-def thumb(job_id, plano):
-    sesion = processor._SESIONES.get(job_id)
-    path = os.path.join(sesion["carpeta"], f"plano_{plano:04d}.jpg") if sesion else ""
+@bp.get("/thumb/<job_id>/<int:shot>")
+def thumb(job_id, shot):
+    session = processor._SESSIONS.get(job_id)
+    path = os.path.join(session["folder"], f"shot_{shot:04d}.jpg") if session else ""
     if not path or not os.path.isfile(path):
         return jsonify(error="Ese plano no existe."), 404
     return send_file(path, mimetype="image/jpeg", max_age=0)
@@ -110,16 +110,16 @@ def thumb(job_id, plano):
 @bp.get("/download/<job_id>/<int:n>")
 def download(job_id, n):
     job = job_manager.get_job(job_id)
-    res = (job or {}).get("resultado")
+    res = (job or {}).get("result")
     if not job or job["status"] != "done" or not res:
         return jsonify(error="Todavía no hay edit para ese trabajo."), 409
-    if not 1 <= n <= len(res["variantes"]):
+    if not 1 <= n <= len(res["variants"]):
         return jsonify(error="Esa variante no existe."), 404
-    v = res["variantes"][n - 1]
-    return send_file(v["video"], mimetype="video/mp4", as_attachment=True, download_name=v["nombre"])
+    v = res["variants"][n - 1]
+    return send_file(v["video"], mimetype="video/mp4", as_attachment=True, download_name=v["name"])
 
 
 @bp.get("/presets")
-def lista_presets():
-    from modules.anime_edit.plan import FORMATOS
-    return jsonify(presets=presets.lista(), formatos=list(FORMATOS))
+def preset_list():
+    from modules.anime_edit.plan import FORMATS
+    return jsonify(presets=presets.listing(), formats=list(FORMATS))

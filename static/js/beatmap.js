@@ -1,5 +1,5 @@
 (function () {
-// ReelForge — beatmap: análisis del ritmo de una canción.
+// ReelForge — beatmap: rhythm analysis of a song.
 const BM_API = "/api/beatmap";
 let bmFile = null;
 
@@ -13,23 +13,25 @@ function setFile(f) {
   el("bm-url").value = "";
 }
 
-// Barra de secciones (compartida con anime_edit): ancho proporcional y el drop.
-window.renderSecciones = function (cont, resumen) {
+// Section bar (shared with anime_edit): proportional widths and the drop.
+const SECTION_LABELS = { intro: "intro", verse: "verso", chorus: "coro", bridge: "puente", outro: "outro" };
+window.renderSections = function (cont, summary) {
   cont.innerHTML = "";
-  const dur = resumen.duracion || 1;
-  for (const s of resumen.secciones || []) {
+  const dur = summary.duration || 1;
+  for (const s of summary.sections || []) {
     const d = document.createElement("div");
-    d.className = `ed-sec-${s.tipo}`;
-    d.style.width = `${((s.fin - s.inicio) / dur) * 100}%`;
-    d.title = `${s.tipo} · ${s.inicio.toFixed(1)}–${s.fin.toFixed(1)} s`;
-    d.textContent = s.tipo;
+    const label = SECTION_LABELS[s.type] || s.type;
+    d.className = `ed-sec-${s.type}`;
+    d.style.width = `${((s.end - s.start) / dur) * 100}%`;
+    d.title = `${label} · ${s.start.toFixed(1)}–${s.end.toFixed(1)} s`;
+    d.textContent = label;
     cont.appendChild(d);
   }
-  if (resumen.drop != null) {
+  if (summary.drop != null) {
     const m = document.createElement("span");
     m.className = "ed-drop";
-    m.style.left = `${(resumen.drop / dur) * 100}%`;
-    m.title = `drop · ${resumen.drop.toFixed(2)} s`;
+    m.style.left = `${(summary.drop / dur) * 100}%`;
+    m.title = `drop · ${summary.drop.toFixed(2)} s`;
     cont.appendChild(m);
   }
 };
@@ -38,11 +40,11 @@ el("bm-process-btn").addEventListener("click", () => {
   const url = el("bm-url").value.trim();
   if (!bmFile && !url) return showError("Elegí una canción o pegá un link.");
   const form = new FormData();
-  if (url) form.append("musica_url", url);
+  if (url) form.append("music_url", url);
   else form.append("audio", bmFile);
-  form.append("motor", el("bm-motor").value);
-  form.append("idioma", el("bm-idioma").value);
-  form.append("letra", el("bm-letra").checked ? "1" : "0");
+  form.append("engine", el("bm-engine").value);
+  form.append("language", el("bm-language").value);
+  form.append("lyrics", el("bm-lyrics").checked ? "1" : "0");
   ["bm-result-wrap", "bm-error-wrap"].forEach((id) => el(id).classList.add("hidden"));
   el("bm-progress-wrap").classList.remove("hidden");
   el("bm-process-btn").disabled = true;
@@ -60,12 +62,12 @@ async function showResult(jobId) {
   el("bm-progress-wrap").classList.add("hidden");
   el("bm-process-btn").disabled = false;
   const st = await (await fetch(`${BM_API}/status/${jobId}`)).json();
-  const r = st.resumen;
+  const r = st.summary;
   el("bm-stats").innerHTML =
-    `<span>BPM <b>${r.bpm}</b></span><span>Compases <b>${r.compases}</b></span>` +
+    `<span>BPM <b>${r.bpm}</b></span><span>Compases <b>${r.bars}</b></span>` +
     `<span>Drop <b>${r.drop != null ? r.drop.toFixed(2) + " s" : "—"}</b></span>` +
-    `<span>Motor <b>${r.motor}</b></span><span>Palabras <b>${r.palabras}</b></span>`;
-  renderSecciones(el("bm-secciones"), r);
+    `<span>Motor <b>${r.engine}</b></span><span>Palabras <b>${r.words}</b></span>`;
+  renderSections(el("bm-sections"), r);
   el("bm-video").src = `${BM_API}/download/${jobId}`;
   el("bm-download-btn").href = `${BM_API}/download/${jobId}`;
   el("bm-json-btn").href = `${BM_API}/json/${jobId}`;

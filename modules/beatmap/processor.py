@@ -1,14 +1,14 @@
-"""Orquestación del módulo beatmap: canción → beatmap.json (+ preview para validar).
+"""Beatmap module orchestration: song → beatmap.json (+ a preview to check it).
 
-`obtener()` es lo que usan los otros módulos (anime_edit, competitivo/edit):
-analiza una vez por canción y cachea el resultado en cache/beatmaps/ por la
-huella del archivo, así cada variante o cada edit nuevo con la misma canción
-no la vuelve a analizar.
+`get()` is what the other modules use (anime_edit, competitivo/edit): it
+analyzes each song once and caches the result in cache/beatmaps/ by the file
+fingerprint, so every variant or new edit with the same song does not analyze
+it again.
 
-El preview es un video negro con la canción, un pitido en cada beat (agudo en
-el primero de cada compás) y un destello por beat, más una barra abajo con el
-color de la sección (naranja el coro, azul lo demás). Sirve para validar a ojo
-y oído que la rejilla cae donde pega la música ANTES de renderizar un edit.
+The preview is a black video with the song, a beep on every beat (higher on
+the first of each bar), a flash per beat and a bar at the bottom with the
+section color (orange for the chorus, blue for the rest). It is for checking by
+eye and ear that the grid lands where the music hits BEFORE rendering an edit.
 """
 from __future__ import annotations
 
@@ -23,95 +23,95 @@ import numpy as np
 
 import config
 from core import ffmpeg_runner, file_utils, job_manager
-from modules.beatmap import analisis, letra as letra_mod
-from modules.beatmap.schema import BeatmapParams, LetraParams
+from modules.beatmap import analysis, lyrics as lyrics_mod
+from modules.beatmap.schema import BeatmapParams, LyricsParams
 from modules.downloader import processor as downloader
 
 PREVIEW_W, PREVIEW_H = 540, 960
-SR_PREVIEW = 44100
+PREVIEW_SR = 44100
 
 
-def huella(path: str) -> str:
+def fingerprint(path: str) -> str:
     h = hashlib.sha1()
     with open(path, "rb") as fh:
-        for bloque in iter(lambda: fh.read(1 << 20), b""):
-            h.update(bloque)
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
     return h.hexdigest()[:20]
 
 
-def _cache_path(clave: str) -> str:
+def _cache_path(key: str) -> str:
     os.makedirs(config.BEATMAPS_FOLDER, exist_ok=True)
-    return os.path.join(config.BEATMAPS_FOLDER, f"{clave}.json")
+    return os.path.join(config.BEATMAPS_FOLDER, f"{key}.json")
 
 
-def obtener(path: str, motor: str = "auto", letra: LetraParams | None = None,
-            job_id: str | None = None) -> dict:
-    """beatmap de la canción en `path` (del cache si ya se analizó con lo mismo)."""
-    letra = letra or LetraParams()
-    huella_audio = huella(path)
-    clave = f"{huella_audio}-{motor}"
-    if letra.letra:
-        clave += f"-letra-{letra.idioma}-{letra.modelo}-{'voz' if letra.separar_voz else 'mezcla'}"
-    cache = _cache_path(clave)
+def get(path: str, engine: str = "auto", lyrics: LyricsParams | None = None,
+        job_id: str | None = None) -> dict:
+    """Beatmap of the song at `path` (from the cache if it was analyzed the same way)."""
+    lyrics = lyrics or LyricsParams()
+    audio_fp = fingerprint(path)
+    key = f"{audio_fp}-{engine}-v{analysis.VERSION}"
+    if lyrics.lyrics:
+        key += f"-lyrics-{lyrics.language}-{lyrics.model}-{'vocals' if lyrics.separate_vocals else 'mix'}"
+    cache = _cache_path(key)
     if os.path.isfile(cache):
         with open(cache, encoding="utf-8") as fh:
             return json.load(fh)
     if job_id:
         job_manager.update_job(job_id, stage="Analizando el ritmo…")
-    bm = analisis.analizar(analisis.cargar_audio(path), motor=motor, ruta=path)
-    bm["fuente"] = os.path.basename(path)
-    bm["huella"] = huella_audio
-    if letra.letra:
-        carpeta = tempfile.mkdtemp(prefix="beatmap-voz-")
+    bm = analysis.analyze(analysis.load_audio(path), engine=engine, path=path)
+    bm["source"] = os.path.basename(path)
+    bm["fingerprint"] = audio_fp
+    if lyrics.lyrics:
+        folder = tempfile.mkdtemp(prefix="beatmap-vocals-")
         try:
-            voz = None
-            if letra.separar_voz:
+            vocals = None
+            if lyrics.separate_vocals:
                 if job_id:
                     job_manager.update_job(job_id, stage="Separando la voz…")
-                voz = letra_mod.separar_voz(path, carpeta)
+                vocals = lyrics_mod.isolate_vocals(path, folder)
             if job_id:
                 job_manager.update_job(job_id, stage="Transcribiendo la letra…")
-            bm["palabras"] = letra_mod.palabras(voz or path, letra.idioma, letra.modelo)
-            bm["letra_de"] = "voz separada" if voz else "mezcla"
+            bm["words"] = lyrics_mod.words(vocals or path, lyrics.language, lyrics.model)
+            bm["lyrics_from"] = "vocals" if vocals else "mix"
         finally:
-            shutil.rmtree(carpeta, ignore_errors=True)
+            shutil.rmtree(folder, ignore_errors=True)
     with open(cache, "w", encoding="utf-8") as fh:
         json.dump(bm, fh, ensure_ascii=False)
     return bm
 
 
-def bajar_musica(job_id: str, params) -> str:
-    """Baja la música de un link (yt-dlp, como el Downloader) y devuelve la ruta."""
+def download_music(job_id: str, params) -> str:
+    """Downloads the music from a link (yt-dlp, like the Downloader) and returns the path."""
     sub = job_manager.create_job(params.url, output_path="")
     job_manager.update_job(job_id, stage="Bajando la música…")
     downloader.process(sub, params)
-    hecho = job_manager.get_job(sub) or {}
-    if hecho.get("status") != "done" or not hecho.get("output_path"):
-        raise RuntimeError(f"No se pudo bajar la música: {hecho.get('error') or 'error desconocido'}")
-    return hecho["output_path"]
+    done = job_manager.get_job(sub) or {}
+    if done.get("status") != "done" or not done.get("output_path"):
+        raise RuntimeError(f"No se pudo bajar la música: {done.get('error') or 'error desconocido'}")
+    return done["output_path"]
 
 
-def resumen(bm: dict) -> dict:
-    """Lo que se muestra del beatmap sin las listas largas."""
+def summary(bm: dict) -> dict:
+    """What is shown of the beatmap, without the long lists."""
     return {
-        "bpm": bm["bpm"], "motor": bm["motor"], "duracion": bm["duracion"],
-        "beats": len(bm["beats"]), "compases": len(bm["downbeats"]),
-        "secciones": bm["secciones"], "drop": bm["drop"], "subidas": bm["subidas"],
-        "palabras": len(bm.get("palabras") or []), "letra_de": bm.get("letra_de"),
+        "bpm": bm["bpm"], "engine": bm["engine"], "duration": bm["duration"],
+        "beats": len(bm["beats"]), "bars": len(bm["downbeats"]),
+        "sections": bm["sections"], "drop": bm["drop"], "buildups": bm["buildups"],
+        "words": len(bm.get("words") or []), "lyrics_from": bm.get("lyrics_from"),
     }
 
 
 # --- Preview ------------------------------------------------------------------------
-def escribir_pitidos(bm: dict, path: str, sr: int = SR_PREVIEW) -> str:
-    """WAV con un pitido corto en cada beat (1 kHz) y uno más agudo en el
-    primero de cada compás (1.6 kHz)."""
-    dur = bm["duracion"]
+def write_beeps(bm: dict, path: str, sr: int = PREVIEW_SR) -> str:
+    """WAV with a short beep on every beat (1 kHz) and a higher one on the
+    first of each bar (1.6 kHz)."""
+    dur = bm["duration"]
     y = np.zeros(int(sr * dur) + sr, np.float32)
     t = np.arange(int(sr * 0.05)) / sr
     env = np.exp(-t * 60)
-    agudos = {round(d, 3) for d in bm["downbeats"]}
+    high = {round(d, 3) for d in bm["downbeats"]}
     for b in bm["beats"]:
-        f = 1600 if round(b, 3) in agudos else 1000
+        f = 1600 if round(b, 3) in high else 1000
         i = int(b * sr)
         y[i:i + len(t)] += (np.sin(2 * np.pi * f * t) * env * 0.5).astype(np.float32)
     pcm = (np.clip(y, -1, 1) * 32000).astype("<i2")
@@ -123,32 +123,32 @@ def escribir_pitidos(bm: dict, path: str, sr: int = SR_PREVIEW) -> str:
     return path
 
 
-def _enable(intervalos: list[tuple[float, float]]) -> str:
-    if not intervalos:
+def _enable(spans: list[tuple[float, float]]) -> str:
+    if not spans:
         return "0"
-    return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in intervalos)
+    return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in spans)
 
 
-def build_preview_command(audio: str, pitidos: str, bm: dict, out: str) -> list[str]:
-    """Video del preview: destello por beat, cuadro rojo en cada compás, barra
-    de sección abajo y el drop en amarillo."""
-    dur = bm["duracion"]
+def build_preview_command(audio: str, beeps: str, bm: dict, out: str) -> list[str]:
+    """Preview video: a flash per beat, a red square on each bar, the section
+    bar at the bottom and the drop in yellow."""
+    dur = bm["duration"]
     beats = [(b, b + 0.06) for b in bm["beats"]]
-    compases = [(d, d + 0.12) for d in bm["downbeats"]]
-    coros = [(s["inicio"], s["fin"]) for s in bm["secciones"] if s["tipo"] == "coro"]
-    otros = [(s["inicio"], s["fin"]) for s in bm["secciones"] if s["tipo"] != "coro"]
+    bars = [(d, d + 0.12) for d in bm["downbeats"]]
+    choruses = [(s["start"], s["end"]) for s in bm["sections"] if s["type"] == "chorus"]
+    others = [(s["start"], s["end"]) for s in bm["sections"] if s["type"] != "chorus"]
     drop = [(bm["drop"], bm["drop"] + 0.4)] if bm.get("drop") is not None else []
     w, h = PREVIEW_W, PREVIEW_H
     vf = ",".join([
         f"drawbox=x=0:y=0:w={w}:h={h}:color=white@0.35:t=fill:enable='{_enable(beats)}'",
-        f"drawbox=x={w // 4}:y={h // 3}:w={w // 2}:h={w // 2}:color=red@0.9:t=fill:enable='{_enable(compases)}'",
-        f"drawbox=x=0:y={h - 60}:w={w}:h=60:color=orange:t=fill:enable='{_enable(coros)}'",
-        f"drawbox=x=0:y={h - 60}:w={w}:h=60:color=0x2E5F94:t=fill:enable='{_enable(otros)}'",
+        f"drawbox=x={w // 4}:y={h // 3}:w={w // 2}:h={w // 2}:color=red@0.9:t=fill:enable='{_enable(bars)}'",
+        f"drawbox=x=0:y={h - 60}:w={w}:h=60:color=orange:t=fill:enable='{_enable(choruses)}'",
+        f"drawbox=x=0:y={h - 60}:w={w}:h=60:color=0x2E5F94:t=fill:enable='{_enable(others)}'",
         f"drawbox=x=0:y=0:w={w}:h={h}:color=yellow@0.8:t=fill:enable='{_enable(drop)}'",
     ])
     return [config.FFMPEG_PATH, "-y",
             "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}:r=30:d={dur:.3f}",
-            "-i", audio, "-i", pitidos,
+            "-i", audio, "-i", beeps,
             "-filter_complex",
             f"[0:v]{vf},format=yuv420p[v];"
             "[1:a]aresample=48000,aformat=channel_layouts=stereo,volume=0.6[m];"
@@ -161,31 +161,31 @@ def build_preview_command(audio: str, pitidos: str, bm: dict, out: str) -> list[
 
 # --- Job ----------------------------------------------------------------------------
 def process(job_id: str, audio_path: str | None, params: BeatmapParams) -> None:
-    descargado = None
-    pitidos = None
+    downloaded = None
+    beeps = None
     try:
         job_manager.update_job(job_id, status="processing", progress=2, stage="Preparando…")
-        if params.musica:
-            audio_path = descargado = bajar_musica(job_id, params.musica)
+        if params.music:
+            audio_path = downloaded = download_music(job_id, params.music)
         job_manager.update_job(job_id, status="processing", progress=20)
-        bm = obtener(audio_path, params.motor, params.letra, job_id=job_id)
+        bm = get(audio_path, params.engine, params.lyrics, job_id=job_id)
         json_path = file_utils.output_path_for(job_id, "json")
         with open(json_path, "w", encoding="utf-8") as fh:
             json.dump(bm, fh, ensure_ascii=False, indent=1)
-        salida = ""
+        output = ""
         if params.preview:
             job_manager.update_job(job_id, progress=70, stage="Armando el preview…")
-            pitidos = os.path.join(config.UPLOAD_FOLDER, f"{job_id}_pitidos.wav")
-            escribir_pitidos(bm, pitidos)
-            salida = file_utils.output_path_for(job_id)
-            ffmpeg_runner.run(build_preview_command(audio_path, pitidos, bm, salida), job_id,
-                              total_duration=bm["duracion"], progress_range=(70, 99))
+            beeps = os.path.join(config.UPLOAD_FOLDER, f"{job_id}_beeps.wav")
+            write_beeps(bm, beeps)
+            output = file_utils.output_path_for(job_id)
+            ffmpeg_runner.run(build_preview_command(audio_path, beeps, bm, output), job_id,
+                              total_duration=bm["duration"], progress_range=(70, 99))
         job_manager.update_job(job_id, status="done", progress=100, stage=None,
-                               output_path=salida, json_path=json_path,
-                               beatmap=bm, resumen=resumen(bm))
+                               output_path=output, json_path=json_path,
+                               beatmap=bm, summary=summary(bm))
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:
-        file_utils.cleanup_paths(pitidos, descargado)
+        file_utils.cleanup_paths(beeps, downloaded)
         if audio_path and audio_path.startswith(config.UPLOAD_FOLDER):
             file_utils.cleanup_paths(audio_path)

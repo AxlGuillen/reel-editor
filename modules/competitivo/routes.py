@@ -5,7 +5,7 @@ Contrato (también para que Claude lo opere solo; ver CLAUDE.md):
     GET  /status/<job_id>         → estado; al terminar la fase 1: partidas, clips, seleccion
     POST /finish                  → 202 {job_id}   fase 2: render (job_id en el form)
     POST /edit                    → 202 {job_id}   modo edit: las peleas al ritmo de una canción
-                                                   (job_id de la fase 1 + `musica` o `musica_url`;
+                                                   (job_id de la fase 1 + `music` o `music_url`;
                                                    devuelve un job nuevo, con su /status y /download)
     GET  /download/<job_id>       → resumen.mp4
     GET  /download/<job_id>/<n>   → clip n (1..)
@@ -61,25 +61,26 @@ def finish():
 
 @bp.post("/edit")
 def edit():
-    fase1 = (request.form.get("job_id") or "").strip()
-    sesion = processor._SESIONES.get(fase1)
+    phase1 = (request.form.get("job_id") or "").strip()
+    sesion = processor._SESIONES.get(phase1)
     if not sesion:
         return jsonify(error="Sesión no encontrada. Volvé a generar la propuesta (fase 1)."), 404
     try:
         ep = EditParams.from_form(request.form, sesion["params"])
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
-    musica_path = None
-    if not ep.musica:
-        musica = request.files.get("musica")
-        if not musica or not musica.filename:
-            return jsonify(error="Falta la música: subí el archivo 'musica' o mandá 'musica_url'."), 400
-        if not config.allowed_audio_file(musica.filename):
+    music_path = None
+    if not ep.music:
+        music = request.files.get("music")
+        if not music or not music.filename:
+            return jsonify(error="Falta la música: subí el archivo 'music' o mandá 'music_url'."), 400
+        if not config.allowed_audio_file(music.filename):
             return jsonify(error=f"Música: extensión no permitida. Usar: {sorted(config.ALLOWED_AUDIO_EXTENSIONS)}"), 400
-        musica_path = file_utils.save_upload(musica)
+        music_path = file_utils.save_upload(music)
     job_id = job_manager.create_job(sesion["params"].vod_url, output_path="")
-    job_manager.update_job(job_id, modo="edit", fase1=fase1)
-    threading.Thread(target=processor.edit, args=(job_id, fase1, ep, musica_path), daemon=True).start()
+    # `modo` is the key the competitivo status already exposes.
+    job_manager.update_job(job_id, modo="edit", phase1=phase1)
+    threading.Thread(target=processor.edit, args=(job_id, phase1, ep, music_path), daemon=True).start()
     return jsonify(job_id=job_id), 202
 
 
@@ -112,8 +113,8 @@ def download(job_id):
     res, err = _resultado(job_id)
     if err:
         return err
-    if res.get("descarga"):                       # modo edit
-        nombre = res["descarga"]
+    if res.get("download_name"):                  # edit mode
+        nombre = res["download_name"]
     else:
         nombre = res["resumen"] if res.get("organizada") else f"{res['nombre']} - resumen.mp4"
     return send_file(res["video"], mimetype="video/mp4", as_attachment=True, download_name=nombre)

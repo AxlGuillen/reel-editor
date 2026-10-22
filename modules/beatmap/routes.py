@@ -1,8 +1,8 @@
-"""Blueprint Flask del módulo beatmap (/api/beatmap).
+"""Flask blueprint of the beatmap module (/api/beatmap).
 
-    POST /process            → 202 {job_id}   canción (archivo `audio` o `musica_url`)
-    GET  /status/<job_id>    → {status, progress, stage, error, resumen, beatmap}
-    GET  /download/<job_id>  → preview.mp4 (pitidos y destellos en los beats)
+    POST /process            → 202 {job_id}   song (`audio` file or `music_url`)
+    GET  /status/<job_id>    → {status, progress, stage, error, summary, beatmap}
+    GET  /download/<job_id>  → preview.mp4 (beeps and flashes on the beats)
     GET  /json/<job_id>      → beatmap.json
 """
 import os
@@ -25,14 +25,14 @@ def process():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     audio_path = None
-    if not params.musica:
+    if not params.music:
         audio = request.files.get("audio")
         if not audio or not audio.filename:
-            return jsonify(error="Falta la canción: subí el archivo 'audio' o mandá 'musica_url'."), 400
+            return jsonify(error="Falta la canción: subí el archivo 'audio' o mandá 'music_url'."), 400
         if not config.allowed_audio_file(audio.filename):
             return jsonify(error=f"Extensión no permitida. Usar: {sorted(config.ALLOWED_AUDIO_EXTENSIONS)}"), 400
         audio_path = file_utils.save_upload(audio)
-    job_id = job_manager.create_job(audio_path or params.musica.url, output_path="")
+    job_id = job_manager.create_job(audio_path or params.music.url, output_path="")
     threading.Thread(target=processor.process, args=(job_id, audio_path, params), daemon=True).start()
     return jsonify(job_id=job_id), 202
 
@@ -43,7 +43,7 @@ def status(job_id):
     if not job:
         return jsonify(error="job_id no encontrado"), 404
     return jsonify(status=job["status"], progress=job["progress"], stage=job.get("stage"),
-                   error=job["error"], resumen=job.get("resumen"), beatmap=job.get("beatmap"))
+                   error=job["error"], summary=job.get("summary"), beatmap=job.get("beatmap"))
 
 
 @bp.get("/download/<job_id>")

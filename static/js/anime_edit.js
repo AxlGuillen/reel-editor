@@ -1,44 +1,44 @@
 (function () {
-// ReelForge — anime_edit: dos fases (analizar → elegir planos y variantes).
+// ReelForge — anime_edit: two phases (analyze → pick shots and variants).
 const AE_API = "/api/anime-edit";
-let aeVideo = null;          // File o {name, fromLibrary}
-let aeMusica = null;
+let aeVideo = null;          // File or {name, fromLibrary}
+let aeMusic = null;
 let aeJob = null;
 let aeSel = new Set();
-let aeHeroe = null;
+let aeHero = null;
 
 el("ae-video-btn").addEventListener("click", () =>
   openFilePicker("clip", el("ae-video"), (f) => setVideo(f)));
 el("ae-video").addEventListener("change", (e) => e.target.files[0] && setVideo(e.target.files[0]));
 el("ae-lib-btn").addEventListener("click", () => openClipLibrary((clip) => setVideo(clip)));
-el("ae-musica-btn").addEventListener("click", () =>
-  openFilePicker("audio", el("ae-musica"), (f) => setMusica(f)));
-el("ae-musica").addEventListener("change", (e) => e.target.files[0] && setMusica(e.target.files[0]));
+el("ae-music-btn").addEventListener("click", () =>
+  openFilePicker("audio", el("ae-music"), (f) => setMusic(f)));
+el("ae-music").addEventListener("change", (e) => e.target.files[0] && setMusic(e.target.files[0]));
 ["dur", "int"].forEach((k) => el(`ae-${k}`).addEventListener("input", () => {
   el(`ae-${k}-val`).textContent = k === "int" ? (+el("ae-int").value).toFixed(1) : el("ae-dur").value;
 }));
 
 function setVideo(v) { aeVideo = v; el("ae-video-name").textContent = v.name; el("ae-video-url").value = ""; }
-function setMusica(m) { aeMusica = m; el("ae-musica-name").textContent = m.name; el("ae-musica-url").value = ""; }
+function setMusic(m) { aeMusic = m; el("ae-music-name").textContent = m.name; el("ae-music-url").value = ""; }
 
-// Opciones: variantes y looks.
+// Options: variants and looks.
 fetch(`${AE_API}/presets`).then((r) => r.json()).then((d) => {
-  el("ae-variantes").innerHTML = d.presets.map((p, i) =>
-    `<label class="control-check" title="${p.descripcion}"><input type="checkbox" value="${p.id}" ${i === 0 ? "checked" : ""}> ${p.id}</label>`).join("");
+  el("ae-variants").innerHTML = d.presets.map((p, i) =>
+    `<label class="control-check" title="${p.description}"><input type="checkbox" value="${p.id}" ${i === 0 ? "checked" : ""}> ${p.id}</label>`).join("");
 });
-fetch("/api/edicion/opciones").then((r) => r.json()).then((d) => {
-  for (const l of d.looks) el("ae-look").insertAdjacentHTML("beforeend", `<option value="${l.id}">${l.id} — ${l.descripcion}</option>`);
-  if (!d.rife) el("ae-interpolar").parentElement.title = "RIFE no está instalado: la cámara lenta repite cuadros";
-  if (!d.esrgan) el("ae-escalar").parentElement.title = "Real-ESRGAN no está instalado";
+fetch("/api/editing/options").then((r) => r.json()).then((d) => {
+  for (const l of d.looks) el("ae-look").insertAdjacentHTML("beforeend", `<option value="${l.id}">${l.id} — ${l.description}</option>`);
+  if (!d.rife) el("ae-interpolate").parentElement.title = "RIFE no está instalado: la cámara lenta repite cuadros";
+  if (!d.esrgan) el("ae-upscale").parentElement.title = "Real-ESRGAN no está instalado";
 });
 
-function progreso(pct, stage) {
+function showProgress(pct, stage) {
   el("ae-progress-wrap").classList.remove("hidden");
   el("ae-progress-fill").style.width = `${pct}%`;
   el("ae-progress-label").textContent = `${stage || "Procesando…"} ${pct}%`;
 }
 
-function error(msg) {
+function showError(msg) {
   el("ae-progress-wrap").classList.add("hidden");
   el("ae-process-btn").disabled = false;
   el("ae-finish-btn").disabled = false;
@@ -46,16 +46,16 @@ function error(msg) {
   el("ae-error-wrap").classList.remove("hidden");
 }
 
-// Poller propio: la fase 1 termina con status "done" pero sin `finished`.
-function esperar(jobId, fase, onDone) {
+// Own poller: phase 1 ends with status "done" but without `finished`.
+function waitFor(jobId, phase, onDone) {
   const t = setInterval(async () => {
     try {
       const st = await (await fetch(`${AE_API}/status/${jobId}`)).json();
-      if (st.status === "error") { clearInterval(t); return error(st.error); }
-      progreso(st.progress, st.stage);
-      const listo = st.status === "done" && (fase === 1 ? st.stage === "esperando_seleccion" : st.finished);
-      if (listo) { clearInterval(t); el("ae-progress-wrap").classList.add("hidden"); onDone(st); }
-    } catch (e) { clearInterval(t); error(e.message); }
+      if (st.status === "error") { clearInterval(t); return showError(st.error); }
+      showProgress(st.progress, st.stage);
+      const ready = st.status === "done" && (phase === 1 ? st.stage === "esperando_seleccion" : st.finished);
+      if (ready) { clearInterval(t); el("ae-progress-wrap").classList.add("hidden"); onDone(st); }
+    } catch (e) { clearInterval(t); showError(e.message); }
   }, 1000);
 }
 
@@ -65,95 +65,95 @@ el("ae-process-btn").addEventListener("click", async () => {
   if (vurl) form.append("video_url", vurl);
   else if (aeVideo && aeVideo.fromLibrary) form.append("library_clip", aeVideo.name);
   else if (aeVideo) form.append("video", aeVideo);
-  else return error("Elegí el video o pegá su link.");
-  const murl = el("ae-musica-url").value.trim();
-  if (el("ae-musica-video").checked) form.append("musica_del_video", "1");
-  else if (murl) form.append("musica_url", murl);
-  else if (aeMusica) form.append("musica", aeMusica);
-  else return error("Elegí la canción, pegá su link o usá el audio del video.");
-  form.append("letra", el("ae-letra").checked ? "1" : "0");
-  form.append("idioma", el("ae-idioma").value);
-  ["ae-error-wrap", "ae-fase2", "ae-result"].forEach((id) => el(id).classList.add("hidden"));
+  else return showError("Elegí el video o pegá su link.");
+  const murl = el("ae-music-url").value.trim();
+  if (el("ae-music-from-video").checked) form.append("music_from_video", "1");
+  else if (murl) form.append("music_url", murl);
+  else if (aeMusic) form.append("music", aeMusic);
+  else return showError("Elegí la canción, pegá su link o usá el audio del video.");
+  form.append("lyrics", el("ae-lyrics").checked ? "1" : "0");
+  form.append("language", el("ae-language").value);
+  ["ae-error-wrap", "ae-phase2", "ae-result"].forEach((id) => el(id).classList.add("hidden"));
   el("ae-process-btn").disabled = true;
-  progreso(0, "Subiendo…");
+  showProgress(0, "Subiendo…");
   const res = await fetch(`${AE_API}/process`, { method: "POST", body: form });
   const data = await _readJson(res);
-  if (!res.ok) return error(data.error);
+  if (!res.ok) return showError(data.error);
   aeJob = data.job_id;
-  esperar(aeJob, 1, mostrarPlanos);
+  waitFor(aeJob, 1, showShots);
 });
 
-function mostrarPlanos(st) {
+function showShots(st) {
   el("ae-process-btn").disabled = false;
-  aeSel = new Set(st.propuesta);
-  aeHeroe = st.heroe;
+  aeSel = new Set(st.proposal);
+  aeHero = st.hero;
   const bm = st.beatmap;
-  el("ae-stats").innerHTML = `<span>Planos <b>${st.planos.length}</b></span><span>BPM <b>${bm.bpm}</b></span>` +
-    `<span>Drop <b>${bm.drop != null ? bm.drop.toFixed(1) + " s" : "—"}</b></span><span>Palabras <b>${bm.palabras}</b></span>`;
-  renderSecciones(el("ae-secciones"), bm);
+  el("ae-stats").innerHTML = `<span>Planos <b>${st.shots.length}</b></span><span>BPM <b>${bm.bpm}</b></span>` +
+    `<span>Drop <b>${bm.drop != null ? bm.drop.toFixed(1) + " s" : "—"}</b></span><span>Palabras <b>${bm.words}</b></span>`;
+  renderSections(el("ae-sections"), bm);
   const grid = el("ae-grid");
   grid.innerHTML = "";
-  for (const p of st.planos) {
+  for (const p of st.shots) {
     const d = document.createElement("div");
-    d.className = "ed-plano";
+    d.className = "ed-shot";
     d.dataset.id = p.id;
-    d.title = `${p.desde.toFixed(2)}–${p.hasta.toFixed(2)} s · movimiento ${p.movimiento}`;
+    d.title = `${p.start.toFixed(2)}–${p.end.toFixed(2)} s · movimiento ${p.motion}`;
     d.innerHTML = `<img loading="lazy" src="${AE_API}/thumb/${aeJob}/${p.id}"><span class="ed-num">${p.id}</span>` +
-      `<span class="ed-score">${p.puntaje}</span><button type="button" class="ed-star" title="Héroe">★</button>`;
+      `<span class="ed-score">${p.score}</span><button type="button" class="ed-star" title="Héroe">★</button>`;
     grid.appendChild(d);
   }
-  pintar();
-  el("ae-fase2").classList.remove("hidden");
-  el("ae-fase2").scrollIntoView({ behavior: "smooth" });
+  paintSelection();
+  el("ae-phase2").classList.remove("hidden");
+  el("ae-phase2").scrollIntoView({ behavior: "smooth" });
 }
 
-function pintar() {
+function paintSelection() {
   for (const d of el("ae-grid").children) {
     const id = +d.dataset.id;
     d.classList.toggle("sel", aeSel.has(id));
-    d.classList.toggle("heroe", id === aeHeroe);
+    d.classList.toggle("hero", id === aeHero);
   }
 }
 
 el("ae-grid").addEventListener("click", (e) => {
-  const d = e.target.closest(".ed-plano");
+  const d = e.target.closest(".ed-shot");
   if (!d) return;
   const id = +d.dataset.id;
-  if (e.target.classList.contains("ed-star")) { aeHeroe = id; aeSel.add(id); }
+  if (e.target.classList.contains("ed-star")) { aeHero = id; aeSel.add(id); }
   else if (aeSel.has(id)) aeSel.delete(id);
   else aeSel.add(id);
-  pintar();
+  paintSelection();
 });
 
 el("ae-finish-btn").addEventListener("click", async () => {
-  const variantes = [...el("ae-variantes").querySelectorAll("input:checked")].map((i) => i.value);
-  if (!variantes.length) return error("Elegí al menos una variante.");
-  if (!aeSel.size) return error("Elegí al menos un plano.");
+  const variants = [...el("ae-variants").querySelectorAll("input:checked")].map((i) => i.value);
+  if (!variants.length) return showError("Elegí al menos una variante.");
+  if (!aeSel.size) return showError("Elegí al menos un plano.");
   const body = {
-    job_id: aeJob, seleccion: [...aeSel].sort((a, b) => a - b), heroe: aeHeroe, variantes,
-    formato: el("ae-formato").value, duracion_s: +el("ae-dur").value, intensidad: +el("ae-int").value,
-    look: el("ae-look").value, texto: el("ae-texto").value, fps: +el("ae-fps").value,
-    titulo: el("ae-titulo").value, musica_desde: el("ae-desde").value.trim() || "auto",
-    interpolar: el("ae-interpolar").checked, escalar: el("ae-escalar").checked,
+    job_id: aeJob, selection: [...aeSel].sort((a, b) => a - b), hero: aeHero, variants,
+    format: el("ae-format").value, duration_s: +el("ae-dur").value, intensity: +el("ae-int").value,
+    look: el("ae-look").value, text: el("ae-text").value, fps: +el("ae-fps").value,
+    title: el("ae-title").value, music_start: el("ae-music-start").value.trim() || "auto",
+    interpolate: el("ae-interpolate").checked, upscale: el("ae-upscale").checked,
   };
   ["ae-error-wrap", "ae-result"].forEach((id) => el(id).classList.add("hidden"));
   el("ae-finish-btn").disabled = true;
-  progreso(0, "Preparando el edit…");
+  showProgress(0, "Preparando el edit…");
   const res = await fetch(`${AE_API}/finish`, { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body) });
   const data = await _readJson(res);
-  if (!res.ok) return error(data.error);
-  esperar(aeJob, 2, mostrarResultado);
+  if (!res.ok) return showError(data.error);
+  waitFor(aeJob, 2, showResult);
 });
 
-function mostrarResultado(st) {
+function showResult(st) {
   el("ae-finish-btn").disabled = false;
-  const r = st.resultado;
-  el("ae-carpeta").textContent = r.carpeta;
-  el("ae-videos").innerHTML = r.variantes.map((v, i) => `
-    <div class="ed-variante">
+  const r = st.result;
+  el("ae-folder").textContent = r.folder;
+  el("ae-videos").innerHTML = r.variants.map((v, i) => `
+    <div class="ed-variant">
       <video class="ed-video" controls preload="metadata" src="${AE_API}/download/${aeJob}/${i + 1}"></video>
-      <p><b>${v.variante}</b> · ${v.duracion.toFixed(1)} s · ${v.cortes} cortes${v.rife ? " · RIFE" : ""}</p>
+      <p><b>${v.variant}</b> · ${v.duration.toFixed(1)} s · ${v.cuts} cortes${v.rife ? " · RIFE" : ""}</p>
       <a class="btn-secondary" href="${AE_API}/download/${aeJob}/${i + 1}" download>Descargar</a>
     </div>`).join("");
   el("ae-result").classList.remove("hidden");

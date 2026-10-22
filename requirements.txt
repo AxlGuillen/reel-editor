@@ -11,14 +11,14 @@ faster-whisper>=1.2
 # Lee de cada fuente de assets/fonts el nombre que busca libass y sus métricas
 # (modules/subtitles/fonts.py). Sin esto los subtítulos caían a Arial.
 fonttools>=4.40
-# Análisis musical de los edits (beats, compases, energía): modules/beatmap.
+# Music analysis for the edits (beats, bars, energy): modules/beatmap.
 librosa>=0.10
-# Cortes de plano de los videos de anime_edit (si falta, se usa el scdet de FFmpeg).
+# Shot cuts of the anime_edit videos (without it, FFmpeg's scdet is used).
 scenedetect>=0.6
 opencv-python-headless>=4.8
-# Opcionales (los edits funcionan sin ellos; /api/edicion/opciones dice cuáles hay):
-#   pip install beat-this          beats y downbeats con red neuronal (más precisos)
-#   pip install audio-separator    separar la voz para transcribir la letra
+# Optional (the edits work without them; /api/editing/options lists what is there):
+#   pip install beat-this          beats and downbeats with a neural network (more accurate)
+#   pip install audio-separator    isolate the vocals to transcribe the lyrics
 
 # GPU (Windows + NVIDIA): DLLs de CUDA que ctranslate2 necesita en runtime.
 # El processor de subtitles las agrega al PATH automáticamente.
