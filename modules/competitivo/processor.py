@@ -464,6 +464,34 @@ def _edit_destination(ep: EditParams, sesion: dict) -> tuple[str, str]:
     return folder, name
 
 
+def _voice_words(spans: list[dict], language: str, work: str) -> list[dict]:
+    """Ibai's words in the real-time shots ("acts"), in OUTPUT time: each shot's
+    audio is transcribed (faster-whisper) and shifted to where the shot goes.
+    A shot without a voice simply adds nothing."""
+    from modules.subtitles import processor as subtitles
+    from modules.subtitles.schema import SubtitlesParams
+    params = SubtitlesParams(language=language)
+    out: list[dict] = []
+    for k, s in enumerate(spans):
+        dur = s["end"] - s["start"]
+        wav = os.path.join(work, f"voz_{k}.wav")
+        ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-y", "-ss", f"{s['start']:.3f}",
+                               "-t", f"{dur:.3f}", "-i", s["source"], "-vn", "-ac", "1", "-ar", "16000", wav])
+        try:
+            segments = subtitles.transcribe(wav, params)
+        except RuntimeError:
+            continue
+        finally:
+            file_utils.cleanup_paths(wav)
+        for seg in segments:
+            for w in seg["words"]:
+                if w["start"] >= dur - 0.05:
+                    continue
+                out.append({"word": w["word"], "start": round(s["out"] + w["start"], 3),
+                            "end": round(s["out"] + min(w["end"], dur), 3)})
+    return out
+
+
 def edit_text_y(zoom: float) -> float:
     """Height of the kill titles: the top third of the gameplay (it does not
     cover the center, where the observer puts the fight)."""
@@ -528,6 +556,12 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 ks = [edit_plan.EditKill(t - ep.kill_lead_s + shift, side, (au or {}).get("player", ""),
                                          (au or {}).get("champion", ""), n)
                       for (t, side), au, n in zip(expected, authors, counts)]
+                # Where the action is at each kill: the zooms aim there (None = center).
+                for k in ks:
+                    try:
+                        k.focus = layout.action_focus(span, k.t, ep.zoom)
+                    except RuntimeError:
+                        k.focus = None
                 clips.append(edit_plan.EditClip(
                     c["id"], span, an.vivo_desde, an.vivo_hasta, ks, c["puntaje"], c.get("multikill"),
                     c.get("cierra", False), c["titulo"],
@@ -536,12 +570,21 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
         job_manager.update_job(job_id, stage="Armando el edit al ritmo…", progress=30)
         op = edit_plan.EditOptions(style=ep.style, speed=ep.speed, max_duration_s=ep.max_duration_s,
                                    align_drop=ep.align_drop, music_start=ep.music_start, text=ep.text,
-                                   music_accents=ep.music_accents, title=ep.edit_title)
+                                   music_accents=ep.music_accents, title=ep.edit_title,
+                                   structure=ep.structure, recipes=ep.recipes,
+                                   cold_open_s=ep.cold_open_s, build_fights=ep.build_fights)
         res = edit_plan.plan(clips, bm, op)
         edl = res.edl
+        plan_info = {"structure": ep.structure, **res.plan_dict()}
+        job_manager.update_job(job_id, plan=plan_info)
+        if ep.structure == "acts" and ep.voice_subs and res.voice_spans:
+            job_manager.update_job(job_id, stage="Transcribiendo a Ibai…", progress=31)
+            edl.subtitle_words = _voice_words(res.voice_spans, ep.voice_language, temp)
+            edl.subtitle_style = dict(ep.subs_style or {})
+            edl.subtitle_until = res.subtitle_until
         edl.music = music_path
         edl.look, edl.lut, edl.glow = ep.look, ep.lut, ep.glow
-        edl.original_volume = ep.game_volume / 100
+        edl.original_volume = ep.game_volume / 100      # "beat"; "acts" brings its own automation
         watermark = os.path.join(config.WATERMARKS_FOLDER, ep.watermark) if ep.watermark else None
         edl.watermark, edl.watermark_height = watermark, ep.marca_alto
         folder, name = _edit_destination(ep, sesion)
@@ -563,7 +606,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             "download_name": os.path.basename(destination), "total_duration": render_info["dur"],
             "music_start": round(res.music_start, 3), "drop_aligned": res.drop_aligned,
             "bpm": bm["bpm"], "used_clips": res.used, "dropped_clips": res.dropped,
-            "warning": res.warning, "edl": edl.to_dict(),
+            "warning": res.warning, "plan": plan_info, "subtitle_words": len(edl.subtitle_words),
+            "edl": edl.to_dict(),
         }
         with open(os.path.splitext(destination)[0] + ".json", "w", encoding="utf-8") as fh:
             json.dump({**result, "created": datetime.now(timezone.utc).isoformat(),

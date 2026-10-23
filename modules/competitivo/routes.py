@@ -98,7 +98,7 @@ def status(job_id):
         error=job["error"], finished=bool(job.get("finished")), modo=job.get("modo"),
         aviso=job.get("aviso"), vod=job.get("vod"), partidas=job.get("partidas"),
         clips=job.get("clips"), seleccion=job.get("seleccion"), resultado=job.get("resultado"),
-        portada=job.get("portada"), intro=job.get("intro"),
+        portada=job.get("portada"), intro=job.get("intro"), plan=job.get("plan"),
     )
 
 

@@ -412,6 +412,43 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
     return ";".join(partes)
 
 
+FOCUS_W = 160                 # action_focus analyzes the gameplay at this width
+FOCUS_MIN_MOTION = 12         # below this (0–255) nothing clearly moves: the center
+FOCUS_MAX_SPREAD = 0.3        # motion all over the crop (the observer's camera pans): the center
+
+
+def action_focus(path: str, t: float, zoom: float = 1.3, span: float = 0.6,
+                 fps: int = 10) -> tuple[float, float] | None:
+    """Where the action is around second `t` of the span: the centroid of the
+    motion (frame differences) inside the gameplay crop, mapped to the OUTPUT
+    frame (x, y as fractions of 1080x1920), or None if there is no clear
+    focus (nothing moves, or everything moves because the camera pans)."""
+    g = geometria(zoom)
+    cw, ch, cx, cy = g.recorte
+    h = _even(ch * FOCUS_W / cw)
+    raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{max(0.0, t - span / 2):.3f}",
+                                 "-t", f"{span:.3f}", "-i", path, "-an", "-vf",
+                                 f"fps={fps},crop={cw}:{ch}:{cx}:{cy},scale={FOCUS_W}:{h},format=gray",
+                                 "-f", "rawvideo", "-"])
+    frames = np.frombuffer(raw, np.uint8)
+    if frames.size < 3 * FOCUS_W * h:
+        return None
+    frames = frames[: frames.size // (FOCUS_W * h) * FOCUS_W * h].reshape(-1, h, FOCUS_W).astype(np.float32)
+    diff = np.abs(np.diff(frames, axis=0)).mean(axis=0)
+    if diff.max() < FOCUS_MIN_MOTION:
+        return None
+    mask = diff >= np.percentile(diff, 95)
+    ys, xs = np.nonzero(mask)
+    w = diff[mask]
+    u = float((xs * w).sum() / w.sum()) / FOCUS_W
+    v = float((ys * w).sum() / w.sum()) / h
+    spread = float(np.sqrt((((xs / FOCUS_W - u) ** 2 + (ys / h - v) ** 2) * w).sum() / w.sum()))
+    if spread > FOCUS_MAX_SPREAD:
+        return None
+    top = ARRIBA_H + g.extra_arriba
+    return round(u, 3), round((top + v * g.juego_h) / H, 3)
+
+
 def edit_geometry(camara_y: int, zoom: float = 1.3, camera: bool = False) -> str:
     """The layout as the geometry of an edit-mode shot (editing/render.py):
     no color (the edit's look sets it), no watermark (it goes at the end,

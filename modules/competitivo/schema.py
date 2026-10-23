@@ -137,6 +137,30 @@ def _salida(form, base=None) -> dict:
     return datos
 
 
+def _recipes(raw, valid) -> tuple:
+    """recipes: "auto" (all) or a list (JSON or comma separated)."""
+    if raw in (None, "", "auto"):
+        return ()
+    if isinstance(raw, str):
+        try:
+            items = json.loads(raw) if raw.strip().startswith("[") else raw.split(",")
+        except ValueError:
+            raise ValueError("'recipes' es 'auto' o una lista: ramp,freeze_zoom,…")
+    else:
+        items = list(raw)
+    items = [str(x).strip().lower() for x in items if str(x).strip()]
+    bad = [x for x in items if x not in valid]
+    if bad or not items:
+        raise ValueError(f"Receta desconocida: {bad[0] if bad else ''!r}. Opciones: auto o {', '.join(valid)}.")
+    return tuple(dict.fromkeys(items))
+
+
+def _subs_style(p) -> dict:
+    """The "invert" fields of a SubtitlesParams (Ibai's subtitles in the edit)."""
+    return {"inv_size": p.inv_size, "inv_y": p.inv_y, "inv_direction": p.inv_direction,
+            "inv_words": p.inv_words, "font": p.font}
+
+
 def _color(form, default: str) -> str:
     color = (form.get("color") or default).strip().lower()
     if color not in COLORES:
@@ -337,12 +361,21 @@ class EditParams:
     partido: str = ""
     titulo: str = ""
     mapa: int = 1
+    # v2 "acts" (see competitivo/edit.py plan_acts)
+    structure: str = "acts"           # acts | beat (the previous one)
+    recipes: tuple = ()               # () = auto (all)
+    cold_open_s: float = 6.5
+    build_fights: int = 2
+    voice_subs: bool = True           # Ibai's words in cold_open/build, "invert" subtitles
+    voice_language: str = "es"
+    subs_style: dict | None = None    # SubtitlesParams fields for those subtitles
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
         from modules.beatmap.analysis import ENGINES
         from modules.beatmap.schema import LyricsParams, music_from_form
-        from modules.competitivo.edit import STYLES, TEXT_MODES
+        from modules.competitivo.edit import RECIPES, STRUCTURES, STYLES, TEXT_MODES
+        from modules.subtitles.schema import VALID_LANGUAGES, SubtitlesParams
         from modules.editing import effects
 
         anchors, clips = _anclas_y_clips(form, base)
@@ -385,5 +418,12 @@ class EditParams:
             marca_alto=_num(form, "marca_alto", base.marca_alto, 80, 400),
             edit_title=_texto(form, "edit_title", 60, ""),
             mapa=_num(form, "mapa", base.mapa, 1, 5),
+            structure=choice("structure", STRUCTURES, "acts"),
+            recipes=_recipes(form.get("recipes"), RECIPES),
+            cold_open_s=_num(form, "cold_open_s", 6.5, 5.0, 8.0, float),
+            build_fights=_num(form, "build_fights", 2, 0, 2),
+            voice_subs=_bool(form, "voice_subs", True),
+            voice_language=choice("voice_language", sorted(VALID_LANGUAGES - {"auto"}), "es"),
+            subs_style=_subs_style(SubtitlesParams.from_form(form)),
             **_salida(form, base),
         )

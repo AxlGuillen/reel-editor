@@ -168,11 +168,23 @@ class Validation(unittest.TestCase):
         self.assertFalse(ep.lyrics.lyrics)
         self.assertEqual(EditParams.from_form({"text": "both"}, self.BASE).lyrics.lyrics, True)
         self.assertEqual(EditParams.from_form({"music_start": "1:05"}, self.BASE).music_start, 65)
+        self.assertEqual((ep.structure, ep.recipes, ep.cold_open_s, ep.build_fights, ep.voice_subs,
+                          ep.voice_language), ("acts", (), 6.5, 2, True, "es"))
+        self.assertEqual(ep.subs_style["font"], "Poppins-Bold.ttf")
+        for raw, want in (("auto", ()), ("ramp, hard_cut", ("ramp", "hard_cut")),
+                          ('["stair_zoom","ramp","ramp"]', ("stair_zoom", "ramp"))):
+            self.assertEqual(EditParams.from_form({"recipes": raw}, self.BASE).recipes, want)
+        ep = EditParams.from_form({"sub_inv_size": "200", "sub_inv_direction": "vertical", "sub_font": "Anton-Regular.ttf"},
+                                  self.BASE)
+        self.assertEqual((ep.subs_style["inv_size"], ep.subs_style["inv_direction"], ep.subs_style["font"]),
+                         (200, "vertical", "Anton-Regular.ttf"))
 
     def test_errors(self):
         for form in ({"style": "x"}, {"text": "x"}, {"look": "sepia"}, {"lut": "no.cube"},
                      {"speed": "3"}, {"max_duration_s": "500"}, {"music_url": "nada"},
-                     {"music_start": "ayer"}, {"anchors": "{\"999\": 1}"}):
+                     {"music_start": "ayer"}, {"anchors": "{\"999\": 1}"}, {"structure": "x"},
+                     {"recipes": "slowmo"}, {"recipes": "[1"}, {"cold_open_s": "9"}, {"build_fights": "3"},
+                     {"voice_language": "auto"}):
             with self.assertRaises(ValueError, msg=form):
                 EditParams.from_form(form, self.BASE)
 
@@ -226,7 +238,7 @@ class FullJob(unittest.TestCase):
     def test_edit(self):
         params = self._session()
         music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
-        ep = EditParams.from_form({"edit_title": "KC vs C9", "intensity": "0.8"}, params)
+        ep = EditParams.from_form({"edit_title": "KC vs C9", "intensity": "0.8", "structure": "beat"}, params)
         job = job_manager.create_job("x", "")
         processor.edit(job, "phase1", ep, music)
         j = job_manager.get_job(job)
@@ -247,10 +259,42 @@ class FullJob(unittest.TestCase):
         # the user's music lives outside uploads: it is not deleted
         self.assertTrue(os.path.isfile(music))
 
+    def test_edit_acts(self):
+        params = self._session()
+        music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
+        ep = EditParams.from_form({"edit_title": "KC vs C9"}, params)          # acts, by default
+        words = [{"words": [{"word": "vamos", "start": 0.4, "end": 0.8}, {"word": "KC", "start": 1.0, "end": 1.4}]}]
+        job = job_manager.create_job("x", "")
+        with mock.patch("modules.subtitles.processor.transcribe", return_value=words) as tr:
+            processor.edit(job, "phase1", ep, music)
+        j = job_manager.get_job(job)
+        self.assertEqual(j["status"], "done", j["error"])
+        res = j["resultado"]
+        acts = {a["act"]: a for a in res["plan"]["acts"]}
+        self.assertEqual(list(acts), ["cold_open", "build", "silence", "drop", "outro"])
+        self.assertEqual(tr.call_count, 2)                                    # cold open + build
+        self.assertEqual(res["subtitle_words"], 4)
+        self.assertTrue(res["drop_aligned"])
+        self.assertTrue(all(k["recipe"] in E.RECIPES for k in res["plan"]["kills"]))
+        self.assertEqual(res["plan"]["kills"][-1]["recipe"], "instant_replay")
+        self.assertEqual(ffmpeg_runner.probe_resolution(res["video"]), (1080, 1920))
+        self.assertAlmostEqual(ffmpeg_runner.probe_duration(res["video"]), acts["outro"]["end"], delta=0.06)
+        # the silence: black and mute
+        s0 = acts["silence"]["start"]
+        fr = S.gray_frames(res["video"], 60)
+        self.assertLess(fr[int((s0 + 0.15) * 60)].mean(), 8)
+        self.assertLess(_rms_db(res["video"], s0 + 0.08, 0.14), -50)
+        self.assertGreater(_rms_db(res["video"], 1.0, 2.0), -40)             # the game (and Ibai) at 100 %
+        # the status brings the plan
+        from app import create_app
+        st = create_app().test_client().get(f"/api/competitivo/status/{job}").get_json()
+        self.assertEqual(st["plan"]["structure"], "acts")
+        self.assertEqual(st["plan"]["kills"], res["plan"]["kills"])
+
     def test_failed_render_leaves_nothing(self):
         params = self._session()
         music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
-        ep = EditParams.from_form({"titulo": "KC vs C9"}, params)
+        ep = EditParams.from_form({"titulo": "KC vs C9", "structure": "beat"}, params)
 
         def broken(edl, out, *args, **kwargs):
             with open(out, "wb") as fh:                     # half-written by FFmpeg
@@ -288,3 +332,194 @@ class FullJob(unittest.TestCase):
         self.assertEqual(c.post("/api/competitivo/edit", data={"job_id": "nada"}).status_code, 404)
         self.assertEqual(c.post("/api/competitivo/edit", data={"job_id": "phase1"}).status_code, 400)
         self.assertEqual(c.post("/api/competitivo/edit", data={"job_id": "phase1", "style": "x"}).status_code, 400)
+
+
+def _rms_db(path: str, start: float, dur: float) -> float:
+    import re
+    import subprocess
+    err = subprocess.run([config.FFMPEG_PATH, "-v", "info", "-ss", f"{start}", "-t", f"{dur}", "-i", path,
+                          "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    return float(re.findall(r"RMS level dB: (-?[\d.]+|-inf)", err)[-1].replace("-inf", "-200"))
+
+
+def _gain_at(keys, t):
+    """Value of a [(t, gain)] automation at t (as effects.gain evaluates it)."""
+    keys = sorted(keys)
+    if t < keys[0][0]:
+        return keys[0][1]
+    for (a, ga), (b, gb) in zip(keys, keys[1:]):
+        if a <= t < b:
+            return ga + (gb - ga) * (t - a) / (b - a)
+    return keys[-1][1]
+
+
+class Acts(unittest.TestCase):
+    """structure="acts": cold open and build in real time with Ibai's voice,
+    0.3 s of silence, the drop on the song's drop with a recipe per kill, outro."""
+    BM = _beatmap()
+
+    def _clips(self):
+        return [_clip(1, [8.0, 9.1], 60), _clip(2, [6.0, 10.0], 40), _clip(3, [7.0, 12.0], 30),
+                _clip(4, [9.0, 11.5], 90, closes=True)]
+
+    def _plan(self, clips=None, **kw):
+        return E.plan(clips or self._clips(), self.BM, E.EditOptions(structure="acts", **kw))
+
+    def test_acts_in_order_with_their_volumes(self):
+        res = self._plan(text="both", title="KC vs C9")
+        acts = {a["act"]: a for a in res.acts}
+        self.assertEqual([a["act"] for a in res.acts], ["cold_open", "build", "silence", "drop", "outro"])
+        for a, b in zip(res.acts, res.acts[1:]):
+            self.assertAlmostEqual(a["end"], b["start"], places=3)
+        self.assertAlmostEqual(acts["cold_open"]["end"], 6.5, places=3)
+        self.assertEqual(acts["cold_open"]["clips"], ["1-4"])                # the best one
+        self.assertEqual(acts["build"]["clips"], ["1-1", "1-2"])
+        self.assertAlmostEqual(acts["silence"]["end"] - acts["silence"]["start"], E.SILENCE_S, places=3)
+        self.assertEqual(acts["drop"]["clips"], ["1-3", "1-4"])               # the key one closes
+        self.assertEqual(acts["outro"]["clips"], ["1-4"])
+        # the drop act starts exactly on the song's drop
+        self.assertTrue(res.drop_aligned)
+        self.assertAlmostEqual(res.music_start + acts["drop"]["start"], 32.0, places=3)
+        edl = res.edl
+        self.assertAlmostEqual(edl.dur, acts["outro"]["end"], places=2)
+        mid = {k: (a["start"] + a["end"]) / 2 for k, a in acts.items()}
+        for act, music, game in (("cold_open", 0.15, 1.0), ("build", 0.20, 1.0), ("silence", 0.0, 0.0),
+                                 ("drop", 1.0, 0.15)):
+            self.assertAlmostEqual(_gain_at(edl.music_gain, mid[act]), music, places=3, msg=act)
+            self.assertAlmostEqual(_gain_at(edl.original_gain, mid[act]), game, places=3, msg=act)
+        self.assertAlmostEqual(_gain_at(edl.original_gain, acts["outro"]["end"]), 1.0)  # the game rises back
+        black = [e for e in edl.events if e.kind == "black"]
+        self.assertEqual(len(black), 1)
+        self.assertAlmostEqual(black[0].t, acts["silence"]["start"], places=3)
+        # the outro ends on a bar and the music fades over it
+        bar = (acts["outro"]["end"] + res.music_start) / (60 / 120)
+        self.assertAlmostEqual(bar % 4, 0, places=2)
+        self.assertAlmostEqual(edl.fade_out, acts["outro"]["end"] - acts["outro"]["start"], places=3)
+        # lyrics only from the drop on; the title only while Ibai talks
+        words = [t for t in edl.texts if t.style == "word"]
+        self.assertTrue(words)
+        self.assertTrue(all(t.start >= acts["drop"]["start"] for t in words))
+        title = next(t for t in edl.texts if t.style == "title")
+        self.assertLessEqual(title.end, acts["silence"]["start"])
+        edl.validate()
+
+    def test_real_time_shots_push_in_and_carry_the_voice(self):
+        res = self._plan()
+        acts = {a["act"]: a for a in res.acts}
+        pushes = [e for e in res.edl.events if e.kind == "push"]
+        self.assertEqual(len(pushes), 3)                                     # cold open + 2 build
+        self.assertTrue(all(e.level == E.PUSH_LEVEL for e in pushes))
+        self.assertEqual(len(res.voice_spans), 3)
+        self.assertEqual([round(p.t, 3) for p in pushes], [s["out"] for s in res.voice_spans])
+        for s in res.voice_spans:
+            self.assertLessEqual(s["out"] + s["end"] - s["start"], acts["silence"]["start"] + 1e-3)
+        self.assertAlmostEqual(res.subtitle_until, acts["silence"]["start"], places=3)
+        self.assertAlmostEqual(res.edl.subtitle_until, res.subtitle_until)
+        for seg in res.edl.segments[:3]:                                     # real time: 1×
+            self.assertTrue(all(abs(p.speed - 1) < 1e-6 for p in seg.pieces), seg.label)
+        # whips: between the build shots and between the drop fights
+        whips = sorted(round(e.t, 3) for e in res.edl.events if e.kind == "whip")
+        self.assertEqual(len(whips), 3)
+        self.assertIn(round(acts["cold_open"]["end"], 3), whips)
+
+    def test_recipes_rotate_and_the_replay_is_the_key_ones(self):
+        clips = [_clip(i, [6.0, 9.0], 50 + i) for i in range(1, 6)] + [_clip(6, [8.0, 11.0], 99, closes=True)]
+        res = self._plan(clips, build_fights=0, max_duration_s=120)
+        recipes = [k["recipe"] for k in res.kills]
+        self.assertTrue(all(a != b for a, b in zip(recipes, recipes[1:])), recipes)
+        self.assertEqual(recipes.count("instant_replay"), 1)
+        self.assertEqual((res.kills[-1]["clip"], res.kills[-1]["recipe"]), ("1-6", "instant_replay"))
+        self.assertEqual({"ramp", "freeze_zoom", "hard_cut"} - set(recipes), set())
+        self.assertNotIn("stair_zoom", recipes)                              # no multikill
+        again = self._plan(clips, build_fights=0, max_duration_s=120)
+        self.assertEqual(recipes, [k["recipe"] for k in again.kills])        # fixed hash
+        # the replay rewinds REPLAY_BACK s and shows it at REPLAY_SPEED with the zoom held
+        key = next(s for s in res.edl.segments if s.label == "1-6")
+        slow = [p for p in key.pieces if abs(p.speed - E.REPLAY_SPEED) < 1e-6]
+        self.assertEqual(len(slow), 1)
+        self.assertAlmostEqual(slow[0].start, 11.0 - E.REPLAY_BACK, places=3)
+        t_kill = res.kills[-1]["t"]
+        self.assertTrue(any(e.kind == "hold" and e.level == E.REPLAY_ZOOM and e.t > t_kill
+                            for e in res.edl.events))
+        # a fixed list
+        only = self._plan(clips, build_fights=0, max_duration_s=120, recipes=("hard_cut",))
+        self.assertEqual({k["recipe"] for k in only.kills}, {"hard_cut"})
+        two = self._plan(clips, build_fights=0, max_duration_s=120, recipes=("ramp", "freeze_zoom"))
+        r2 = [k["recipe"] for k in two.kills]
+        self.assertEqual(set(r2), {"ramp", "freeze_zoom"})
+        self.assertTrue(all(a != b for a, b in zip(r2, r2[1:])))
+        with self.assertRaises(ValueError):
+            self._plan(recipes=("slowmo",))
+
+    def test_multikill_climbs_a_stair_one_kill_per_beat(self):
+        clips = [_clip(1, [5.0, 6.0, 7.2, 8.4], 50, multikill="quadra de X"),
+                 _clip(2, [8.0, 11.0], 90, closes=True)]
+        res = self._plan(clips, build_fights=0)
+        stair = [k for k in res.kills if k["recipe"] == "stair_zoom"]
+        self.assertEqual(len(stair), 4)
+        self.assertTrue(all(k["clip"] == "1-1" for k in stair))
+        gaps = [b["t"] - a["t"] for a, b in zip(stair, stair[1:])]
+        self.assertTrue(all(abs(g - 0.5) < 1e-3 for g in gaps), gaps)       # 120 bpm: one beat
+        levels = [e.level for e in res.edl.events if e.kind == "hold"
+                  and any(abs(e.t - k["t"]) < 1e-6 for k in stair)]
+        self.assertEqual(levels, list(E.STAIR))
+        self.assertTrue(any(t.style == "multikill" for t in res.edl.texts))
+
+    def test_the_zoom_aims_at_the_action(self):
+        clips = self._clips()
+        clips[2].kills[0].focus = (0.3, 0.6)
+        res = self._plan(clips, recipes=("freeze_zoom",))
+        t_kill = next(k["t"] for k in res.kills if k["clip"] == "1-3")
+        aimed = [e for e in res.edl.events if abs(e.t - t_kill) < 1e-6 and e.kind == "hold"]
+        self.assertEqual([(e.x, e.y) for e in aimed], [(0.3, 0.6)])
+        # without a measured focus: the center
+        others = [e for e in res.edl.events if e.kind == "hold" and e is not aimed[0]]
+        self.assertTrue(others)
+        self.assertTrue(all((e.x, e.y) == (0.5, 0.5) for e in others))
+
+    def test_plan_dict_and_beat_still_works(self):
+        res = self._plan()
+        d = res.plan_dict()
+        self.assertEqual(d["acts"][0]["act"], "cold_open")
+        self.assertTrue(all({"clip", "t", "recipe", "player", "champion"} <= set(k) for k in d["kills"]))
+        beat = E.plan(self._clips(), self.BM, E.EditOptions())
+        self.assertEqual([a["act"] for a in beat.acts], ["beat"])
+        self.assertFalse(beat.edl.music_gain or beat.edl.original_gain)
+        with self.assertRaises(ValueError):
+            E.plan(self._clips(), self.BM, E.EditOptions(structure="x"))
+
+
+class ActionFocus(unittest.TestCase):
+    """layout.action_focus: the centroid of the motion inside the gameplay,
+    in output coordinates; None if nothing moves or everything moves."""
+
+    def setUp(self):
+        self.tmp = S.tmpdir("focus")
+
+    def tearDown(self):
+        S.remove(self.tmp)
+
+    def _video(self, name, graph):
+        import subprocess
+        path = os.path.join(self.tmp, name)
+        subprocess.run([config.FFMPEG_PATH, "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "color=c=0x404040:s=1920x1080:r=30:d=1.2", "-f", "lavfi", "-i",
+                        "color=c=white:s=80x80:r=30:d=1.2", "-filter_complex", graph, "-map", "[v]",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", path], check=True)
+        return path
+
+    def test_focus(self):
+        from modules.competitivo import layout as L
+        g = L.geometria(1.3)
+        cw, ch, cx, cy = g.recorte
+        u, v = 0.25, 0.7                                     # where the box moves, in the crop
+        bx, by = cx + u * cw, cy + v * ch
+        # (drawbox evaluates x only once: overlay moves it frame by frame)
+        moving = self._video("m.mp4", f"[0:v][1:v]overlay=x='{bx - 40:.0f}+60*sin(12*t)':y={by - 40:.0f}[v]")
+        f = L.action_focus(moving, 0.6, 1.3)
+        self.assertIsNotNone(f)
+        self.assertAlmostEqual(f[0], u, delta=0.04)
+        self.assertAlmostEqual(f[1], (L.ARRIBA_H + g.extra_arriba + v * g.juego_h) / L.H, delta=0.03)
+        self.assertIsNone(L.action_focus(self._video("s.mp4", "[0:v]null[v]"), 0.6, 1.3))
+        self.assertIsNone(L.action_focus(self._video("n.mp4", "[0:v]noise=alls=90:allf=t[v]"), 0.6, 1.3))

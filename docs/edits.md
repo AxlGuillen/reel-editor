@@ -61,11 +61,15 @@ GET  /api/beatmap/download/<id> → preview.mp4 ·  GET /api/beatmap/json/<id> �
 
 `edl.py` (modelo), `timing.py` (curvas de velocidad y cuantizado), `effects.py` (filtros), `titles.py` (letreros ASS), `render.py` (dos pasadas). `GET /api/editing/options` lista `looks`, `luts`, `profiles` y qué opcionales están instalados (`rife`, `esrgan`, `beat_this`, `vocal_separation`).
 
-**EDL**: `Segment` (un plano: archivo + `pieces` + `vf` de geometría) → `Piece(start, end, dur)` (fuente a velocidad constante; `start == end` es un congelado), más `Event(t, kind, intensity, dur)` (flash, zoom, shake, rgb) y `Text(start, end, text, style)` en tiempo de la salida, la música (`music`, `music_start`), el look, el LUT, glow, viñeta y watermark.
+**EDL**: `Segment` (un plano: archivo + `pieces` + `vf` de geometría) → `Piece(start, end, dur)` (fuente a velocidad constante; `start == end` es un congelado), más `Event(t, kind, intensity, dur, level, x, y)` y `Text(start, end, text, style)` en tiempo de la salida, la música (`music`, `music_start`), el look, el LUT, glow, viñeta y watermark.
+
+- **Eventos**: `flash`, `zoom` (golpe), `shake`, `rgb`, `push` (acercamiento lento de 1.0 a `1+level` a lo largo de `dur`), `hold` (zoom sostenido a `1+level` durante `dur`; la escalera de zoom), `whip` (golpe de zoom + desenfoque de movimiento horizontal que empieza 0.08 s ANTES del corte) y `black` (cuadro negro). `x`/`y` (0–1 de la salida) dicen a dónde apunta el zoom: el centro del cuadro se corre hacia ahí en proporción a la envolvente del movimiento, así vuelve solo al centro.
+- **Volumen automatizado**: `music_gain` / `original_gain` son `[(t, ganancia)]` lineales entre puntos (`volume=…:eval=frame`); vacías = los volúmenes fijos de siempre.
+- **Subtítulos invertidos**: `subtitle_words` (`{word, start, end}` en tiempo de la salida) + `subtitle_style` (los campos `inv_*` y `font` de `SubtitlesParams`) se queman con el layout `invert` de Subtítulos, cortados en `subtitle_until`.
 
 **Render**:
 1. **Pasada 1, por plano** (3 en paralelo): geometría + cada pieza recortada, retemporizada y cuadrada al cuadro exacto (`trim=end_frame`). Intermedio `.mkv` H.264 con audio PCM: con AAC cada unión corría el audio (lo que se midió en competitivo).
-2. **Pasada 2**: concat + LUT/look + glow + flash (`eq brightness` con `eval=frame`: por cuadro, no por píxel) + golpe de zoom y sacudida (un solo `zoompan`, `d=1`) + RGB (`rgbashift` con `enable`) + viñeta + ASS + watermark, con la música (fundido al final, limitador).
+2. **Pasada 2**: concat + LUT/look + glow + flash (`eq brightness` con `eval=frame`: por cuadro, no por píxel) + todos los movimientos de cámara (un solo `zoompan`, `d=1`) + desenfoque de los whips + RGB (`rgbashift` con `enable`) + negro + viñeta + subtítulos invertidos + ASS + watermark, con la música y el juego (volúmenes automatizados, fundido al final, limitador).
 
 `timing.quantize()` lleva cada borde al cuadro más cercano de su tiempo ACUMULADO ideal: el error no se arrastra, un golpe planeado en 31.250 s a 60 fps cae en el cuadro 1875.
 
@@ -102,6 +106,36 @@ GET  /api/competitivo/download/<id>
 ```
 
 Queda junto a los resúmenes como `Edit Mapa N - <titulo>.mp4` (no empieza con "Mapa": `publicar()` nunca lo descarta) con un `.json` al lado (la EDL), o en `EDITS_FOLDER/<fecha> <A> vs <B>/` sin día ni partido. `kill_lead_s` (0.25 s) corre cada kill hacia antes: el contador del marcador sube un poco después del golpe; **calibrar con un edit real**.
+
+### structure=acts (por defecto desde v2)
+
+Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cual.
+
+| Acto | Qué es | Música | Juego + Ibai |
+|---|---|---|---|
+| `cold_open` | la pelea de más puntaje en tiempo real, `cold_open_s` (5–8 s, 6.5) con su mejor momento al 70 % | 15 % | 100 % |
+| `build` | `build_fights` (0–2) peleas más en tiempo real (2.5 s antes de la 1ª kill → 1.5 s después de la última, máx. 7 s) | 20 % | 100 % |
+| `silence` | 0.3 s de negro y mudo | 0 | 0 |
+| `drop` | arranca EXACTO en el drop de la canción; el resto de las peleas al beat, con una receta por kill y whips entre peleas | 100 % | 15 % |
+| `outro` | la cola de la pelea de cierre (el nexo) en tiempo real; el juego vuelve a subir y la canción cierra en su compás (fundido) | 100 % | 15 → 100 % |
+
+- En `cold_open` y `build` hay un **push-in** lento (1.0 → 1.12×) apuntando a la acción de la kill más grande, y **whips** entre los planos. Los cambios de volumen tardan 0.05 s (sin clics).
+- **Recetas por kill** (`recipes`: `auto` o lista, p. ej. `ramp,hard_cut`), con un hash fijo (misma serie → mismo edit) que nunca repite dos veces seguidas:
+  - `ramp`: 0.3× en la kill → 1× → 1.5× hacia la siguiente;
+  - `freeze_zoom`: 0.15 s congelado con zoom 1.3× sostenido;
+  - `hard_cut`: sin cámara lenta, solo el golpe;
+  - `instant_replay`: SOLO en la última kill de la pelea clave: se ve, rebobina 1.5 s y la repite a 0.4× con zoom 1.6× (la cola se alarga hasta cerrar el compás);
+  - `stair_zoom`: peleas con 3+ kills: una kill por beat, con zoom 1.1 / 1.2 / 1.3 / 1.4×.
+- **El zoom apunta a la acción** (`layout.action_focus`): el centroide del movimiento (diferencia entre cuadros, el 5 % que más se mueve) dentro del gameplay alrededor de cada kill, llevado a coordenadas de la salida. Si no se mueve nada o se mueve todo (la cámara del observador paneando), el centro.
+- **La voz de Ibai con subtítulos invertidos** (`voice_subs`, `voice_language`=es): cada plano en tiempo real se transcribe con faster-whisper y sus palabras se queman con el layout `invert` (los mismos campos `sub_inv_*` y `sub_font` que Subtítulos), solo hasta el silencio: **nunca encima de la letra**, que en este modo sale recién desde el drop.
+- El status (y `resultado.plan`) trae el **plan por actos** (`acts: [{act, start, end, clips, music, game}]`) y la **receta de cada kill** (`kills: [{clip, t, recipe, count, player, champion}]`), para revisarlo; `resultado.subtitle_words` dice cuántas palabras de Ibai se quemaron.
+
+```
+POST /api/competitivo/edit   … [structure (acts | beat), recipes (auto | lista), cold_open_s (5–8),
+      build_fights (0–2), voice_subs, voice_language, sub_inv_size, sub_inv_y, sub_inv_direction,
+      sub_inv_words, sub_font]
+GET  /api/competitivo/status/<id> → … plan {structure, acts, kills}
+```
 
 **Como lo opera Claude:** fase 1 (`/process` con `modo=revisar`) → `/edit` con el `job_id` y la canción → poll de `/status/<nuevo>` hasta `finished=true`.
 
