@@ -38,9 +38,13 @@ def _cuts_scenedetect(path: str) -> list[float] | None:
         from scenedetect import AdaptiveDetector, detect
     except ImportError:
         return None
-    scenes = detect(path, AdaptiveDetector(adaptive_threshold=2.5, min_scene_len=4))
-    # `seconds` in new versions; get_seconds() in old ones.
-    return [float(getattr(a, "seconds", None) or a.get_seconds()) for a, _ in scenes][1:]
+    try:
+        scenes = detect(path, AdaptiveDetector(adaptive_threshold=2.5, min_scene_len=4))
+    except Exception:  # noqa: BLE001 - a file OpenCV can't open or decode: scdet reads it
+        return None
+    # `seconds` in new versions; get_seconds() in old ones. (`getattr(a, "seconds",
+    # None) or …` called the deprecated method whenever a scene began at 0.0.)
+    return [float(a.seconds if hasattr(a, "seconds") else a.get_seconds()) for a, _ in scenes][1:]
 
 
 def _cuts_ffmpeg(path: str) -> list[float]:

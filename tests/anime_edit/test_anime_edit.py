@@ -48,6 +48,11 @@ class Shots(unittest.TestCase):
             # without PySceneDetect, FFmpeg's scdet finds the same cuts
             with mock.patch.object(SH, "_cuts_scenedetect", return_value=None):
                 self.assertEqual(len(SH.detect(v)), 4)
+            # if PySceneDetect can't read the file, it falls back to scdet too
+            import scenedetect
+            with mock.patch.object(scenedetect, "detect", side_effect=OSError("no puede abrirlo")):
+                self.assertIsNone(SH._cuts_scenedetect(v))
+                self.assertEqual(len(SH.detect(v)), 4)
         finally:
             S.remove(tmp)
 
