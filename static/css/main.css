@@ -1852,6 +1852,9 @@ a:focus:not(:focus-visible) { outline: none; }
 .ed-or { color: var(--muted); font-size: 12px; }
 .ed-stats { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; margin-bottom: 12px; }
 .ed-stats b { font-family: var(--font-mono); color: var(--accent-strong); }
+/* Over the lime result card (beatmap) the numbers go in ink: in dark mode
+   --accent-strong IS the lime, and they were invisible. */
+.card-accent .ed-stats b { color: var(--accent-ink); }
 .ed-sections { display: flex; height: 22px; border-radius: var(--r-sm); overflow: hidden; margin: 8px 0 14px; position: relative; }
 .ed-sections > div { height: 100%; font-size: 10px; color: #fff; padding: 3px 4px; white-space: nowrap; overflow: hidden; }
 .ed-sec-chorus { background: #e8873a; }
