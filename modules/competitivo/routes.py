@@ -65,6 +65,10 @@ def edit():
     sesion = processor._SESIONES.get(phase1)
     if not sesion:
         return jsonify(error="Sesión no encontrada. Volvé a generar la propuesta (fase 1)."), 404
+    # A /finish of the same session is downloading VOD sections too: both at
+    # once means 6 yt-dlp in parallel against YouTube.
+    if (job_manager.get_job(phase1) or {}).get("status") == "processing":
+        return jsonify(error="Ese trabajo todavía está procesando (fase 1 o /finish). Esperá a que termine."), 409
     try:
         ep = EditParams.from_form(request.form, sesion["params"])
     except ValueError as exc:
@@ -125,6 +129,8 @@ def download_clip(job_id, n):
     res, err = _resultado(job_id)
     if err:
         return err
+    if "clips" not in res or "carpeta" not in res:          # an /edit job: one video, no clips
+        return jsonify(error="Ese trabajo no tiene clips sueltos."), 404
     if not 1 <= n <= len(res["clips"]):
         return jsonify(error="Ese clip no existe."), 404
     clip = res["clips"][n - 1]
@@ -149,6 +155,8 @@ def portada(job_id):
     res, err = _resultado(job_id)
     if err:
         return err
+    if "carpeta" not in res:                                   # an /edit job
+        return jsonify(error="Ese trabajo no tiene portada."), 404
     path = os.path.join(res["carpeta"], res.get("portada") or "portada.jpg")
     if not os.path.isfile(path):
         return jsonify(error="Ese resumen no tiene portada."), 404

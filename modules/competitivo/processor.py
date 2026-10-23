@@ -448,10 +448,11 @@ def _chosen_clips(sesion: dict, ids: list[str] | None) -> list[dict]:
     return chosen
 
 
-def _edit_destination(ep: EditParams, sesion: dict) -> str:
-    """Where the edit ends up. With day and match, next to the summaries as
-    "Edit Mapa N - <title>.mp4" (it does not start with "Mapa", so publicar()
-    never moves it to _descartados); otherwise in EDITS_FOLDER per series."""
+def _edit_destination(ep: EditParams, sesion: dict) -> tuple[str, str]:
+    """(folder, name) of the edit. With day and match, next to the summaries
+    as "Edit Mapa N - <title>.mp4" (it does not start with "Mapa", so publicar()
+    never moves it to _descartados); otherwise in EDITS_FOLDER per series.
+    The final name ("(2)"… if taken) is reserved only once the render is done."""
     name = f"Edit Mapa {ep.mapa}" + (f" - {ep.titulo}" if ep.titulo else "") + ".mp4"
     if ep.carpeta_dia and ep.partido:
         folder = os.path.join(config.COMPETITIVO_FOLDER, ep.carpeta_dia, ep.partido)
@@ -460,7 +461,7 @@ def _edit_destination(ep: EditParams, sesion: dict) -> str:
         date = datetime.fromisoformat(d["inicio_utc"]).astimezone().strftime("%Y-%m-%d")
         folder = os.path.join(config.EDITS_FOLDER, salida.limpiar(f"{date} {d['azul']} vs {d['rojo']}"))
     os.makedirs(folder, exist_ok=True)
-    return salida._unico(folder, name)
+    return folder, name
 
 
 def edit_text_y(zoom: float) -> float:
@@ -543,10 +544,20 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
         edl.original_volume = ep.game_volume / 100
         watermark = os.path.join(config.WATERMARKS_FOLDER, ep.watermark) if ep.watermark else None
         edl.watermark, edl.watermark_height = watermark, ep.marca_alto
-        destination = _edit_destination(ep, sesion)
-        render_info = editing.render(edl, destination, job_id, os.path.join(temp, "render"), progress=(30, 99),
-                                     intensity=ep.intensity, text_y=edit_text_y(ep.zoom),
-                                     watermark_crop=layout.recorte_marca(watermark) if watermark else None)
+        folder, name = _edit_destination(ep, sesion)
+        # Rendered aside (same folder, so os.replace works on any drive): a
+        # failed render used to leave a broken "Edit Mapa N.mp4" among the
+        # summaries, and the retry came out as "(2)".
+        partial = os.path.join(folder, f".edit-{job_id}.tmp.mp4")
+        try:
+            render_info = editing.render(edl, partial, job_id, os.path.join(temp, "render"), progress=(30, 99),
+                                         intensity=ep.intensity, text_y=edit_text_y(ep.zoom),
+                                         watermark_crop=layout.recorte_marca(watermark) if watermark else None)
+        except BaseException:
+            file_utils.cleanup_paths(partial)
+            raise
+        destination = salida._unico(folder, name)
+        os.replace(partial, destination)
         result = {
             "video": destination, "folder": os.path.dirname(destination), "name": os.path.basename(destination),
             "download_name": os.path.basename(destination), "total_duration": render_info["dur"],

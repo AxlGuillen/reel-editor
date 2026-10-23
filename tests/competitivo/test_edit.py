@@ -40,6 +40,20 @@ class KillAuthors(unittest.TestCase):
             {"player": "Blaber", "champion": "XinZhao"},
         ])
 
+    def test_frames_without_participants_are_skipped(self):
+        # The frame right before the fight came without `participants` ({}):
+        # the baseline is the last frame that has them. With an empty one,
+        # Canna's earlier kill counted again and took Caliste's.
+        kb = [0, 1, 1, 2, 2]
+        frames = [engine.Frame(T0 + timedelta(seconds=10 * i), "in_game", _team(kb[i]), _team(0))
+                  for i in range(5)]
+        per_player = [{1: 0, 4: 0}, {1: 1, 4: 0}, {}, {1: 1, 4: 1}, {1: 1, 4: 1}]
+        p = K.Partida("1", "KC", "C9", frames, per_player, {1: "KC Canna", 4: "KC Caliste"},
+                      {1: "Rumble", 4: "MissFortune"})
+        reglas = K.Reglas(min_kills=1, pre_s=0, post_s=0)
+        fight = [f for f in K.detectar_peleas(p, reglas) if f.kills[0].i == 3][0]
+        self.assertEqual(K.kill_authors(p, fight), [{"player": "Caliste", "champion": "MissFortune"}])
+
     def test_no_per_player_kills(self):
         frames = [engine.Frame(T0 + timedelta(seconds=i), "in_game", _team(min(i, 1)), _team(0))
                   for i in range(3)]
@@ -233,10 +247,44 @@ class FullJob(unittest.TestCase):
         # the user's music lives outside uploads: it is not deleted
         self.assertTrue(os.path.isfile(music))
 
+    def test_failed_render_leaves_nothing(self):
+        params = self._session()
+        music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
+        ep = EditParams.from_form({"titulo": "KC vs C9"}, params)
+
+        def broken(edl, out, *args, **kwargs):
+            with open(out, "wb") as fh:                     # half-written by FFmpeg
+                fh.write(b"x")
+            raise RuntimeError("FFmpeg falló")
+
+        job = job_manager.create_job("x", "")
+        with mock.patch.object(processor.editing, "render", side_effect=broken):
+            processor.edit(job, "phase1", ep, music)
+        self.assertEqual(job_manager.get_job(job)["status"], "error")
+        for _, _, files in os.walk(os.path.join(self.tmp, "edits")):
+            self.assertEqual(files, [])                      # no broken "Edit Mapa 1.mp4"
+        # and the next one keeps the clean name, without "(2)"
+        job = job_manager.create_job("x", "")
+        processor.edit(job, "phase1", ep, music)
+        j = job_manager.get_job(job)
+        self.assertEqual(j["status"], "done", j["error"])
+        self.assertEqual(os.path.basename(j["resultado"]["video"]), "Edit Mapa 1 - KC vs C9.mp4")
+        folder = os.path.dirname(j["resultado"]["video"])
+        self.assertFalse([f for f in os.listdir(folder) if f.endswith(".tmp.mp4")])
+
     def test_api_validates(self):
         from app import create_app
         self._session()
         c = create_app().test_client()
+        # an /edit job has neither clips nor a cover: 404, not a 500
+        job = job_manager.create_job("x", "")
+        job_manager.update_job(job, status="done", finished=True, resultado={"video": "x.mp4"})
+        self.assertEqual(c.get(f"/api/competitivo/download/{job}/1").status_code, 404)
+        self.assertEqual(c.get(f"/api/competitivo/portada/{job}").status_code, 404)
+        # while phase 1 (or its /finish) is processing: 409
+        job_manager.create_job("x", "")
+        with mock.patch.object(job_manager, "get_job", return_value={"status": "processing"}):
+            self.assertEqual(c.post("/api/competitivo/edit", data={"job_id": "phase1"}).status_code, 409)
         self.assertEqual(c.post("/api/competitivo/edit", data={"job_id": "nada"}).status_code, 404)
         self.assertEqual(c.post("/api/competitivo/edit", data={"job_id": "phase1"}).status_code, 400)
         self.assertEqual(c.post("/api/competitivo/edit", data={"job_id": "phase1", "style": "x"}).status_code, 400)

@@ -206,7 +206,7 @@ def fetch_partida(game_id: str, step_s: int = 10, max_min: int = 80,
     for lado in ("blueTeamMetadata", "redTeamMetadata"):
         for p in meta[lado]["participantMetadata"]:
             nombres[p["participantId"]] = p.get("summonerName", "").strip()
-            champions[p["participantId"]] = p.get("championId", "").strip()
+            champions[p["participantId"]] = (p.get("championId") or "").strip()
     azul, rojo = engine.team_codes(meta)
     return Partida(game_id, azul, rojo, frames, kills_jugador, nombres, champions)
 
@@ -419,12 +419,17 @@ def kill_authors(p: Partida, pe: Pelea) -> list[dict | None]:
     blue and 6–10 red."""
     if not p.kills_jugador:
         return [None] * len(pe.kills)
-    i_before = pe.kills[0].i - 1
+    i_before = max(0, pe.kills[0].i - 1)
     i_end = p.indice(p.frames[pe.kills[-1].i].ts + timedelta(seconds=LAG_JUGADOR_S))
     increases: dict[str, list[tuple[int, int]]] = {p.azul: [], p.rojo: []}
-    prev = dict(p.kills_jugador[i_before])
+    # Frames without `participants` come as {}: start from the last one that
+    # has them (an empty baseline counted every past kill as new) and skip them.
+    base = next((k for k in range(i_before, -1, -1) if p.kills_jugador[k]), None)
+    prev = dict(p.kills_jugador[base]) if base is not None else {}
     for i in range(i_before + 1, i_end + 1):
         current = p.kills_jugador[i]
+        if not current:
+            continue
         for pid, n in sorted(current.items()):
             for _ in range(max(0, n - prev.get(pid, 0))):
                 increases[p.azul if pid <= 5 else p.rojo].append((i, pid))
