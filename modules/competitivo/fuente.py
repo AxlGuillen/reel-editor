@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import glob
 import os
+import threading
+import time
 from datetime import datetime, timezone
 
 import yt_dlp
@@ -33,6 +35,12 @@ FORMATO = ("bv*[protocol^=m3u8][height<=1080][fps>30]+ba[protocol^=m3u8]/"
            "bv*[height<=1080]+ba/b")
 # Twitch serves video and audio together (1080p60 HLS): no merge needed.
 FORMAT_TWITCH = "b[height<=1080][fps>30]/b[height<=1080]/b"
+# Twitch drops sections when too many go at once: at most 2 at a time (for
+# the whole server, summaries and edits together), and a failed section is
+# tried again twice.
+TWITCH_SLOTS = threading.BoundedSemaphore(2)
+TWITCH_RETRIES = 2
+RETRY_WAIT_S = 3.0
 
 
 def _opts(**extra) -> dict:
@@ -93,12 +101,34 @@ def info_vod(url: str) -> dict:
     return vod_info(info)
 
 
+def is_twitch(url: str) -> bool:
+    return "twitch.tv" in url.lower()
+
+
 def bajar_tramo(url: str, inicio: float, fin: float, destino: str) -> str:
     """Baja [inicio, fin] (segundos del VOD) a `destino`.mp4 y devuelve la ruta.
 
     If the section comes without video (an audio-only file, or FFmpeg's
     "Output file does not contain any stream" while merging) it is downloaded
-    once more; the second time it raises SpanWithoutVideo."""
+    once more; the second time it raises SpanWithoutVideo. Twitch: at most
+    TWITCH_SLOTS at a time and TWITCH_RETRIES more tries if one fails."""
+    if not is_twitch(url):
+        return _span_with_video(url, inicio, fin, destino)
+    with TWITCH_SLOTS:
+        for attempt in range(TWITCH_RETRIES + 1):
+            try:
+                return _span_with_video(url, inicio, fin, destino)
+            except SpanWithoutVideo:
+                raise
+            except RuntimeError as exc:
+                if attempt == TWITCH_RETRIES:
+                    raise
+                print(f"[competitivo] Twitch: reintento {attempt + 1} del tramo {inicio:.0f}-{fin:.0f} s"
+                      f" ({str(exc)[:80]})".encode("ascii", "replace").decode())
+                time.sleep(RETRY_WAIT_S)
+
+
+def _span_with_video(url: str, inicio: float, fin: float, destino: str) -> str:
     for attempt in (1, 2):
         path = _download_span(url, inicio, fin, destino)
         if path and ffmpeg_runner.probe_video_stream(path):
@@ -118,7 +148,7 @@ def _download_span(url: str, inicio: float, fin: float, destino: str) -> str | N
     for viejo in glob.glob(destino + ".*"):
         os.remove(viejo)
     opts = _opts(
-        format=FORMAT_TWITCH if "twitch.tv" in url.lower() else FORMATO,
+        format=FORMAT_TWITCH if is_twitch(url) else FORMATO,
         outtmpl=destino + ".%(ext)s",
         download_ranges=download_range_func(None, [(max(0.0, inicio), fin)]),
         force_keyframes_at_cuts=False,

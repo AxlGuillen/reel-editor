@@ -43,6 +43,7 @@ import numpy as np
 import config
 from core import ffmpeg_runner
 from modules.vertical_convert.processor import _rounded_mask_expr
+from modules.editing.effects import VIVID_CURVE
 
 W, H = 1080, 1920                     # salida
 SRC_W, SRC_H = 1920, 1080             # fuente
@@ -112,7 +113,8 @@ def ducking(D: float, vol: float = DUCK_VOL) -> str:
 
 COLOR = {
     "off": "",
-    "vivo": "eq=contrast=1.08:saturation=1.25:gamma=0.98,unsharp=5:5:0.6",
+    # The same curve as the edits' "vivid": more contrast without darkening the game.
+    "vivo": f"{VIVID_CURVE},eq=saturation=1.25,unsharp=5:5:0.6",
     "cine": "eq=contrast=1.12:saturation=1.1,curves=preset=medium_contrast",
 }
 

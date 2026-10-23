@@ -75,7 +75,7 @@ GET  /api/beatmap/download/<id> → preview.mp4 ·  GET /api/beatmap/json/<id> �
 
 **Letreros** (`titles.py`): `word` (la letra, gigante, con degradado: libass no tiene degradados y se dibuja la palabra en 12 franjas con `\clip`, sobre una copia con contorno y sombra), `kill` (NOMBRE + campeón), `multikill` (QUADRA KILL estampado), `title` y `sub`. Se centran por la altura de las MAYÚSCULAS, no por la caja de la línea (en Anton caían ~25 px más abajo).
 
-**Looks**: `neutral`, `vivid`, `golden` (el de referencia), `film`, `cold`, `night`, `fire`. LUTs propias en `assets/luts/*.cube` (`lut`).
+**Looks**: `neutral`, `vivid`, `golden` (el de referencia), `film`, `cold`, `night`, `fire`. LUTs propias en `assets/luts/*.cube` (`lut`). `vivid` es una curva con el pivote donde vive el juego (oscuro): el `eq contrast` pivotea en el gris medio y bajaba el gameplay de 57 a 52 de luma; con la curva queda igual (56.4 → 56.2) y con más contraste. El "vivo" de los resúmenes usa la misma curva. **Viñeta** suave (`PI/9`: esquinas al 76 %, borde de arriba al 81 %; la de antes, `PI/5`, dejaba la tabla de stats al 48 %); el modo edit de competitivo la trae prendida (`vignette=1`).
 
 **Opcionales** (`core/external.py`, binarios ncnn-vulkan, corren en cualquier GPU y en Mac):
 - **RIFE** (`rife-ncnn-vulkan`): interpola los planos con piezas más lentas que 0.6× (cámara lenta fluida en vez de cuadros repetidos).
@@ -116,7 +116,7 @@ Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cu
 | `cold_open` | la pelea de más puntaje en tiempo real, `cold_open_s` (5–8 s, 6.5) con su mejor momento al 70 % | 15 % | 100 % |
 | `build` | `build_fights` (0–2) peleas más en tiempo real (2.5 s antes de la 1ª kill → 1.5 s después de la última, máx. 7 s) | 20 % | 100 % |
 | `silence` | 0.3 s de negro y mudo | 0 | 0 |
-| `drop` | arranca EXACTO en el drop de la canción; el resto de las peleas al beat, con una receta por kill y whips entre peleas | 100 % | 15 % |
+| `drop` | arranca EXACTO en el drop de la canción (o en el beat de `music_start`, si se manda); el resto de las peleas al beat, con una receta por kill y whips entre peleas | 100 % | 15 % |
 | `outro` | la cola de la pelea de cierre (el nexo) en tiempo real; el juego vuelve a subir y la canción cierra en su compás (fundido) | 100 % | 15 → 100 % |
 
 - En `cold_open` y `build` hay un **push-in** lento (1.0 → 1.12×) apuntando a la acción de la kill más grande, y **whips** entre los planos. Los cambios de volumen tardan 0.05 s (sin clics).

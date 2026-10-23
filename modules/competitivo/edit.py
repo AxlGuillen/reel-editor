@@ -522,18 +522,21 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     drop_beats = sum(p.beats for p in plans)
     outro_beats = 4 if 4 * per >= 2.5 else 8
 
-    # Where the music starts: the drop act begins exactly on the song's drop.
+    # Where the music starts: the drop act begins exactly on the song's drop,
+    # or on the beat of music_start if it was given.
     warning, drop_aligned = None, False
     downs = {round(x, 3) for x in bm["downbeats"]}
-    drop_t = bm.get("drop")
+    drop_t = bm.get("drop") if op.music_start is None else op.music_start
     if drop_t is None:
         drop_t = next((s["start"] for s in bm.get("sections", []) if s["type"] == "chorus"),
                       beats[len(beats) // 3])
     d0 = analysis.nearest_beat(beats, drop_t)
     if beats[d0] - drop_out >= 0:
-        drop_aligned = True
+        drop_aligned = op.music_start is None
     else:
-        warning = "La canción tiene poco antes del drop: el drop del edit no cae en el de la canción."
+        warning = ("La canción tiene poco antes de music_start: el acto drop arranca más adelante."
+                   if op.music_start is not None else
+                   "La canción tiene poco antes del drop: el drop del edit no cae en el de la canción.")
         d0 = next((i for i, b in enumerate(beats) if b >= drop_out and round(b, 3) in downs),
                   next((i for i, b in enumerate(beats) if b >= drop_out), len(beats) - 1))
     if d0 + drop_beats + outro_beats >= len(beats):

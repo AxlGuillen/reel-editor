@@ -107,25 +107,76 @@ class SpanWithoutVideo(unittest.TestCase):
             fuente.bajar_tramo(TWITCH, 10, 11, self.dest)
         self.assertEqual(os.listdir(self.tmp), [])                          # nothing half-made left
 
-    def test_other_errors_are_not_retried(self):
+    def test_other_errors_are_not_retried_on_youtube(self):
         def broken(opts, url):
             self.calls += 1
             raise RuntimeError("HTTP Error 404: Not Found")
         with mock.patch.object(fuente.downloader, "_download_with_retry", side_effect=broken), \
                 self.assertRaises(RuntimeError) as ctx:
-            fuente.bajar_tramo(TWITCH, 10, 11, self.dest)
+            fuente.bajar_tramo("https://www.youtube.com/watch?v=x", 10, 11, self.dest)
         self.assertNotIsInstance(ctx.exception, fuente.SpanWithoutVideo)
         self.assertEqual(self.calls, 1)
 
+    def test_twitch_retries_twice(self):
+        def flaky(opts, url):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError("HTTP Error 502: Bad Gateway")
+            S.shots_video(self.dest + ".mp4", [1.0], w=320, h=180)
+        with mock.patch.object(fuente, "RETRY_WAIT_S", 0), \
+                mock.patch.object(fuente.downloader, "_download_with_retry", side_effect=flaky):
+            self.assertEqual(fuente.bajar_tramo(TWITCH, 10, 11, self.dest), self.dest + ".mp4")
+        self.assertEqual(self.calls, 3)
+        self.calls = 0
+
+        def broken(opts, url):
+            self.calls += 1
+            raise RuntimeError("HTTP Error 502: Bad Gateway")
+        with mock.patch.object(fuente, "RETRY_WAIT_S", 0), \
+                mock.patch.object(fuente.downloader, "_download_with_retry", side_effect=broken), \
+                self.assertRaises(RuntimeError):
+            fuente.bajar_tramo(TWITCH, 10, 11, self.dest)
+        self.assertEqual(self.calls, 1 + fuente.TWITCH_RETRIES)
+
+    def test_at_most_two_twitch_sections_at_once(self):
+        import threading
+        import time
+        lock, now, peak, errors = threading.Lock(), [0], [0], []
+
+        def slow(opts, url):
+            with lock:
+                now[0] += 1
+                peak[0] = max(peak[0], now[0])
+            time.sleep(0.2)
+            with lock:
+                now[0] -= 1
+            raise RuntimeError("HTTP Error 404: Not Found")
+
+        def one(k):
+            try:
+                fuente.bajar_tramo(TWITCH, 10, 11, f"{self.dest}_{k}")
+            except RuntimeError as exc:
+                errors.append(exc)
+        with mock.patch.object(fuente, "TWITCH_RETRIES", 0), \
+                mock.patch.object(fuente.downloader, "_download_with_retry", side_effect=slow):
+            threads = [threading.Thread(target=one, args=(k,)) for k in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual((peak[0], len(errors)), (2, 5))
+
     def test_twitch_takes_the_muxed_format(self):
         seen = []
-        with mock.patch.object(fuente.downloader, "_download_with_retry",
-                               side_effect=lambda opts, url: seen.append(opts["format"])), \
+        with mock.patch.object(fuente, "RETRY_WAIT_S", 0), \
+                mock.patch.object(fuente.downloader, "_download_with_retry",
+                                  side_effect=lambda opts, url: seen.append(opts["format"])), \
                 mock.patch.object(fuente.glob, "glob", return_value=[]):
             for url in (TWITCH, "https://www.youtube.com/watch?v=x"):
                 with self.assertRaises(RuntimeError):
                     fuente.bajar_tramo(url, 10, 11, self.dest)
-        self.assertEqual(seen, [fuente.FORMAT_TWITCH, fuente.FORMATO])
+        self.assertEqual(seen[0], fuente.FORMAT_TWITCH)                   # (Twitch retries: same format)
+        self.assertEqual(seen[-1], fuente.FORMATO)
 
 
 class AnchorConfidence(unittest.TestCase):

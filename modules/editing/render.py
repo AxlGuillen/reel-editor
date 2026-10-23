@@ -144,7 +144,7 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
                            effects.rgb(edl.events, intensity),
                            effects.blackout(edl.events)) if f]
     if edl.vignette:
-        accents.append("vignette=angle=PI/5")
+        accents.append(effects.VIGNETTE)
     from modules.subtitles.processor import ass_filter
     if subtitles_ass:
         accents.append(ass_filter(subtitles_ass))      # a whole chain (difference blend)

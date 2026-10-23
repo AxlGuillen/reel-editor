@@ -329,3 +329,27 @@ class Formats(unittest.TestCase):
         self.assertIn("split[vb_a][vb_b]", vf)
         self.assertIn("overlay=(W-w)/2:(H-h)/2", vf)
         self.assertEqual(R.vf_cover(1080, 1920).count("crop=1080:1920"), 1)
+
+
+class LookAndVignette(unittest.TestCase):
+    """vivid adds contrast without darkening a dark game (eq's contrast pivots
+    on mid gray: the gameplay went from 57 to 52 of luma); the vignette is soft."""
+
+    def _gray(self, vf, src="color=c=black:s=480x270:d=1"):
+        # a ramp from 5 to 115 of luma: the range where the gameplay lives (mean ~56)
+        ramp = "format=yuv444p,geq=lum='5+X*110/W':cb=128:cr=128," if src.startswith("color=c=black") else ""
+        raw = subprocess.run([R.config.FFMPEG_PATH, "-v", "error", "-f", "lavfi", "-i", src, "-frames:v", "1",
+                              "-vf", f"{ramp}{vf},format=gray", "-f", "rawvideo", "-"],
+                             capture_output=True, check=True).stdout
+        return np.frombuffer(raw, np.uint8).astype(float)
+
+    def test_vivid_keeps_the_mean_of_a_dark_frame(self):
+        base, vivid = self._gray("null"), self._gray(effects.LOOKS["vivid"][1])
+        self.assertLess(base.mean(), 70)                                  # a dark frame, like the game
+        self.assertAlmostEqual(vivid.mean(), base.mean(), delta=2.5)
+        self.assertGreater(vivid.std(), base.std())                       # more contrast
+
+    def test_soft_vignette(self):
+        f = self._gray(effects.VIGNETTE, "color=c=0x808080:s=1080x1920:d=1").reshape(1920, 1080)
+        self.assertGreater(f[20, 540] / f[960, 540], 0.75)                # the top edge (the stats table)
+        self.assertGreater(f[20, 20] / f[960, 540], 0.7)                  # the corners

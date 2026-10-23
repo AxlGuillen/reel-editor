@@ -30,11 +30,19 @@ WHIP_ZOOM = 0.35              # the whip's zoom punch at intensity 1 (35 %)
 WHIP_ATTACK = 0.08            # it starts this long BEFORE the cut (in the outgoing shot)
 WHIP_BLUR = 28.0              # horizontal motion blur (gblur sigma) at intensity 1
 
+# Measured on IG-GEN gameplay: mean luma 56.4 → 56.2, std 32.1 → 35.2.
+VIVID_CURVE = "curves=all='0/0 0.1/0.085 0.24/0.24 0.45/0.49 0.75/0.80 1/1'"
+# Soft: corners at 76 % and the top edge at 81 % (PI/5 left them at 37 and
+# 48 %, darkening the stats table of a vertical frame).
+VIGNETTE = "vignette=angle=PI/9"
+
 # Looks: FFmpeg chains. "golden" is the one from the reference edit (Levi):
 # shadows toward teal, highlights toward amber and high saturation.
 LOOKS = {
     "neutral": ("Sin cambios", ""),
-    "vivid": ("Más contraste y saturación", "eq=contrast=1.08:saturation=1.25:gamma=0.98"),
+    # A contrast curve pivoting where the game lives (dark, luma ~56): eq's
+    # contrast pivots on the mid gray and took the gameplay from 57 to 52.
+    "vivid": ("Más contraste y saturación", f"{VIVID_CURVE},eq=saturation=1.25"),
     "golden": ("Sombras teal, luces ámbar, muy saturado (anime edit)",
                "colorbalance=rs=-0.06:gs=0.01:bs=0.06:rm=0.04:gm=0.02:bm=-0.04:rh=0.08:gh=0.03:bh=-0.08,"
                "eq=contrast=1.08:saturation=1.38:gamma=0.97"),

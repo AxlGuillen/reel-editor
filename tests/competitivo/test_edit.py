@@ -497,6 +497,16 @@ class Acts(unittest.TestCase):
         self.assertTrue(others)
         self.assertTrue(all((e.x, e.y) == (0.5, 0.5) for e in others))
 
+    def test_music_start_is_where_the_drop_act_starts(self):
+        res = self._plan(music_start=40.2)
+        acts = {a["act"]: a for a in res.acts}
+        self.assertAlmostEqual(res.music_start + acts["drop"]["start"], 40.0, places=3)   # its beat
+        self.assertFalse(res.drop_aligned)
+        self.assertIsNone(res.warning)
+        early = self._plan(music_start=3.0)                              # before the cold open fits
+        self.assertGreaterEqual(early.music_start, 0)
+        self.assertIn("music_start", early.warning)
+
     def test_plan_dict_and_beat_still_works(self):
         res = self._plan()
         d = res.plan_dict()
