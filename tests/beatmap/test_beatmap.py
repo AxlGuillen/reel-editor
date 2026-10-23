@@ -58,6 +58,38 @@ class Analysis(unittest.TestCase):
         with self.assertRaises(ValueError):
             A.analyze(S.signal(dur=5), sr=S.SR, engine="x")
 
+    def test_optional_engine_that_fails_falls_back(self):
+        y = S.signal(bpm=120, dur=12)
+        # beat-this installed but broken (a torch without kernels for the GPU):
+        # "auto" goes on with librosa, "beat_this" says why.
+        with mock.patch.object(A, "beat_this_available", return_value=True),                 mock.patch.object(A, "_beat_this", side_effect=RuntimeError("no kernel image")):
+            self.assertEqual(A.analyze(y, sr=S.SR, engine="auto", path="x.wav")["engine"], "librosa")
+            with self.assertRaisesRegex(RuntimeError, "no kernel image"):
+                A.analyze(y, sr=S.SR, engine="beat_this", path="x.wav")
+        # a torch whose DLLs don't load raises OSError on import, not ImportError
+        import builtins
+        real_import = builtins.__import__
+
+        def broken(name, *args, **kwargs):
+            if name.startswith(("beat_this", "audio_separator")):
+                raise OSError("[WinError 126] c10.dll")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(builtins, "__import__", side_effect=broken):
+            self.assertFalse(A.beat_this_available())
+            from modules.beatmap import lyrics
+            self.assertFalse(lyrics.separation_available())
+
+    def test_lyrics_errors_are_not_an_empty_song(self):
+        from modules.beatmap import lyrics
+        with mock.patch.object(lyrics.subtitles, "transcribe",
+                               side_effect=RuntimeError("No se detectó voz en el video.")):
+            self.assertEqual(lyrics.words("x.wav"), [])          # instrumental: fine
+        with mock.patch.object(lyrics.subtitles, "transcribe",
+                               side_effect=RuntimeError("cublas64_12.dll not found")):
+            with self.assertRaises(RuntimeError):                 # a real failure is not cached as []
+                lyrics.words("x.wav")
+
 
 class Window(unittest.TestCase):
     BM = {

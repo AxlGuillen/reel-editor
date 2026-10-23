@@ -17,6 +17,7 @@ from __future__ import annotations
 import glob
 import os
 
+import config
 from modules.subtitles import processor as subtitles
 from modules.subtitles.schema import SubtitlesParams
 
@@ -25,7 +26,7 @@ def separation_available() -> bool:
     try:
         import audio_separator.separator  # noqa: F401
         return True
-    except ImportError:
+    except Exception:  # noqa: BLE001 - also a torch/onnxruntime DLL that doesn't load
         return False
 
 
@@ -37,7 +38,10 @@ def isolate_vocals(path: str, folder: str) -> str | None:
     from audio_separator.separator import Separator
 
     os.makedirs(folder, exist_ok=True)
-    sep = Separator(output_dir=folder, output_single_stem="Vocals")
+    # Its default model folder is /tmp/audio-separator-models, which on Windows
+    # ends up as C:\tmp, outside the project: keep it in cache/.
+    sep = Separator(output_dir=folder, output_single_stem="Vocals",
+                    model_file_dir=os.path.join(config.BASE_DIR, "cache", "separator-models"))
     sep.load_model()
     outputs = sep.separate(path) or []
     for s in outputs:
@@ -54,7 +58,11 @@ def words(path: str, language: str = "auto", model: str = "large-v3-turbo",
     params = SubtitlesParams(language=language, model=model)
     try:
         segments = subtitles.transcribe(path, params, job_id=job_id)
-    except RuntimeError:
-        return []
+    except RuntimeError as exc:
+        # Only "no vocals" means an instrumental song. Any other failure goes
+        # up: an [] here is cached for good as "this song has no lyrics".
+        if "No se detectó voz" in str(exc):
+            return []
+        raise
     return [{"text": w["word"], "start": w["start"], "end": w["end"]}
             for s in segments for w in s["words"]]

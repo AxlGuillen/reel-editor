@@ -50,10 +50,12 @@ def load_audio(path: str, sr: int = SR) -> np.ndarray:
 
 
 def beat_this_available() -> bool:
+    # Not just ImportError: on Windows a torch whose DLLs don't load raises
+    # OSError (WinError 126/1114), and that killed the whole analysis.
     try:
         import beat_this.inference  # noqa: F401
         return True
-    except ImportError:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -63,11 +65,17 @@ def _beat_this(path: str) -> tuple[np.ndarray, np.ndarray]:
     from beat_this.inference import File2Beats
     try:
         import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    except ImportError:
-        device = "cpu"
-    beats, downbeats = File2Beats(checkpoint_path="final0", device=device, dbn=False)(path)
-    return np.asarray(beats, float), np.asarray(downbeats, float)
+        devices = ["cuda", "cpu"] if torch.cuda.is_available() else ["cpu"]
+    except Exception:  # noqa: BLE001
+        devices = ["cpu"]
+    for device in devices:
+        try:
+            beats, downbeats = File2Beats(checkpoint_path="final0", device=device, dbn=False)(path)
+            return np.asarray(beats, float), np.asarray(downbeats, float)
+        except Exception:  # noqa: BLE001 - e.g. a torch build without kernels for this GPU
+            if device == devices[-1]:
+                raise
+    raise RuntimeError("Beat This! no pudo analizar la canción.")
 
 
 def _mean_per_span(values: np.ndarray, times: np.ndarray, cuts: np.ndarray, end: float) -> np.ndarray:
@@ -188,12 +196,18 @@ def analyze(y: np.ndarray, sr: int = SR, engine: str = "auto", path: str | None 
     kick = librosa.onset.onset_strength(S=librosa.amplitude_to_db(S[freqs < 150], ref=np.max),
                                         sr=sr, hop_length=HOP)
     used = "librosa"
+    beats = None
     if engine in ("auto", "beat_this") and path and beat_this_available():
-        beats, downbeats = _beat_this(path)
-        used = "beat_this"
+        try:
+            beats, downbeats = _beat_this(path)
+            used = "beat_this"
+        except Exception as exc:  # noqa: BLE001 - "auto" goes on with librosa
+            if engine == "beat_this":
+                raise RuntimeError(f"Beat This! falló: {exc}") from exc
+            beats = None
     elif engine == "beat_this":
         raise RuntimeError("Beat This! no está instalado (pip install beat-this).")
-    else:
+    if beats is None:
         _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT, trim=False)
         beats = librosa.frames_to_time(frames, sr=sr, hop_length=HOP_BEAT)
         downbeats = beats[_downbeat_phase(beats, kick, sr)::4]

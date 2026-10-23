@@ -75,8 +75,12 @@ def get(path: str, engine: str = "auto", lyrics: LyricsParams | None = None,
             bm["lyrics_from"] = "vocals" if vocals else "mix"
         finally:
             shutil.rmtree(folder, ignore_errors=True)
-    with open(cache, "w", encoding="utf-8") as fh:
+    # Written aside and swapped in: two jobs with the same song could read a
+    # half-written JSON.
+    partial = f"{cache}.{os.getpid()}.{id(bm)}.tmp"
+    with open(partial, "w", encoding="utf-8") as fh:
         json.dump(bm, fh, ensure_ascii=False)
+    os.replace(partial, cache)
     return bm
 
 
