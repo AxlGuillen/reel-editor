@@ -27,6 +27,7 @@ from modules.subtitles import processor as subtitles
 
 W, H = config.OUTPUT_WIDTH, config.OUTPUT_HEIGHT
 _IMAGE = (".png", ".jpg", ".jpeg", ".webp")
+_ALPHA_DECODERS = {"vp9": "libvpx-vp9", "vp8": "libvpx"}
 
 
 def _x(box, w_expr: str = "w") -> str:
@@ -40,6 +41,8 @@ def build_command(video: str, layers: list[Layer], out: str, ass: str | None = N
         dur = c.end - c.start
         if c.file.lower().endswith(_IMAGE):
             cmd += ["-loop", "1", "-framerate", "30", "-t", f"{dur + 0.1:.3f}"]
+        if c.decoder:
+            cmd += ["-c:v", c.decoder]
         cmd += ["-itsoffset", f"{c.start:.3f}", "-i", c.file]
     parts = []
     current = "0:v"
@@ -79,6 +82,7 @@ def prepare(params: MontageParams, video_dur: float, segments: list[dict] | None
     for c in layers:
         if not c.file.lower().endswith(_IMAGE):
             c.clip_dur = ffmpeg_runner.probe_duration(c.file)
+            c.decoder = _ALPHA_DECODERS.get((ffmpeg_runner.probe_video_stream(c.file) or {}).get("codec"))
     return layers
 
 
@@ -108,6 +112,6 @@ def process(job_id: str, video_path: str, params: MontageParams, segments: list[
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:
-        if ass and os.path.exists(ass):
-            os.remove(ass)
-        file_utils.cleanup_paths(*(cleanup or []))
+        # cleanup_paths swallows OSError: on Windows a just-killed FFmpeg can
+        # still hold the .ass, and os.remove() raised inside the thread.
+        file_utils.cleanup_paths(*([ass] if ass else []), *(cleanup or []))

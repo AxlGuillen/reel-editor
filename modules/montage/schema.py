@@ -31,7 +31,10 @@ def _num(form, name, default, lo, hi, cast=float):
 def allowed_folder(path: str) -> str:
     """Real path of a folder inside LAYERS_FOLDER (ValueError if it escapes)."""
     base = os.path.realpath(config.LAYERS_FOLDER)
-    real = os.path.realpath(os.path.expanduser(path))
+    # Explorer's "Copy as path" wraps it in quotes; a relative path is relative
+    # to LAYERS_FOLDER, not to the server's working directory (the repo).
+    path = str(path).strip().strip('"').strip("'").strip()
+    real = os.path.realpath(os.path.join(base, os.path.expanduser(path)))
     try:
         inside = os.path.commonpath([base, real]) == base
     except ValueError:

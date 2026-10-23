@@ -120,6 +120,10 @@ class Layer:
     fade_in: float = 0.25
     fade_out: float = 0.2
     label: str = ""
+    # Forced decoder: FFmpeg's built-in VP9/VP8 decoders drop the alpha of a
+    # WebM (yuv420p, alpha 255: the layer covers the video as a rectangle);
+    # libvpx reads it (yuva420p). Set by processor.prepare().
+    decoder: str | None = None
 
 
 def resolve(specs: list[dict], segments: list[dict] | None, video_dur: float,

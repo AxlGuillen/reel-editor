@@ -87,6 +87,14 @@ class Validation(unittest.TestCase):
             p.path("p-kda.mov")
         with self.assertRaises(ValueError):            # outside the folder
             p.path("../../etc/passwd")
+        # pasted from Explorer ("Copy as path", with quotes) or relative to LAYERS_FOLDER
+        for folder in (f'"{os.path.join(self.tmp, "laminas")}"', "laminas", " 'laminas' "):
+            p = MontageParams.from_form({"layers": json.dumps([{"id": "p-kda", "start": 1}]),
+                                         "layers_folder": folder})
+            self.assertEqual(p.folder, os.path.realpath(os.path.join(self.tmp, "laminas")), folder)
+        with self.assertRaises(ValueError):            # relative, but it escapes
+            MontageParams.from_form({"layers": json.dumps([{"file": "a.mov", "start": 1}]),
+                                     "layers_folder": "../.."})
 
     def test_errors(self):
         cases = [{}, {"layers": "x"}, {"layers": "[]"},
@@ -153,6 +161,20 @@ class Render(unittest.TestCase):
         self.assertGreater(f[1540, 540][2], 150)
         self.assertLess(f[1540, 540][0], 80)
         self.assertGreater(np.abs(f[1540, 40] - base).max(), 25)    # the copy covers the sides
+
+    def test_webm_layer_keeps_its_transparency(self):
+        # VP9 with alpha: FFmpeg's own decoder drops the alpha, libvpx keeps it.
+        webm = os.path.join(self.tmp, "flyer.webm")
+        subprocess.run([config.FFMPEG_PATH, "-v", "error", "-y", "-i", self.layer, "-c:v", "libvpx-vp9",
+                        "-pix_fmt", "yuva420p", "-b:v", "1M", "-auto-alt-ref", "0", webm], check=True)
+        params = mock.Mock(resolved_layers=lambda segs, dur: [L.Layer(webm, 1.0, 3.0, L.Box(width=400, bottom=100))])
+        layers = processor.prepare(params, 6.0, None)
+        self.assertEqual(layers[0].decoder, "libvpx-vp9")
+        out = os.path.join(self.tmp, "out_webm.mp4")
+        ffmpeg_runner.capture(processor.build_command(self.base, layers, out), cwd=config.BASE_DIR)
+        base = self._frame(out, 0.5)[1670, 540]
+        self.assertLess(np.abs(self._frame(out, 2.5)[1530, 360] - base).max(), 25)   # transparent area
+        self.assertLess(self._frame(out, 2.5)[1670, 540][2], 90)                      # the yellow square
 
     def test_api_job_with_words(self):
         from app import create_app
