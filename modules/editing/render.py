@@ -106,8 +106,10 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
 
 
 def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
-                intensity: float = 1.0, watermark_crop: tuple | None = None) -> list[str]:
-    """Pass 2: joins the shots and applies color, accents, titles and music."""
+                intensity: float = 1.0, watermark_crop: tuple | None = None,
+                subtitles_ass: str | None = None) -> list[str]:
+    """Pass 2: joins the shots and applies color, accents, titles and music.
+    `subtitles_ass`: the "invert" subtitles (edl.subtitle_words), under the titles."""
     dur = timing.frame_count(edl) / edl.fps
     cmd = [config.FFMPEG_PATH, "-y", "-f", "concat", "-safe", "0", "-i", concat_list]
     idx = 1
@@ -131,11 +133,15 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
         current = "glowed"
     accents = [f for f in (effects.flash(edl.events, intensity),
                            effects.camera(edl.events, W, H, edl.fps, intensity),
-                           effects.rgb(edl.events, intensity)) if f]
+                           effects.whip_blur(edl.events, intensity),
+                           effects.rgb(edl.events, intensity),
+                           effects.blackout(edl.events)) if f]
     if edl.vignette:
         accents.append("vignette=angle=PI/5")
+    from modules.subtitles.processor import ass_filter
+    if subtitles_ass:
+        accents.append(ass_filter(subtitles_ass))      # a whole chain (difference blend)
     if ass:
-        from modules.subtitles.processor import ass_filter
         accents.append(ass_filter(ass))
     parts.append(f"[{current}]" + (",".join(accents) + "," if accents else "") + "setsar=1[pre]")
     if watermark_idx is not None:
@@ -151,14 +157,15 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
 
     fmt = "aresample=48000,aformat=channel_layouts=stereo"
     sources = []
-    if edl.original_volume > 0:
-        parts.append(f"[0:a]{fmt},volume={edl.original_volume:.3f}[orig]")
+    if edl.uses_original:
+        vol = effects.gain(edl.original_gain) if edl.original_gain else f"volume={edl.original_volume:.3f}"
+        parts.append(f"[0:a]{fmt},{vol}[orig]")
         sources.append("[orig]")
     if music_idx is not None:
         fade = min(edl.fade_out, dur / 3)
+        vol = effects.gain(edl.music_gain) if edl.music_gain else f"volume={edl.music_volume:.3f}"
         parts.append(f"[{music_idx}:a]{fmt},atrim=0:{dur:.4f},asetpts=PTS-STARTPTS,"
-                     f"afade=t=out:st={max(0.0, dur - fade):.4f}:d={fade:.4f},"
-                     f"volume={edl.music_volume:.3f}[mus]")
+                     f"afade=t=out:st={max(0.0, dur - fade):.4f}:d={fade:.4f},{vol}[mus]")
         sources.append("[mus]")
     if not sources:
         parts.append(f"[0:a]{fmt},volume=0[orig]")
@@ -171,6 +178,21 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart", out]
     return cmd
+
+
+def _subtitles(edl: Edl) -> str | None:
+    """The .ass of edl.subtitle_words with the subtitles "invert" layout (the
+    same generator as Subtítulos / Reel Express), or None."""
+    if not edl.subtitle_words:
+        return None
+    from modules.subtitles import processor as subtitles
+    from modules.subtitles.schema import SubtitlesParams
+    params = SubtitlesParams(layout="invert", **edl.subtitle_style)
+    words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"])}
+             for w in edl.subtitle_words if str(w.get("word") or "").strip()]
+    if not words:
+        return None
+    return subtitles._write_ass(subtitles._build_invert_ass([words], params, until=edl.subtitle_until))
 
 
 def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> Segment:
@@ -215,7 +237,7 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
     used = {"rife": 0, "esrgan": 0}
     intermediates = [None] * len(edl.segments)
     done = 0
-    ass = None
+    ass = subs = None
     try:
         def one(i: int) -> str:
             seg = edl.segments[i]
@@ -224,7 +246,7 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
             if ready is not seg:
                 used["rife" if ready.source.endswith("interpolated.mp4") else "esrgan"] += 1
             source_fps = ffmpeg_runner.probe_fps(ready.source) or 30.0
-            with_audio = edl.original_volume > 0 and ffmpeg_runner.has_audio_stream(ready.source)
+            with_audio = edl.uses_original and ffmpeg_runner.has_audio_stream(ready.source)
             path = os.path.join(work, f"shot_{i:03d}.mkv")
             ffmpeg_runner.capture(build_pass1(ready, path, edl.width, edl.height, edl.fps, with_audio, source_fps),
                                   timeout=1800, cwd=config.BASE_DIR)
@@ -253,8 +275,9 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
                 path = path.replace("\\", "/").replace("'", "'\\''")
                 fh.write(f"file '{path}'\n")
         ass = titles.write(edl.texts, edl.width, edl.height, text_y, accent)
+        subs = _subtitles(edl)
         report("Color, acentos y música…", mid)
-        cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop)
+        cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop, subs)
         if job_id:
             ffmpeg_runner.run(cmd, job_id, total_duration=edl.dur, cwd=config.BASE_DIR,
                               progress_range=(mid, hi))
@@ -264,8 +287,8 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
         # On Windows the .ass can still be held (Defender, the indexer): a
         # PermissionError here hid the real error and skipped the rmtree, which
         # left GBs of intermediates behind.
-        if ass:
-            file_utils.cleanup_paths(ass)
+        if ass or subs:
+            file_utils.cleanup_paths(*(p for p in (ass, subs) if p))
         shutil.rmtree(work, ignore_errors=True)
     return {"dur": round(timing.frame_count(edl) / edl.fps, 3), "shots": len(edl.segments),
             "rife": used["rife"], "esrgan": used["esrgan"]}

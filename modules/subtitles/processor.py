@@ -630,7 +630,10 @@ def _invert_groups(segments: list[list[dict]], mode: str) -> list[tuple[int, lis
     return groups
 
 
-def _build_invert_ass(segments: list[list[dict]], params: SubtitlesParams) -> str:
+def _build_invert_ass(segments: list[list[dict]], params: SubtitlesParams,
+                      until: float | None = None) -> str:
+    """`until`: nothing stays on screen after this (the edit's acts: Ibai's
+    words never spill into the drop)."""
     font = fonts.font_info(params.font)
     em = params.inv_size
     fs = fonts.ass_font_size(font, em)
@@ -667,6 +670,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         end = nxt if nxt is not None and nxt - last_end <= INV_BRIDGE else last_end + INV_HOLD
         if nxt is not None:
             end = min(end, nxt)
+        if until is not None:
+            end = min(end, until)
         # Stacked, one word per line, the block centered on inv_y; too long a
         # word shrinks the whole group (the vertical one has the frame's height).
         widths = [fonts.text_width(font, w, em) for w in shown]

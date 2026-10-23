@@ -25,6 +25,10 @@ ZOOM_MAX = 0.12               # zoom punch at intensity 1 (12 %)
 SHAKE_MAX = 0.025             # shake at intensity 1: 2.5 % of the width
 SHAKE_HZ = 13.0
 RGB_PX = 10
+HOLD_EASE = 0.05              # a stair-zoom step reaches its level in this long
+WHIP_ZOOM = 0.35              # the whip's zoom punch at intensity 1 (35 %)
+WHIP_ATTACK = 0.08            # it starts this long BEFORE the cut (in the outgoing shot)
+WHIP_BLUR = 28.0              # horizontal motion blur (gblur sigma) at intensity 1
 
 # Looks: FFmpeg chains. "golden" is the one from the reference edit (Levi):
 # shadows toward teal, highlights toward amber and high saturation.
@@ -102,24 +106,93 @@ def flash(events: list[Event], intensity: float = 1.0) -> str:
     return f"eq=brightness='min({_f(FLASH_MAX)},{expr})':eval=frame"
 
 
+def _push(t0: float, dur: float, var: str = "in_time") -> str:
+    """0 → 1 linearly over [t0, t0 + dur], 0 outside."""
+    return f"if(between({var},{_f(t0)},{_f(t0 + dur)}),({var}-{_f(t0)})/{_f(dur)},0)"
+
+
+def _hold(t0: float, dur: float, var: str = "in_time") -> str:
+    """1 during [t0, t0 + dur] (reached in HOLD_EASE), 0 outside."""
+    return f"if(between({var},{_f(t0)},{_f(t0 + dur)}),min(1,({var}-{_f(t0)})/{_f(HOLD_EASE)}),0)"
+
+
 def camera(events: list[Event], width: int, height: int, fps: int, intensity: float = 1.0) -> str:
-    """zoompan with the zoom punches and the shakes (empty if there are none)."""
-    zooms = [e for e in events if e.kind == "zoom"]
-    shakes = [e for e in events if e.kind == "shake"]
-    if not zooms and not shakes:
-        return ""
+    """zoompan with every camera move (empty if there are none): zoom punches,
+    shakes, slow push-ins, held zoom steps and the whip's punch.
+
+    Zoom, push and hold can aim somewhere other than the center (Event.x/y):
+    the frame center moves toward that point in proportion to the move's own
+    envelope, so it goes back to the center when the move ends."""
     v = "in_time"
-    z = [f"{_f(ZOOM_MAX * e.intensity * intensity)}*{_pulse(e.t, e.dur, ZOOM_ATTACK, v)}" for e in zooms]
-    # Margin to shake: twice the amplitude, while the shake lasts.
-    z += [f"{_f(2 * SHAKE_MAX * e.intensity * intensity)}*{_pulse(e.t, e.dur, 0, v)}" for e in shakes]
-    sx = [f"{_f(SHAKE_MAX * e.intensity * intensity)}*iw*{_pulse(e.t, e.dur, 0, v)}"
-          f"*sin({_f(2 * 3.14159 * SHAKE_HZ)}*{v}+{_f(i * 1.7)})" for i, e in enumerate(shakes)]
-    sy = [f"{_f(SHAKE_MAX * e.intensity * intensity)}*ih*{_pulse(e.t, e.dur, 0, v)}"
-          f"*cos({_f(2 * 3.14159 * SHAKE_HZ * 1.3)}*{v}+{_f(i * 2.3)})" for i, e in enumerate(shakes)]
+    z, sx, sy, focus_x, focus_y = [], [], [], [], []
+    for i, e in enumerate(events):
+        amp = e.intensity * intensity
+        if e.kind == "zoom":
+            env = _pulse(e.t, e.dur, ZOOM_ATTACK, v)
+            z.append(f"{_f(ZOOM_MAX * amp)}*{env}")
+        elif e.kind == "shake":
+            env = _pulse(e.t, e.dur, 0, v)
+            # Margin to shake: twice the amplitude, while the shake lasts.
+            z.append(f"{_f(2 * SHAKE_MAX * amp)}*{env}")
+            sx.append(f"{_f(SHAKE_MAX * amp)}*iw*{env}*sin({_f(2 * 3.14159 * SHAKE_HZ)}*{v}+{_f(i * 1.7)})")
+            sy.append(f"{_f(SHAKE_MAX * amp)}*ih*{env}*cos({_f(2 * 3.14159 * SHAKE_HZ * 1.3)}*{v}+{_f(i * 2.3)})")
+            continue
+        elif e.kind == "push":
+            env = _push(e.t, e.dur, v)
+            z.append(f"{_f(e.level)}*{env}")
+        elif e.kind == "hold":
+            env = _hold(e.t, e.dur, v)
+            z.append(f"{_f(e.level)}*{env}")
+        elif e.kind == "whip":
+            z.append(f"{_f(WHIP_ZOOM * amp)}*{_pulse(e.t, e.dur, WHIP_ATTACK, v)}")
+            continue
+        else:
+            continue
+        if (e.x, e.y) != (0.5, 0.5):
+            focus_x.append(f"{_f(e.x - 0.5)}*{env}")
+            focus_y.append(f"{_f(e.y - 0.5)}*{env}")
+    if not z:
+        return ""
+    fx = f"(0.5+{_sum(focus_x)})" if focus_x else "0.5"
+    fy = f"(0.5+{_sum(focus_y)})" if focus_y else "0.5"
     zexpr = f"1+{_sum(z)}"
-    x = f"clip(iw/2-iw/zoom/2+{_sum(sx)},0,iw-iw/zoom)"
-    y = f"clip(ih/2-ih/zoom/2+{_sum(sy)},0,ih-ih/zoom)"
+    x = f"clip(iw*{fx}-iw/zoom/2+{_sum(sx)},0,iw-iw/zoom)"
+    y = f"clip(ih*{fy}-ih/zoom/2+{_sum(sy)},0,ih-ih/zoom)"
     return f"zoompan=z='{zexpr}':x='{x}':y='{y}':d=1:s={width}x{height}:fps={fps}"
+
+
+def whip_blur(events: list[Event], intensity: float = 1.0) -> str:
+    """Horizontal motion blur around each whip (empty if there are none)."""
+    ev = [e for e in events if e.kind == "whip"]
+    if not ev:
+        return ""
+    sigma = WHIP_BLUR * intensity * max(e.intensity for e in ev)
+    enable = _sum([f"between(t,{_f(e.t - WHIP_ATTACK)},{_f(e.t + e.dur * 0.6)})" for e in ev])
+    return f"gblur=sigma={_f(sigma)}:sigmaV=0.01:enable='{enable}'"
+
+
+def blackout(events: list[Event]) -> str:
+    """The whole frame black during the "black" events (empty if there are none)."""
+    ev = [e for e in events if e.kind == "black"]
+    if not ev:
+        return ""
+    enable = _sum([f"between(t,{_f(e.t)},{_f(e.t + e.dur)})" for e in ev])
+    return f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='{enable}'"
+
+
+def gain(keys: list) -> str:
+    """volume filter for a [(t, gain)] automation: linear between keyframes,
+    held before the first and after the last (eval=frame: per audio frame)."""
+    keys = sorted(keys)
+    if len(keys) == 1:
+        return f"volume={_f(keys[0][1])}"
+    (t0, g0), (tn, gn) = keys[0], keys[-1]
+    terms = [f"if(lt(t,{_f(t0)}),{_f(g0)},0)", f"if(gte(t,{_f(tn)}),{_f(gn)},0)"]
+    for (a, ga), (b, gb) in zip(keys, keys[1:]):
+        if b - a < 1e-6:
+            continue
+        terms.append(f"if(gte(t,{_f(a)})*lt(t,{_f(b)}),{_f(ga)}+{_f(gb - ga)}*(t-{_f(a)})/{_f(b - a)},0)")
+    return f"volume='{_sum(terms)}':eval=frame"
 
 
 def rgb(events: list[Event], intensity: float = 1.0) -> str:

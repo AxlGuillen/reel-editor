@@ -13,7 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen frame
-EVENT_KINDS = ("flash", "zoom", "shake", "rgb")
+# flash, zoom punch, shake, split RGB; and the camera moves of the "acts" edit:
+# push (slow push-in to 1+level over `dur`), hold (zoom held at 1+level: one
+# step of a stair zoom), whip (a fast zoom punch with horizontal motion blur:
+# the transition between fights) and black (the frame goes black: the cut of
+# silence before the drop).
+EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black")
 TEXT_STYLES = ("word", "kill", "multikill", "title", "sub")
 
 
@@ -52,11 +57,16 @@ class Segment:
 
 @dataclass
 class Event:
-    """An accent in the output: flash, zoom punch, shake or split RGB."""
+    """An accent in the output (see EVENT_KINDS)."""
     t: float
     kind: str
     intensity: float = 1.0        # 0–1.5 (multiplied by the global intensity)
     dur: float = 0.18
+    level: float = 0.0            # push / hold: extra zoom (0.12 → 1.12×)
+    # Where the zoom aims (zoom, push, hold), as a fraction of the frame; the
+    # center by default. The camera goes back to the center when it ends.
+    x: float = 0.5
+    y: float = 0.5
 
 
 @dataclass
@@ -81,6 +91,17 @@ class Edl:
     music_start: float = 0.0      # s of the song where the output starts
     music_volume: float = 1.0
     original_volume: float = 0.0  # 0 = music only
+    # Volume automation in OUTPUT time: [(t, gain)] keyframes, linear between
+    # them and held before the first / after the last. Empty = the fixed
+    # volumes above. With them, music_volume / original_volume are ignored.
+    music_gain: list = field(default_factory=list)
+    original_gain: list = field(default_factory=list)
+    # Burned with the subtitles "invert" layout (white, difference blend):
+    # [{word, start, end}] in output time and the SubtitlesParams fields
+    # (inv_size, inv_y, inv_direction, inv_words, font).
+    subtitle_words: list = field(default_factory=list)
+    subtitle_style: dict = field(default_factory=dict)
+    subtitle_until: float | None = None   # nothing of them on screen after this
     look: str = "neutral"
     lut: str = ""                 # file in assets/luts ("" = no LUT)
     glow: float = 0.0             # 0–1
@@ -92,6 +113,13 @@ class Edl:
     @property
     def dur(self) -> float:
         return sum(s.dur for s in self.segments)
+
+    @property
+    def uses_original(self) -> bool:
+        """Whether the sources' own audio is heard at some point."""
+        if self.original_gain:
+            return any(g > 0 for _, g in self.original_gain)
+        return self.original_volume > 0
 
     def validate(self) -> None:
         """Readable ValueError if the EDL cannot be rendered."""
@@ -108,6 +136,11 @@ class Edl:
         for e in self.events:
             if e.kind not in EVENT_KINDS:
                 raise ValueError(f"Evento desconocido: {e.kind!r}.")
+        for name, keys in (("música", self.music_gain), ("audio original", self.original_gain)):
+            if any(b[0] < a[0] for a, b in zip(keys, keys[1:])):
+                raise ValueError(f"La automatización de volumen de la {name} no está en orden.")
+            if any(g < 0 for _, g in keys):
+                raise ValueError(f"La automatización de volumen de la {name} tiene un volumen negativo.")
         for t in self.texts:
             if t.style not in TEXT_STYLES:
                 raise ValueError(f"Estilo de texto desconocido: {t.style!r}.")
@@ -119,8 +152,14 @@ class Edl:
         return {
             "dur": round(self.dur, 3), "shots": len(self.segments), "fps": self.fps,
             "width": self.width, "height": self.height, "music_start": round(self.music_start, 3),
-            "events": [{"t": round(e.t, 3), "kind": e.kind, "intensity": round(e.intensity, 2)}
+            "events": [{"t": round(e.t, 3), "kind": e.kind, "intensity": round(e.intensity, 2),
+                        **({"dur": round(e.dur, 3)} if e.kind in ("push", "hold") else {}),
+                        **({"level": round(e.level, 3)} if e.level else {}),
+                        **({"x": round(e.x, 3), "y": round(e.y, 3)} if (e.x, e.y) != (0.5, 0.5) else {})}
                        for e in self.events],
+            "music_gain": [[round(t, 3), round(g, 3)] for t, g in self.music_gain],
+            "original_gain": [[round(t, 3), round(g, 3)] for t, g in self.original_gain],
+            "subtitle_words": len(self.subtitle_words),
             "texts": [{"start": round(t.start, 3), "end": round(t.end, 3), "text": t.text,
                        "style": t.style, "sub": t.sub} for t in self.texts],
             "segments": [{"label": s.label, "dur": round(s.dur, 3),

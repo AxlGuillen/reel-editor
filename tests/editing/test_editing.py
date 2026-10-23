@@ -225,6 +225,104 @@ class DenseEdit(unittest.TestCase):
             S.remove(tmp)
 
 
+def _rms_db(path: str, start: float, dur: float) -> float:
+    import re
+    err = subprocess.run([R.config.FFMPEG_PATH, "-v", "info", "-ss", f"{start}", "-t", f"{dur}", "-i", path,
+                          "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    return float(re.findall(r"RMS level dB: (-?[\d.]+|-inf)", err)[-1].replace("-inf", "-200"))
+
+
+def _rgb(path: str, t: float, w: int, h: int):
+    raw = subprocess.run([R.config.FFMPEG_PATH, "-v", "error", "-ss", f"{t}", "-i", path, "-frames:v", "1",
+                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(h, w, 3).astype(int)
+
+
+class ActsEngine(unittest.TestCase):
+    """What the "acts" edit needs from the engine: volume automation, push-in,
+    held zoom steps aimed off-center, whip, black and the inverted subtitles."""
+
+    def test_gain_automation(self):
+        tmp = S.tmpdir("gain")
+        try:
+            video = S.shots_video(os.path.join(tmp, "v.mp4"), [4])          # 330 Hz tone
+            seg = [Segment(video, [Piece(0.0, 3.6, 3.6)], "a")]
+            # the original at 100 % → 15 % from 1.2 s (a 50 ms ramp) → 0 from 2.4 s
+            edl = Edl(seg, width=360, height=640, fps=30,
+                      original_gain=[(0.0, 1.0), (1.2, 1.0), (1.25, 0.15), (2.4, 0.15), (2.45, 0.0)])
+            out = os.path.join(tmp, "out.mp4")
+            R.render(edl, out, None, os.path.join(tmp, "work"))
+            full, low, mute = _rms_db(out, 0.2, 0.8), _rms_db(out, 1.4, 0.8), _rms_db(out, 2.6, 0.8)
+            self.assertAlmostEqual(low - full, -16.5, delta=1.0)         # 15 % = −16.5 dB
+            self.assertLess(mute, -80)
+            self.assertIn("eval=frame", effects.gain([(0, 1), (1, 0.2)]))
+            self.assertEqual(effects.gain([(0, 0.3)]), "volume=0.3")
+        finally:
+            S.remove(tmp)
+
+    def test_zoom_aims_at_the_action(self):
+        # A gradient (R = x, G = y): the frame center after the zoom says where it aimed.
+        tmp = S.tmpdir("aim")
+        try:
+            src = os.path.join(tmp, "grad.mp4")
+            subprocess.run([R.config.FFMPEG_PATH, "-v", "error", "-y", "-f", "lavfi", "-i",
+                            "color=c=black:s=360x640:r=30:d=3,format=rgb24,geq=r='X/W*255':g='Y/H*255':b=0",
+                            "-c:v", "libx264", "-crf", "1", "-pix_fmt", "yuv444p", src], check=True)
+            ev = [Event(0.5, "hold", dur=1.0, level=0.3, x=0.62, y=0.4),     # aimed
+                  Event(1.8, "hold", dur=0.8, level=0.3)]                    # centered
+            cam = effects.camera(ev, 360, 640, 30)
+            out = os.path.join(tmp, "out.mp4")
+            subprocess.run([R.config.FFMPEG_PATH, "-v", "error", "-y", "-i", src, "-vf", cam,
+                            "-c:v", "libx264", "-crf", "1", "-pix_fmt", "yuv444p", out], check=True)
+            aimed, centered, rest = _rgb(out, 1.0, 360, 640), _rgb(out, 2.2, 360, 640), _rgb(out, 2.8, 360, 640)
+            self.assertAlmostEqual(aimed[320, 180, 0] / 255, 0.62, delta=0.03)
+            self.assertAlmostEqual(aimed[320, 180, 1] / 255, 0.40, delta=0.03)
+            self.assertAlmostEqual(centered[320, 180, 0] / 255, 0.5, delta=0.03)
+            # zoomed in: the edges show less of the frame
+            self.assertGreater(centered[320, 0, 0], 20)
+            self.assertLess(rest[320, 0, 0], 8)                              # back to 1×
+        finally:
+            S.remove(tmp)
+
+    def test_push_whip_black_and_inverted_subtitles(self):
+        tmp = S.tmpdir("acts")
+        try:
+            video = S.shots_video(os.path.join(tmp, "v.mp4"), [2, 2], w=360, h=640, fps=30)
+            segs = [Segment(video, [Piece(0.0, 1.9, 1.9)], "a"), Segment(video, [Piece(2.1, 3.9, 1.8)], "b")]
+            ev = [Event(0.0, "push", dur=1.5, level=0.12), Event(1.9, "whip", 0.8, 0.12),
+                  Event(3.3, "black", dur=0.3)]
+            words = [{"word": "vamos", "start": 0.2, "end": 0.6}, {"word": "ganar", "start": 0.7, "end": 1.2}]
+            edl = Edl(segs, width=360, height=640, fps=30, events=ev, subtitle_words=words,
+                      subtitle_style={"inv_size": 220, "inv_y": 960, "font": "Montserrat-ExtraBold.ttf"},
+                      subtitle_until=1.4)
+            for f in (effects.whip_blur(ev), effects.blackout(ev)):
+                self.assertIn("enable=", f)
+            out = os.path.join(tmp, "out.mp4")
+            R.render(edl, out, None, os.path.join(tmp, "work"))
+            self.assertLess(_rgb(out, 3.45, 360, 640).mean(), 6)               # black
+            clean = os.path.join(tmp, "clean.mp4")
+            plain = Edl([Segment(video, [Piece(0.0, 1.9, 1.9)], "a"), Segment(video, [Piece(2.1, 3.9, 1.8)], "b")],
+                        width=360, height=640, fps=30, events=[e for e in ev if e.kind != "black"])
+            R.render(plain, clean, None, os.path.join(tmp, "work2"))
+            band = (slice(280, 360), slice(60, 300))
+            during = np.abs(_rgb(out, 0.95, 360, 640)[band] - _rgb(clean, 0.95, 360, 640)[band]).mean()
+            after = np.abs(_rgb(out, 1.6, 360, 640)[band] - _rgb(clean, 1.6, 360, 640)[band]).mean()
+            self.assertGreater(during, 15)          # the inverted word is there…
+            self.assertLess(after, 3)               # …and never after subtitle_until
+        finally:
+            S.remove(tmp)
+
+    def test_validation(self):
+        seg = [Segment("x.mp4", [Piece(0, 1, 1)])]
+        with self.assertRaises(ValueError):
+            Edl(seg, music_gain=[(1.0, 1.0), (0.5, 0.2)]).validate()
+        with self.assertRaises(ValueError):
+            Edl(seg, original_gain=[(0.0, -1.0)]).validate()
+        self.assertTrue(Edl(seg, original_gain=[(0, 0), (1, 0.5)]).uses_original)
+        self.assertFalse(Edl(seg, original_gain=[(0, 0)], original_volume=1.0).uses_original)
+
+
 class Formats(unittest.TestCase):
     def test_vertical_blur_is_a_branched_graph(self):
         vf = R.vf_vertical_blur(1080, 1920)
