@@ -349,7 +349,7 @@ class EditParams:
     look: str = "vivid"
     lut: str = ""
     glow: float = 0.25
-    with_camera: bool = False
+    with_camera: bool = True
     zoom: float = 1.3
     game_volume: int = 0
     kill_lead_s: float = 0.25
@@ -409,7 +409,7 @@ class EditParams:
             max_duration_s=_num(form, "max_duration_s", 60, 10, 180, float),
             intensity=_num(form, "intensity", 1.0, 0.0, 1.5, float),
             look=look, lut=lut, glow=_num(form, "glow", 0.25, 0.0, 1.0, float),
-            with_camera=_bool(form, "with_camera", False),
+            with_camera=_bool(form, "with_camera", True),
             zoom=_num(form, "zoom", base.zoom, 0.8, 2.2, float),
             game_volume=_num(form, "game_volume", 0, 0, 100),
             kill_lead_s=_num(form, "kill_lead_s", 0.25, 0.0, 1.0, float),

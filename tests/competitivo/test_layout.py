@@ -12,13 +12,19 @@ from modules.competitivo import layout as L
 class Geometria(unittest.TestCase):
     ZOOMS = (0.5, 1.0, 1.2, 1.3, 1.4, 1.6, 1.7, 2.0, 2.2)
 
-    def test_siempre_suma_1920_en_alturas_pares(self):
-        for zoom in self.ZOOMS:
-            g = L.geometria(zoom)
-            alturas = (L.ARRIBA_H + g.extra_arriba, g.juego_h, L.MARCADOR_H, L.CAMARA_H_OUT + g.extra_abajo)
-            self.assertEqual(sum(alturas), L.H, zoom)
-            for alto in alturas:
-                self.assertEqual(alto % 2, 0, (zoom, alturas))
+    def test_blocks_fit_top_to_bottom(self):
+        # table, gameplay, scoreboard and camera, in order and inside 1920
+        blocks = [(L.BARRA_Y, L.BARRA_H), (L.ARRIBA_H, L.JUEGO_H), (L.MARCADOR_Y, L.MARCADOR_H),
+                  (L.CAMARA_Y_OUT, L.CAMARA_H_OUT)]
+        for (y, h), (y2, _) in zip(blocks, blocks[1:]):
+            self.assertLessEqual(y + h, y2)
+        self.assertLessEqual(L.CAMARA_Y_OUT + L.CAMARA_H_OUT, L.H)
+        for y, h in blocks:
+            self.assertEqual((y % 2, h % 2), (0, 0))
+        # Axl's mockup: table 1020 wide, gameplay ~1080x950, scoreboard ~1040, camera 78 %
+        self.assertEqual((L.BARRA_W, L.JUEGO_H, L.MARCADOR_W, L.CAMARA_ANCHO), (1020, 950, 1040, 842))
+        self.assertEqual(L.BARRA[:3], (465, 820, 991))
+        self.assertEqual(L.MARCADOR_VISTA[0] + L.MARCADOR_VISTA[2], 1400)
 
     def test_recorte_dentro_del_juego_limpio(self):
         x0, y0, jw, jh = L.JUEGO
@@ -30,17 +36,103 @@ class Geometria(unittest.TestCase):
             self.assertGreaterEqual(cy, y0)
             self.assertLessEqual(cx + cw, x0 + jw)
             self.assertLessEqual(cy + ch, y0 + jh)
+            self.assertEqual(g.juego_h, L.JUEGO_H)
             # el gameplay conserva la proporción del recorte (sin estirar)
             self.assertAlmostEqual(cw / ch, L.W / g.juego_h, delta=0.01)
 
-    def test_con_menos_zoom_lo_que_sobra_va_arriba_y_abajo(self):
-        lleno, menos = L.geometria(1.7), L.geometria(1.3)
-        self.assertEqual((lleno.extra_arriba, lleno.extra_abajo), (0, 0))
-        self.assertGreater(menos.recorte[0], lleno.recorte[0])      # más campo a lo ancho
-        self.assertEqual(menos.recorte[1], L.JUEGO[3])               # de alto, la zona limpia
-        self.assertLess(menos.juego_h, lleno.juego_h)
-        self.assertGreater(menos.extra_arriba, 0)
-        self.assertLessEqual(abs(menos.extra_arriba - menos.extra_abajo), 2)
+    def test_less_zoom_than_the_full_height_is_the_full_height(self):
+        lleno = L.geometria(L.ZOOM_LLENO)
+        self.assertEqual(lleno.recorte[1], L.JUEGO[3])                # the whole clean height
+        self.assertEqual(L.geometria(1.0), lleno)
+        self.assertEqual(L.geometria(1.3), lleno)
+        self.assertLess(L.geometria(1.7).recorte[1], L.JUEGO[3])      # more zoom crops less
+
+
+def _video(path, graph, dur=4.0, inputs=("color=c=0x505050:s=1920x1080:r=10",)):
+    cmd = [config.FFMPEG_PATH, "-y", "-v", "error"]
+    for src in inputs:
+        cmd += ["-f", "lavfi", "-t", f"{dur}", "-i", src]
+    cmd += ["-filter_complex", graph, "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", path]
+    subprocess.run(cmd, check=True)
+    return path
+
+
+class SplitCamera(unittest.TestCase):
+    """Riot's split camera: a thin, almost black, slightly diagonal line across
+    the gameplay near the center (measured in IG-GEN 23/10, 10:18)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="reelforge-split-")
+        line = ("color=c=black:s=7x1100:r=10",)
+        base = "[0:v]noise=alls=25:allf=t[g]"
+        # the divider from 1.0 to 3.0 s, rotated like Riot's (−0.19: top right → bottom left)
+        cls.split = _video(os.path.join(cls.tmp, "split.mp4"),
+                           f"{base};[1:v]format=rgba,rotate=a=0.19:c=none:ow=rotw(0.19):oh=roth(0.19)[l];"
+                           "[g][l]overlay=x=880:y=-20:enable='between(t,1,3)'[v]",
+                           inputs=("color=c=0x505050:s=1920x1080:r=10",) + line)
+        # what is NOT the divider: a wide dark band, a short dark line and a dark horizontal one
+        cls.other = _video(os.path.join(cls.tmp, "other.mp4"),
+                           "[0:v]noise=alls=25:allf=t,drawbox=x=950:y=108:w=60:h=712:color=black:t=fill:enable='lt(t,1.5)',"
+                           "drawbox=x=1000:y=300:w=6:h=250:color=black:t=fill:enable='between(t,1.5,3)',"
+                           "drawbox=x=860:y=500:w=280:h=6:color=black:t=fill:enable='gte(t,3)'[v]")
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_detected_while_it_lasts(self):
+        ranges = L.split_ranges(self.split)
+        self.assertEqual(len(ranges), 1, ranges)
+        a, b = ranges[0]
+        self.assertAlmostEqual(a, 1.0, delta=0.2)
+        self.assertAlmostEqual(b, 3.0, delta=0.2)
+
+    def test_other_dark_shapes_are_not(self):
+        self.assertEqual(L.split_ranges(self.other), [])
+
+    def test_the_view_switches_to_the_whole_zone(self):
+        out = os.path.join(self.tmp, "out.mp4")
+        ffmpeg_runner.capture(L.build_command(self.split, out, 0.0, 4.0, L.CAMARA_Y_DEFECTO, color="off",
+                                              split=[(1.0, 3.0)]))
+        self.assertEqual(ffmpeg_runner.probe_resolution(out), (1080, 1920))
+
+        def band(t):
+            # the top of the gameplay box: the zoomed view fills it with the game;
+            # the split view has the blurred, dimmed copy there (the full zone is centered)
+            raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{t}", "-i", out,
+                                         "-frames:v", "1", "-vf", f"crop=1080:150:0:{L.ARRIBA_H},format=gray",
+                                         "-f", "rawvideo", "-"])
+            import numpy as np
+            return np.frombuffer(raw, np.uint8).astype(float)
+        zoomed, split = band(0.5), band(2.0)
+        self.assertGreater(zoomed.std(), split.std() * 2)               # noise vs blurred
+        self.assertLess(split.mean(), zoomed.mean())                    # dimmed
+
+    def test_the_edit_shot_gets_its_input_offset(self):
+        from modules.editing import render
+        geo = L.edit_geometry(L.CAMARA_Y_DEFECTO, 1.3, True, [(10.0, 12.0)])
+        self.assertIn(f"(t+{render.SOURCE_T0})", geo)
+        self.assertNotIn(render.SOURCE_T0, L.edit_geometry(L.CAMARA_Y_DEFECTO, 1.3, True))
+
+
+class CameraBox(unittest.TestCase):
+    def test_box_under_moving_gameplay(self):
+        # Twitch 23/10: a light border at (1464, 537), interior 450x254 from (1468, 541)
+        with tempfile.TemporaryDirectory() as tmp:
+            src = _video(os.path.join(tmp, "cam.mp4"),
+                         "[0:v]noise=alls=40:allf=t,"
+                         "drawbox=x=1464:y=537:w=456:h=262:color=0xA0A0A0:t=fill,"
+                         "drawbox=x=1468:y=541:w=452:h=254:color=0x203060:t=fill,"
+                         "drawbox=x=1500:y=700:w=380:h=30:color=0x8080C0:t=fill[v]", dur=21.0)
+            x, y, w, h = L.detect_camera_box(src)
+            self.assertAlmostEqual(x, 1468, delta=5)
+            self.assertAlmostEqual(y, 541, delta=4)
+            self.assertAlmostEqual(w / h, L.CAMARA_W / L.CAMARA_H, delta=0.02)
+            self.assertLessEqual(x + w, 1920)
+
 
 class Render(unittest.TestCase):
     def test_render_1080x1920_con_marca(self):

@@ -348,6 +348,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 dur_tramo = ffmpeg_runner.probe_duration(tramo) or (fin + MARGEN_CLIP_S)
                 ini, fin = max(0.0, ini), min(dur_tramo, fin)
                 an = layout.analizar(tramo, t_kill, ini, fin)
+                split = layout.split_ranges(tramo)      # Riot's split camera: the whole view
                 dur = an.vivo_hasta - an.vivo_desde
                 if dur < 3:
                     raise RuntimeError(f"El clip «{c['titulo']}» cae casi entero fuera del vivo "
@@ -364,7 +365,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
                 render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
                 cmd = layout.build_command(tramo, os.path.join(carpeta, archivo), an.vivo_desde, dur,
-                                           an.camara_y, **render)
+                                           an.camara or an.camara_y, split=split, **render)
                 lo, hi = 5 + int(85 * (k - 1) / n), 5 + int(85 * k / n)
                 con_intro = first and modo_intro == "encima"
                 ffmpeg_runner.run(cmd, job_id, total_duration=dur,
@@ -377,7 +378,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                                            stage="Clip 1: renderizando con la intro encima…")
                     con = os.path.join(temp, "clip_01_intro.mp4")
                     cmd = layout.build_command(
-                        tramo, con, an.vivo_desde, dur, an.camara_y, **render,
+                        tramo, con, an.vivo_desde, dur, an.camara or an.camara_y, split=split, **render,
                         intro=layout.IntroEncima(placa=placa, voz=voz.path, D=voz.D, sting=intro.sting(),
                                                  sting_vol=intro.STING_VOL, voz_filtro=intro.cadena_voz(voz),
                                                  sting_filtro=intro.cadena_sting(voz.D),
@@ -393,6 +394,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     "vod_inicio": round(a + an.vivo_desde, 2), "vod_fin": round(a + an.vivo_hasta, 2),
                     "ajuste_s": ajuste, "kills_vistas": coinc, "kills_esperadas": len(c["eventos"]),
                     "fuera_del_vivo_s": an.no_vivo_s, "camara_y": an.camara_y,
+                    "split_camera": [[round(a - an.vivo_desde, 2), round(b - an.vivo_desde, 2)] for a, b in split
+                                     if b > an.vivo_desde and a < an.vivo_hasta],
                 })
                 os.remove(tramo)
         if not hechos:
@@ -594,21 +597,24 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 t_kill = _vod(datetime.fromisoformat(c["primera"]), inicio, off) - a + shift
                 span_dur = ffmpeg_runner.probe_duration(span) or (end + MARGEN_CLIP_S)
                 an = layout.analizar(span, t_kill, max(0.0, start - 4), min(span_dur, end))
+                split = layout.split_ranges(span)
                 authors = c.get("authors") or [None] * len(c["eventos"])
                 counts = c.get("counts") or [1] * len(c["eventos"])
                 ks = [edit_plan.EditKill(t - ep.kill_lead_s + shift, side, (au or {}).get("player", ""),
                                          (au or {}).get("champion", ""), n)
                       for (t, side), au, n in zip(expected, authors, counts)]
-                # Where the action is at each kill: the zooms aim there (None = center).
+                # Where the action is at each kill: the zooms aim there (None = center;
+                # also during the split camera, where the view is not the zoomed crop).
                 for k in ks:
                     try:
-                        k.focus = layout.action_focus(span, k.t, ep.zoom)
+                        in_split = any(a <= k.t <= b for a, b in split)
+                        k.focus = None if in_split else layout.action_focus(span, k.t, ep.zoom)
                     except RuntimeError:
                         k.focus = None
                 clips.append(edit_plan.EditClip(
                     c["id"], span, an.vivo_desde, an.vivo_hasta, ks, c["puntaje"], c.get("multikill"),
                     c.get("cierra", False), c["titulo"],
-                    layout.edit_geometry(an.camara_y, ep.zoom, ep.with_camera)))
+                    layout.edit_geometry(an.camara or an.camara_y, ep.zoom, ep.with_camera, split)))
 
         if not clips:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")

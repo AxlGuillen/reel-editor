@@ -15,18 +15,21 @@ del día 1 (px en 1920x1080):
                           (536 / 565 / 544): se detecta en cada tramo
     juego limpio          0, 108, 1475x712 (sin overlays)
 
-Layout, de arriba a abajo (pedido de Axl):
-    barra de cámaras + stats   con aire arriba y a los costados, esquinas redondeadas
-    gameplay (zoom)            centrado donde el observador pone la acción, a su alto
-                               natural (con menos zoom es más bajo: ver geometria())
-    marcador oficial           a todo el ancho
-    cámara del set de Ibai     al 70 % del ancho sobre su propio fondo difuminado
-    watermark                  chico, opaco, parado en la esquina inferior derecha
+Layout v2 (Axl's mockups, 23/10), top to bottom in 1080x1920:
+    stats table          the broadcast's table WITHOUT the two player cams
+                         (465..1456 x 820..1080) at 1020 wide, rounded corners
+    gameplay             the full clean height (712 px) at 1080x950: zoom 1.33
+                         (more zoom crops less; less than that cannot fill it)
+    scoreboard           its center (520..1400 x 10..108) at 1040 wide, rounded
+    Ibai's set camera    at 78 % of the width, rounded
+    watermark            small, opaque, standing on the bottom right corner
+All of it over the whole frame blurred and darkened (the margins).
 
-Todo va pegado al gameplay: con menos zoom, la barra baja, el marcador y la
-cámara suben, y lo que sobra queda arriba de todo y abajo de todo (los fondos
-difuminados de la barra y de la cámara se estiran). Son justo las franjas que
-tapa la interfaz de TikTok.
+Split camera: Riot sometimes splits the screen in two views with a thin dark
+diagonal line near the center. `split_ranges()` finds it in the span and,
+while it lasts, the gameplay shows the WHOLE clean zone (1475x712) across the
+width over its own blurred copy instead of the zoomed crop (that would cut
+right through the seam).
 
 Las repeticiones y transiciones no muestran el marcador: `analizar()` las
 detecta y el clip arranca después (o termina antes) para no mezclar vistas.
@@ -44,17 +47,26 @@ from modules.vertical_convert.processor import _rounded_mask_expr
 W, H = 1080, 1920                     # salida
 SRC_W, SRC_H = 1920, 1080             # fuente
 
-BARRA = (288, 820, 1345, 260)         # cámara de jugador + tabla + cámara de jugador
-MARCADOR = (512, 10, 896, 98)
+BARRA = (465, 820, 991, 260)          # stats table (without the player cams)
+MARCADOR = (512, 10, 896, 98)         # the whole scoreboard: what the analysis reads
+MARCADOR_VISTA = (520, 10, 880, 98)   # what is shown: its center
 CAMARA_X, CAMARA_W, CAMARA_H = 1478, 440, 246   # interior del recuadro (sin el borde)
 CAMARA_Y_DEFECTO = 540                # partida 1 del día 1; se detecta por tramo
 JUEGO = (0, 108, 1475, 712)           # zona sin overlays
 CENTRO = (960, 540)                   # el observador centra la acción en la pantalla
 
-MARGEN_BARRA = 36                     # aire de la barra arriba y a los costados
-SEP_BARRA = 14                        # separación entre la barra y el gameplay
-RADIO_BARRA = 16
-CAMARA_ANCHO = 756                    # 70 % del ancho
+TOP_MARGIN = 40
+BARRA_W = 1020
+GAP_BARRA = 14                        # table → gameplay
+JUEGO_H = 950                         # gameplay height in the output
+GAP_MARCADOR = 12                     # gameplay → scoreboard
+MARCADOR_W = 1040
+GAP_CAMARA = 14                       # scoreboard → camera
+CAMARA_ANCHO = 842                    # 78 % of the width
+RADIO_BARRA, RADIO_MARCADOR, RADIO_CAMARA = 16, 14, 22
+# Blurred backgrounds, dimmed by a factor (eq=brightness subtracts, and on a
+# dark game it left them black).
+BG_DIM, SPLIT_BG_DIM = 0.55, 0.6
 MARCA_ALTO_DEFECTO = 190              # watermark: alto en px
 MARCA_MARGEN = 14                     # distancia del watermark al borde derecho
 
@@ -110,17 +122,19 @@ def _even(x: float) -> int:
 
 
 # --- Geometría ------------------------------------------------------------------
-BARRA_W = W - 2 * MARGEN_BARRA
-BARRA_H = _even(BARRA_W * BARRA[3] / BARRA[2])
-ARRIBA_H = MARGEN_BARRA + BARRA_H + SEP_BARRA
-MARCADOR_H = _even(W * MARCADOR[3] / MARCADOR[2])
-CAMARA_H_OUT = _even(CAMARA_ANCHO * CAMARA_H / CAMARA_W)
-JUEGO_H_MAX = H - ARRIBA_H - MARCADOR_H - CAMARA_H_OUT   # 1136: el gameplay más alto posible
-# La zona limpia mide 712 px de alto (arriba el marcador, abajo la barra):
-# con menos zoom que ZOOM_LLENO el recorte gana campo a lo ancho pero no de
-# alto, y el gameplay sale más bajo que JUEGO_H_MAX.
-ZOOM_LLENO = JUEGO_H_MAX / JUEGO[3]
-ZOOM_MIN = W / JUEGO[2]           # el recorte no puede ser más ancho que la zona limpia
+BARRA_H = _even(BARRA_W * BARRA[3] / BARRA[2])                       # 268
+MARCADOR_H = _even(MARCADOR_W * MARCADOR_VISTA[3] / MARCADOR_VISTA[2])  # 116
+CAMARA_H_OUT = _even(CAMARA_ANCHO * CAMARA_H / CAMARA_W)               # 470
+BARRA_Y = TOP_MARGIN
+ARRIBA_H = BARRA_Y + BARRA_H + GAP_BARRA          # where the gameplay starts (322)
+MARCADOR_Y = ARRIBA_H + JUEGO_H + GAP_MARCADOR
+CAMARA_Y_OUT = MARCADOR_Y + MARCADOR_H + GAP_CAMARA
+assert CAMARA_Y_OUT + CAMARA_H_OUT <= H
+# The clean zone is 712 px tall: below this zoom the crop cannot fill 950.
+ZOOM_LLENO = JUEGO_H / JUEGO[3]
+ZOOM_MIN = ZOOM_LLENO
+# Split view: the whole clean zone across the width, centered in the gameplay box.
+SPLIT_H = _even(W * JUEGO[3] / JUEGO[2])           # 522
 
 
 @dataclass(frozen=True)
@@ -128,25 +142,20 @@ class Geometria:
     recorte: tuple[int, int, int, int]   # (w, h, x, y) del gameplay en la fuente
     zoom: float                          # zoom efectivo
     juego_h: int                         # alto del gameplay en la salida
-    extra_arriba: int                    # lo que sobra, arriba de la barra
-    extra_abajo: int                     # y abajo de la cámara del set
+    extra_arriba: int = 0                # (layout v1; always 0 now)
+    extra_abajo: int = 0
 
 
 def geometria(zoom: float) -> Geometria:
-    """Recorte del gameplay y reparto del alto para un zoom (ampliación
-    respecto de la fuente). Siempre suma 1920."""
+    """Gameplay crop for a zoom (magnification over the source). The box is
+    always 1080xJUEGO_H; a zoom under ZOOM_LLENO is taken as ZOOM_LLENO."""
     z = max(zoom, ZOOM_MIN)
-    cw = min(_even(W / z), JUEGO[2] // 2 * 2)
-    ch = _even(min(JUEGO_H_MAX / z, JUEGO[3]))
+    ch = min(_even(JUEGO_H / z), JUEGO[3])
+    cw = min(_even(ch * W / JUEGO_H), JUEGO[2] // 2 * 2)
     x0, y0, jw, jh = JUEGO
     cx = min(max(CENTRO[0] - cw / 2, x0), x0 + jw - cw)
     cy = min(max(CENTRO[1] - ch / 2, y0), y0 + jh - ch)
-    # Si el alto no lo limita la zona limpia, el recorte ya tiene la proporción
-    # del hueco: llena JUEGO_H_MAX (sin los 2 px que dejaría el redondeo).
-    juego_h = JUEGO_H_MAX if ch < JUEGO[3] else min(_even(ch * W / cw), JUEGO_H_MAX)
-    sobra = JUEGO_H_MAX - juego_h
-    arriba = sobra // 4 * 2
-    return Geometria((cw, ch, int(cx), int(cy)), z, juego_h, arriba, sobra - arriba)
+    return Geometria((cw, ch, int(cx), int(cy)), z, JUEGO_H)
 
 
 # --- Análisis del tramo ---------------------------------------------------------
@@ -156,6 +165,7 @@ class Analisis:
     vivo_desde: float                 # tramo en vivo (s, relativos al archivo) que
     vivo_hasta: float                 # contiene la kill: sin repeticiones ni cortes
     no_vivo_s: float                  # segundos fuera de la transmisión en vivo
+    camara: tuple | None = None       # (x, y, w, h) interior of the box (detect_camera_box)
 
 
 def _gris(path: str, vf: str, ss: float | None = None, dur: float | None = None,
@@ -171,32 +181,63 @@ def _gris(path: str, vf: str, ss: float | None = None, dur: float | None = None,
     return np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(np.float32)
 
 
-def detectar_camara(path: str, muestras: int = 8) -> int:
-    """y del recuadro de la cámara del set (interior), sin depender de colores.
+CAMARA_BOX_DEFECTO = (CAMARA_X, CAMARA_Y_DEFECTO, CAMARA_W, CAMARA_H)
 
-    El recuadro es una caja fija: su borde superior es una arista horizontal
-    que cruza TODO el ancho (x 1480..1915) y su borde izquierdo una arista
-    vertical en x≈1476 a lo largo de su alto. El gameplay no tiene aristas tan
-    largas ni tan alineadas. Se usa la mediana de varios frames para que lo
-    que se mueve no cuente."""
-    x0, y0, ww, hh = 1440, 380, 480, 460      # región de búsqueda
+
+def detect_camera_box(path: str, muestras: int = 8) -> tuple[int, int, int, int]:
+    """Interior (x, y, w, h) of the box with Ibai's set camera, without
+    depending on colors. It changes with the source and the day: day 1 on
+    YouTube 440x246 from x 1478; on 23/10 ~450x253 from x ~1468, at y ~541 on
+    Twitch and ~406 on YouTube. Always 16:9 and flush with the right edge.
+
+    The left border is the column with the strongest vertical edge on the
+    median of several frames; that fixes the width and so the height (16:9).
+    The top: the gameplay above the box changes all the time and the set
+    behind Ibai does not, so it is where the frame-to-frame variation drops.
+    If the gameplay is still too (nothing to compare), the row where the top
+    and bottom borders and the left one along the height add up the most."""
+    x0, y0, ww, hh = 1400, 380, 520, 500       # search region
     dur = 20.0
     fr = _gris(path, f"fps={muestras / dur},crop={ww}:{hh}:{x0}:{y0}", dur=dur, w=ww, h=hh)
     if not len(fr):
-        return CAMARA_Y_DEFECTO
+        return CAMARA_BOX_DEFECTO
     m = np.median(fr, axis=0)
-    gy = np.abs(m[2:, :] - m[:-2, :])          # arista horizontal en la fila y (centro y+1)
-    gx = np.abs(m[:, 2:] - m[:, :-2])          # arista vertical
-    xl = 1476 - x0 - 1                         # columna del borde izquierdo en gx
-    mejor, mejor_y = -1.0, CAMARA_Y_DEFECTO
-    for yy in range(0, hh - CAMARA_H - 6):
-        horiz = gy[yy, 1480 - x0:1915 - x0].mean()
-        vert = gx[yy + 4:yy + 4 + CAMARA_H - 8, xl - 2:xl + 3].max(axis=1).mean()
-        score = horiz + vert
-        if score > mejor:
-            mejor, mejor_y = score, yy + 1 + y0
-    # La arista está en el borde del recuadro; el interior arranca ~4 px abajo.
-    return int(mejor_y) + 4
+    gx = np.abs(m[:, 2:] - m[:, :-2])          # vertical edge at column c + 1
+    sub = gx[:, 1440 - x0 - 1:1500 - x0 - 1]
+    c = int(np.argmax(sub.mean(axis=0)))
+    x = 1440 + c + 4                            # the edge is the border: the interior is inside
+    w = 1918 - x
+    h = _even(w * 9 / 16)
+    span = h + 6                                # border to border
+    top = None
+    if len(fr) >= 6:
+        var = np.median(fr.std(axis=0)[:, x - x0 + 12:1900 - x0], axis=1)
+        moving = float(np.median(var[:40]))
+        if moving >= 6:
+            quiet = np.convolve(var < 0.3 * moving, np.ones(20) / 20, mode="valid") > 0.9
+            first = int(np.argmax(quiet)) if quiet.any() else -1
+            if first > 0 and first + span < hh:
+                top = first + 1                 # the window starts ~2 px early; then the border (~4 px)
+    if top is None:
+        gy = np.abs(m[2:, :] - m[:-2, :])      # horizontal edge at row r + 1
+        edge = sub[:, max(0, c - 1):c + 2].max(axis=1)
+        horiz = gy[:, x - x0:x - x0 + 300].mean(axis=1)
+        best = -1.0
+        for t in range(0, len(horiz) - span):
+            score = horiz[t] + horiz[t + span] + 2 * edge[t + 2:t + span].mean()
+            if score > best:
+                best, top = score, t
+    if top is None:
+        return CAMARA_BOX_DEFECTO
+    y = y0 + top + 1 + 4
+    # Same aspect as the output (CAMARA_W:CAMARA_H), trimming the excess.
+    nw = min(w, _even(h * CAMARA_W / CAMARA_H))
+    return x + (w - nw) // 2, y, nw // 2 * 2, h
+
+
+def detectar_camara(path: str, muestras: int = 8) -> int:
+    """y del interior del recuadro de la cámara del set (ver detect_camera_box)."""
+    return detect_camera_box(path, muestras)[1]
 
 
 def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5) -> Analisis:
@@ -207,12 +248,13 @@ def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5
     frame contra su aspecto típico en el tramo (la mediana, dominada por los
     frames en vivo): lo que se aleja mucho no es la transmisión en vivo. El
     clip queda en el tramo en vivo que contiene la kill."""
-    camara_y = detectar_camara(path)
+    camara = detect_camera_box(path)
+    camara_y = camara[1]
     mw, mh = MARCADOR[2] // 4, MARCADOR[3] // 4
     fr = _gris(path, f"fps={fps},crop={MARCADOR[2]}:{MARCADOR[3]}:{MARCADOR[0]}:{MARCADOR[1]},"
                f"scale={mw}:{mh}:flags=area", w=mw, h=mh)
     if not len(fr):
-        return Analisis(camara_y, inicio, fin, 0.0)
+        return Analisis(camara_y, inicio, fin, 0.0, camara)
     ref = np.median(fr, axis=0)
     d = np.abs(fr - ref).mean(axis=(1, 2))
     umbral = max(18.0, 3 * float(np.median(d)))
@@ -225,7 +267,7 @@ def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5
     k = min(max(int(round(t_kill * fps)), 0), len(vivo) - 1)
     if not vivo[k]:
         # La kill cayó en algo que no es el vivo (raro): no se recorta nada.
-        return Analisis(camara_y, inicio, fin, float((~vivo).sum()) / fps)
+        return Analisis(camara_y, inicio, fin, float((~vivo).sum()) / fps, camara)
     a = k
     while a > 0 and vivo[a - 1]:
         a -= 1
@@ -235,7 +277,84 @@ def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5
     desde = max(inicio, a / fps + (0.2 if a > 0 else 0))
     hasta = min(fin, (b + 1) / fps - (0.2 if b < len(vivo) - 1 else 0))
     fuera = float((~vivo[int(inicio * fps):int(fin * fps)]).sum()) / fps
-    return Analisis(camara_y, desde, hasta, fuera)
+    return Analisis(camara_y, desde, hasta, fuera, camara)
+
+
+# --- Split camera ---------------------------------------------------------------
+SPLIT_X = (860, 1140)         # where Riot's divider crosses the clean zone (source px)
+SPLIT_DARK = 14               # the line is almost black (measured 0–3)
+SPLIT_CONTRAST = 15           # and darker than both sides by at least this
+SPLIT_ROWS = 0.85             # share of the rows it has to cross
+SPLIT_SLOPE = 0.35            # |dx/dy| at most (measured −0.19: a slight diagonal)
+SPLIT_MIN_S = 0.75            # seen this long in a row (the transition flickers)
+
+
+def _divider_rows(fr: np.ndarray) -> list[list[float]]:
+    """Per row of a gray frame of the search strip: the centers of thin dark
+    runs (3–16 px) with brighter pixels on both sides."""
+    out = []
+    for row in fr:
+        dark = row <= SPLIT_DARK
+        centers = []
+        i, n = 0, len(row)
+        while i < n:
+            if not dark[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and dark[j]:
+                j += 1
+            if 3 <= j - i <= 16 and i >= 6 and j + 6 <= n:
+                floor = row[i:j].mean()
+                if row[i - 6] - floor >= SPLIT_CONTRAST and row[j + 5] - floor >= SPLIT_CONTRAST:
+                    centers.append((i + j - 1) / 2)
+            i = j
+        out.append(centers)
+    return out
+
+
+def has_divider(fr: np.ndarray, step: int = 1) -> bool:
+    """Whether a gray frame of the search strip (the clean zone's full height,
+    x SPLIT_X; one row every `step` px) has Riot's split-camera line: thin,
+    dark, straight and across (almost) every row, with a slight slope at most."""
+    rows = _divider_rows(fr)
+    ys = [y for y, cs in enumerate(rows) for _ in cs]
+    xs = [c for cs in rows for c in cs]
+    if len(set(ys)) < SPLIT_ROWS * len(rows):
+        return False
+    ys, xs = np.array(ys), np.array(xs, float)
+    need = SPLIT_ROWS * len(rows)
+    for slope in np.arange(-SPLIT_SLOPE, SPLIT_SLOPE + 1e-9, 0.01):
+        # Where each candidate would cross the top row: on the line, all the same
+        # (within ±4 px: the antialiasing moves the centers a pixel).
+        bins = np.round((xs - slope * step * ys) / 3).astype(int)
+        bins -= bins.min()
+        window = np.convolve(np.bincount(bins), np.ones(3), mode="same")
+        k = int(np.argmax(window))
+        if window[k] >= need and len(set(ys[np.abs(bins - k) <= 1])) >= need:
+            return True
+    return False
+
+
+def split_ranges(path: str, fps: float = 4, ss: float = 0.0,
+                 dur: float | None = None) -> list[tuple[float, float]]:
+    """[(a, b)] seconds of the file with Riot's split camera (see has_divider),
+    seen for SPLIT_MIN_S in a row. Rows every 4 px: enough for a full-height line."""
+    x0, x1 = SPLIT_X
+    jx, jy, jw, jh = JUEGO
+    step = 4
+    fr = _gris(path, f"fps={fps},crop={x1 - x0}:{jh}:{x0}:{jy},scale={x1 - x0}:{jh // step}:flags=neighbor",
+               ss=ss, dur=dur, w=x1 - x0, h=jh // step)
+    hits = [has_divider(f, step) for f in fr]
+    out, start = [], None
+    for i, hit in enumerate(hits + [False]):
+        if hit and start is None:
+            start = i
+        elif not hit and start is not None:
+            if (i - start) / fps >= SPLIT_MIN_S:
+                out.append((round(ss + start / fps - 0.5 / fps, 2), round(ss + i / fps - 0.5 / fps, 2)))
+            start = None
+    return out
 
 
 # Dígitos de kills del marcador, a cada lado del logo central. El equipo azul
@@ -334,16 +453,33 @@ def recorte_marca(png: str) -> tuple[int, int, int, int] | None:
 
 
 # --- Filtro -----------------------------------------------------------------------
-def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
+def _ranges_expr(ranges: list[tuple[float, float]], t0: str | float) -> str:
+    """enable= expression that is 1 inside `ranges` (s of the source file).
+    The filter's t starts at the input's -ss: `t0` is that offset (a number,
+    or editing.render.SOURCE_T0 for an edit shot, replaced per shot)."""
+    t = f"(t+{t0})" if t0 else "t"
+    return ffmpeg_runner.expr_sum([f"between({t},{a:.3f},{b:.3f})" for a, b in ranges])
+
+
+def _rounded(label_in: str, w: int, h: int, r: int, label_out: str) -> list[str]:
+    return [f"{label_in}format=yuva420p[{label_out}_c]",
+            f"color=c=white:s={w}x{h}:d=1,format=gray,geq=lum='{_rounded_mask_expr(r)}'[{label_out}_m]",
+            f"[{label_out}_c][{label_out}_m]alphamerge[{label_out}]"]
+
+
+def build_filter_complex(camara_y: int | tuple, zoom: float = 1.3, color: str = "vivo",
                          marca: tuple[int, int, int, int] | None = None,
                          marca_alto: int = MARCA_ALTO_DEFECTO,
                          placa_idx: int | None = None, D: float | None = None,
-                         camera: bool = True) -> str:
+                         camera: bool = True, split: list[tuple[float, float]] | None = None,
+                         t0: str | float = 0) -> str:
     """filter_complex del layout: entra [0:v] (1920x1080) y, si hay watermark,
     [1:v] (el PNG); sale [vout] 1080x1920 yuv420p.
 
-    `camera=False` (edit mode): Ibai's set camera is replaced by the blurred,
-    darkened gameplay. The geometry is the same.
+    `camara_y`: the camera box (x, y, w, h) or, the old way, its y.
+    `camera=False`: no set camera (the background shows there).
+    `split`: [(a, b)] seconds of the SOURCE FILE with Riot's split camera;
+    `t0` is where the input starts in that file (see _ranges_expr).
 
     `placa_idx`/`D`: intro "encima": la placa (entrada `placa_idx`, imagen en
     loop de largo D) va centrada sobre el gameplay durante [0, D], entra con
@@ -351,49 +487,53 @@ def build_filter_complex(camara_y: int, zoom: float = 1.3, color: str = "vivo",
     (IntroEncima.placa_fin), que puede ser menos que la voz."""
     g = geometria(zoom)
     cw, ch, cx, cy = g.recorte
-    arriba_h = ARRIBA_H + g.extra_arriba
-    camara_h = CAMARA_H_OUT + g.extra_abajo
+    kx, ky, kw, kh = camara_y if isinstance(camara_y, tuple) else (CAMARA_X, camara_y, CAMARA_W, CAMARA_H)
     bx, by, bw, bh = BARRA
-    mx, my, mw, mh = MARCADOR
+    mx, my, mw, mh = MARCADOR_VISTA
+    jx, jy, jw, jh = JUEGO
     color_f = COLOR[color]
+    n = 4 + bool(camera)
     partes = [
-        "[0:v]split=5[s_barra][s_fondo][s_juego][s_marcador][s_camara]",
-        # Barra con aire y esquinas redondeadas sobre su propio fondo difuminado.
-        f"[s_barra]crop={bw}:{bh}:{bx}:{by},scale={BARRA_W}:{BARRA_H}:flags=lanczos,format=yuva420p[barra_c]",
-        f"color=c=white:s={BARRA_W}x{BARRA_H}:d=1,format=gray,"
-        f"geq=lum='{_rounded_mask_expr(RADIO_BARRA)}'[barra_m]",
-        "[barra_c][barra_m]alphamerge[barra]",
-        f"[s_fondo]crop={bw}:{bh}:{bx}:{by},scale={W // 4}:{_even(arriba_h / 4)},"
-        f"gblur=sigma=6,eq=brightness=-0.32,scale={W}:{arriba_h}:flags=bilinear,format=yuv420p[fondo]",
-        # Lo que sobra va arriba de la barra: la barra baja.
-        f"[fondo][barra]overlay={MARGEN_BARRA}:{g.extra_arriba + MARGEN_BARRA},"
-        "format=yuv420p,setsar=1[arriba]",
-        # Gameplay a su alto natural.
-        f"[s_juego]crop={cw}:{ch}:{cx}:{cy},scale={W}:{g.juego_h}:flags=lanczos"
-        + (f",{color_f}" if color_f else "") + ",format=yuv420p,setsar=1[juego]",
-        # Marcador oficial a todo el ancho.
-        f"[s_marcador]crop={mw}:{mh}:{mx}:{my},scale={W}:{MARCADOR_H}:flags=lanczos,"
-        "format=yuv420p,setsar=1[marcador]",
+        f"[0:v]split={n}[s_fondo][s_barra][s_juego][s_marcador]" + ("[s_camara]" if camera else ""),
+        # The whole frame, blurred and darkened: the margins.
+        f"[s_fondo]scale=-2:{H // 4},crop={W // 4}:{H // 4},gblur=sigma=10,lutyuv=y=val*{BG_DIM},"
+        f"scale={W}:{H}:flags=bilinear,format=yuv420p,setsar=1[fondo]",
+        *_rounded(f"[s_barra]crop={bw}:{bh}:{bx}:{by},scale={BARRA_W}:{BARRA_H}:flags=lanczos,",
+                  BARRA_W, BARRA_H, RADIO_BARRA, "barra"),
+        *_rounded(f"[s_marcador]crop={mw}:{mh}:{mx}:{my},scale={MARCADOR_W}:{MARCADOR_H}:flags=lanczos,",
+                  MARCADOR_W, MARCADOR_H, RADIO_MARCADOR, "marcador"),
+    ]
+    zoomed = f"crop={cw}:{ch}:{cx}:{cy},scale={W}:{JUEGO_H}:flags=lanczos,setsar=1"
+    if split:
+        partes += [
+            "[s_juego]split=3[j_zoom][j_full][j_bg]",
+            f"[j_zoom]{zoomed}[j_z]",
+            f"[j_bg]crop={jw}:{jh}:{jx}:{jy},scale=-2:{JUEGO_H // 4},crop={W // 4}:{JUEGO_H // 4},"
+            f"gblur=sigma=8,lutyuv=y=val*{SPLIT_BG_DIM},scale={W}:{JUEGO_H}:flags=bilinear,setsar=1[j_b]",
+            f"[j_full]crop={jw}:{jh}:{jx}:{jy},scale={W}:{SPLIT_H}:flags=lanczos,setsar=1[j_f]",
+            f"[j_b][j_f]overlay=0:{(JUEGO_H - SPLIT_H) // 2}[j_s]",
+            f"[j_z][j_s]overlay=0:0:enable='{_ranges_expr(split, t0)}'"
+            + (f",{color_f}" if color_f else "") + ",format=yuv420p[juego]",
+        ]
+    else:
+        partes.append(f"[s_juego]{zoomed}" + (f",{color_f}" if color_f else "") + ",format=yuv420p[juego]")
+    partes += [
+        f"[fondo][barra]overlay={(W - BARRA_W) // 2}:{BARRA_Y}[p1]",
+        f"[p1][juego]overlay=0:{ARRIBA_H}[p2]",
+        f"[p2][marcador]overlay={(W - MARCADOR_W) // 2}:{MARCADOR_Y}[p3]",
     ]
     if camera:
         partes += [
-            # Cámara del set al 70 % sobre su versión difuminada.
-            f"[s_camara]crop={CAMARA_W}:{CAMARA_H}:{CAMARA_X}:{camara_y},split[cam_a][cam_b]",
-            f"[cam_a]scale={W // 4}:{_even(camara_h / 4)},gblur=sigma=5,eq=brightness=-0.25,"
-            f"scale={W}:{camara_h}:flags=bilinear[cam_fondo]",
-            f"[cam_b]scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos[cam_frente]",
-            # La cámara sube pegada al marcador; lo que sobra queda abajo.
-            "[cam_fondo][cam_frente]overlay=(W-w)/2:0,format=yuv420p,setsar=1[camara]",
+            *_rounded(f"[s_camara]crop={kw}:{kh}:{kx}:{ky},"
+                      f"scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos,",
+                      CAMARA_ANCHO, CAMARA_H_OUT, RADIO_CAMARA, "camara"),
+            f"[p3][camara]overlay={(W - CAMARA_ANCHO) // 2}:{CAMARA_Y_OUT},format=yuv420p,setsar=1[pila]",
         ]
     else:
-        jx, jy, jw, jh = JUEGO
-        partes.append(f"[s_camara]crop={jw}:{jh}:{jx}:{jy},scale={W // 4}:{_even(camara_h / 4)},"
-                      f"gblur=sigma=8,eq=brightness=-0.3,scale={W}:{camara_h}:flags=bilinear,"
-                      "format=yuv420p,setsar=1[camara]")
-    partes.append("[arriba][juego][marcador][camara]vstack=4[pila]")
+        partes.append("[p3]format=yuv420p,setsar=1[pila]")
     pila = "[pila]"
     if placa_idx is not None and D:
-        cy = ARRIBA_H + g.extra_arriba + g.juego_h // 2
+        cy = ARRIBA_H + JUEGO_H // 2
         partes += [
             f"[{placa_idx}:v]format=rgba,fade=t=in:st=0:d={PLACA_FADE_IN}:alpha=1,"
             f"fade=t=out:st={max(0.0, D - PLACA_FADE_OUT):.3f}:d={PLACA_FADE_OUT}:alpha=1[placa]",
@@ -445,15 +585,17 @@ def action_focus(path: str, t: float, zoom: float = 1.3, span: float = 0.6,
     spread = float(np.sqrt((((xs / FOCUS_W - u) ** 2 + (ys / h - v) ** 2) * w).sum() / w.sum()))
     if spread > FOCUS_MAX_SPREAD:
         return None
-    top = ARRIBA_H + g.extra_arriba
-    return round(u, 3), round((top + v * g.juego_h) / H, 3)
+    return round(u, 3), round((ARRIBA_H + v * g.juego_h) / H, 3)
 
 
-def edit_geometry(camara_y: int, zoom: float = 1.3, camera: bool = False) -> str:
+def edit_geometry(camara_y: int | tuple, zoom: float = 1.3, camera: bool = True,
+                  split: list[tuple[float, float]] | None = None) -> str:
     """The layout as the geometry of an edit-mode shot (editing/render.py):
     no color (the edit's look sets it), no watermark (it goes at the end,
-    static) and with the last chain open so the render can append the retime."""
-    fc = build_filter_complex(camara_y, zoom, "off", None, camera=camera)
+    static) and with the last chain open so the render can append the retime.
+    `split`: seconds of the span file (the render puts in each shot's -ss)."""
+    from modules.editing.render import SOURCE_T0
+    fc = build_filter_complex(camara_y, zoom, "off", None, camera=camera, split=split, t0=SOURCE_T0)
     return fc[: -len("[vout]")] if fc.endswith("[vout]") else fc
 
 
@@ -471,10 +613,10 @@ def build_concat(lista: str, out: str) -> list[str]:
             "-movflags", "+faststart", out]
 
 
-def build_command(src: str, out: str, desde: float, duracion: float, camara_y: int,
+def build_command(src: str, out: str, desde: float, duracion: float, camara_y: int | tuple,
                   zoom: float = 1.3, color: str = "vivo", marca_path: str | None = None,
                   marca_alto: int = MARCA_ALTO_DEFECTO, intro: IntroEncima | None = None,
-                  con_audio: bool = True) -> list[str]:
+                  con_audio: bool = True, split: list[tuple[float, float]] | None = None) -> list[str]:
     """Un solo encode por clip: recorte exacto del tramo + layout + watermark.
 
     `intro`: la intro "encima" del clip 1 (placa + voz + ducking del juego).
@@ -510,10 +652,12 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
         audio.append(f"{''.join(fuentes)}amix=inputs={len(fuentes)}:normalize=0:duration={largo},"
                      f"{LIMITADOR},apad,atrim=0:{duracion:.3f}[aout]")
         filtros = build_filter_complex(camara_y, zoom, color, marca, marca_alto,
-                                       placa_idx=placa_idx, D=placa_s) + ";" + ";".join(audio)
+                                       placa_idx=placa_idx, D=placa_s, split=split,
+                                       t0=desde) + ";" + ";".join(audio)
         amap = "[aout]"
     cmd += [
-        "-filter_complex", filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto),
+        "-filter_complex", filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto,
+                                                           split=split, t0=desde),
         "-map", "[vout]", "-map", amap,
         "-r", "60",
         *ffmpeg_runner.video_encode_flags(),

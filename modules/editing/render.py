@@ -33,6 +33,13 @@ OUTPUT = "format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_
 WATERMARK_MARGIN = 14
 
 
+
+# A shot's geometry (Segment.vf) sees the time of its input, which starts at
+# that shot's -ss. A geometry that needs SOURCE time (competitivo's split
+# camera ranges) writes `(t+SOURCE_T0)` and each shot puts its -ss there.
+SOURCE_T0 = "__SOURCE_T0__"
+
+
 def vf_cover(width: int, height: int) -> str:
     """The source fills the frame (crops the excess), centered."""
     return (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
@@ -64,7 +71,7 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
     ss = max(0.0, a - 0.05)
     cmd = [config.FFMPEG_PATH, "-y", "-ss", f"{ss:.3f}", "-t", f"{b - ss + 0.3:.3f}", "-i", seg.source]
     k = len(seg.pieces)
-    geo = seg.vf or vf_cover(width, height)
+    geo = (seg.vf or vf_cover(width, height)).replace(SOURCE_T0, f"{ss:.4f}")
     # A graph that already names its input ([0:v]…, like competitivo's layout)
     # goes as-is; otherwise the input is prepended. Its last chain must stay
     # open: the retime is appended here.
