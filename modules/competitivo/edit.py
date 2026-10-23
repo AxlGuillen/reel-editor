@@ -69,6 +69,10 @@ RAMP_PROFILE = [(0.22, 0.3), (0.48, 1.0), (0.30, 1.5)]   # 0.3× at the kill →
 FREEZE_S, FREEZE_ZOOM = 0.15, 0.3
 REPLAY_SHOW, REPLAY_BACK, REPLAY_SPEED, REPLAY_ZOOM = 0.45, 1.5, 0.4, 0.6
 STAIR = (0.1, 0.2, 0.3, 0.4)
+TEASER_MIN, TEASER_MAX = 2.0, 3.0
+SHORT_MAX_S = 25.0
+AMBIENT_COLD_S = 2.5          # the ambient shot after the teaser
+AMBIENT_MIN_S = 1.5
 
 
 @dataclass
@@ -93,6 +97,8 @@ class EditClip:
     closes: bool = False
     title: str = ""
     vf: str = ""                      # geometry (vertical layout) of this span
+    ambient: list = field(default_factory=list)   # [(a, b)] s of the span: stage, players, crowd
+    ambient_vf: str = ""              # geometry of those shots (layout.ambient_geometry)
 
 
 @dataclass
@@ -112,6 +118,10 @@ class EditOptions:
     recipes: tuple = ()               # acts: the allowed recipes; empty = all (auto)
     cold_open_s: float = 6.5
     build_fights: int = 2
+    chronological: bool = True        # acts: every fight in order, the cold open a teaser
+    teaser_s: float = 2.5             # chronological: the key fight's teaser (2–3 s)
+    short: bool = False               # acts: only the key fight and the best other one, ~20–25 s
+    ambient: bool = False             # acts: stage/crowd shots in the cold open and the outro
 
 
 @dataclass
@@ -430,6 +440,20 @@ def _ramp_recipe(a: float, b: float, d: float) -> list[Piece]:
     return timing.ramp(a, b, d, RAMP_PROFILE)
 
 
+def _ambient_shot(clips: list[EditClip], used: set, prefer: int | None = None,
+                  after: float | None = None) -> tuple[int, float, float] | None:
+    """An unused ambient shot (clip index, a, b), the longest; with `prefer`,
+    one of that clip after `after` (the reaction to its last kill) goes first."""
+    pool = [(i, a, b) for i, c in enumerate(clips) for a, b in c.ambient
+            if b - a >= AMBIENT_MIN_S and (i, a) not in used]
+    if not pool:
+        return None
+    best = max(pool, key=lambda x: (prefer is not None and x[0] == prefer and (after is None or x[1] >= after),
+                                    x[2] - x[1]))
+    used.add(best[:2])
+    return best
+
+
 def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     """EDL of the "acts" edit (see the module docstring)."""
     if not clips:
@@ -442,11 +466,34 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     per = analysis.period(bm)
     hits_of = [merge([k for k in c.kills if c.start <= k.t <= c.end]) or [EditKill((c.start + c.end) / 2)]
                for c in clips]
-    key = max(range(len(clips)), key=lambda i: (clips[i].closes, clips[i].score, i))
-    cold = max(range(len(clips)), key=lambda i: (clips[i].score, i == key, i))
-    others = sorted((i for i in range(len(clips)) if i not in (cold, key)), key=lambda i: (-clips[i].score, i))
-    build = sorted(others[:max(0, op.build_fights)])
-    drop_idx = [i for i in range(len(clips)) if i not in build] or [key]
+    n_clips = len(clips)
+    key = max(range(n_clips), key=lambda i: (clips[i].closes, clips[i].score, i))
+    chrono = op.chronological or op.short
+    max_duration = min(op.max_duration_s, SHORT_MAX_S) if op.short else op.max_duration_s
+    if op.short:
+        # The key fight and the best other one, both on the drop, in order.
+        others = [i for i in range(n_clips) if i != key]
+        best_other = max(others, key=lambda i: (clips[i].score, -i)) if others else None
+        cold, build = key, []
+        drop_idx = sorted([key] + ([best_other] if best_other is not None else []))
+    elif chrono:
+        # Every fight in order: the first ones (before the key one) in real
+        # time with Ibai, the rest on the beat; the cold open only teases the key.
+        cold = key
+        build = [i for i in range(n_clips) if i < key][:max(0, op.build_fights)]
+        drop_idx = [i for i in range(n_clips) if i not in build]
+    else:
+        cold = max(range(n_clips), key=lambda i: (clips[i].score, i == key, i))
+        others = sorted((i for i in range(n_clips) if i not in (cold, key)), key=lambda i: (-clips[i].score, i))
+        build = sorted(others[:max(0, op.build_fights)])
+        drop_idx = [i for i in range(n_clips) if i not in build] or [key]
+    # Ambient shots: the outro's first (the reaction right after the last fight
+    # is the best one), then the cold open's.
+    used_ambient: set = set()
+    outro_guess = drop_idx[-1] if chrono else key
+    outro_shot = _ambient_shot(clips, used_ambient, prefer=outro_guess,
+                               after=hits_of[outro_guess][-1].t) if op.ambient else None
+    cold_shot = _ambient_shot(clips, used_ambient) if op.ambient else None
 
     segments: list[Segment] = []
     events: list[Event] = []
@@ -467,13 +514,27 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         voice.append({"source": c.source, "start": round(a, 3), "end": round(b, 3), "out": round(t, 3)})
         return b - a
 
-    # cold open: the best fight, its best moment at 70 % of the shot.
+    # cold open: the best moment of a fight at 70 % of the shot. Chronological:
+    # a 2–3 s teaser of the key fight; if not, 5–8 s of the best one.
     t = 0.0
     hs = hits_of[cold]
     best = max(hs, key=lambda h: (h.count, h.t))
-    d = max(COLD_MIN, min(COLD_MAX, op.cold_open_s))
+    d = (max(TEASER_MIN, min(TEASER_MAX, op.teaser_s)) if chrono
+         else max(COLD_MIN, min(COLD_MAX, op.cold_open_s)))
     t += real_shot(cold, best.t - COLD_FOCUS * d, best.t + (1 - COLD_FOCUS) * d, "cold_open", t, best)
-    acts.append({"act": "cold_open", "start": 0.0, "end": t, "clips": [clips[cold].id],
+    cold_clips = [clips[cold].id]
+    if cold_shot:
+        # Then the stage or the crowd, with Ibai's voice.
+        i, a, b = cold_shot
+        c = clips[i]
+        dur = min(AMBIENT_COLD_S, b - a)
+        events.append(Event(t, "whip", 0.8, WHIP_DUR))
+        segments.append(Segment(c.source, [Piece(a, a + dur, dur)], f"{c.id}:ambient", c.ambient_vf or c.vf))
+        events.append(Event(t, "push", dur=dur, level=PUSH_LEVEL))
+        voice.append({"source": c.source, "start": round(a, 3), "end": round(a + dur, 3), "out": round(t, 3)})
+        t += dur
+        cold_clips.append(f"{c.id}:ambient")
+    acts.append({"act": "cold_open", "start": 0.0, "end": t, "clips": cold_clips,
                  "music": MUSIC_COLD, "game": 1.0})
     # build: 1–2 more fights in real time, whips between the shots.
     build_start = t
@@ -503,11 +564,16 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         return ids.index(key) if key in ids else max(range(len(plans)), key=lambda n: plans[n].clip.score)
 
     key_p = key_index()
-    while len(plans) > 1 and drop_out + drop_dur(plans) + outro_est > op.max_duration_s:
+    while len(plans) > 1 and drop_out + drop_dur(plans) + outro_est > max_duration:
         worst = min((n for n in range(len(plans)) if n != key_p), key=lambda n: (plans[n].clip.score, -n))
         dropped.append(plans.pop(worst).clip.id)
         ids.pop(worst)
         key_p = key_index()
+    if op.short:
+        # ~20–25 s: one bar of lead-in per fight (two fit only that way).
+        for pl in plans:
+            pl.lead_in = 4
+            pl.lead_in_src = min(pl.lead_in_src, 4 * per * op.speed)
     recipes = assign_recipes(plans, key_p, allowed)
     for pl, recs in zip(plans, recipes):
         if recs and all(r == "stair_zoom" for r in recs):
@@ -521,6 +587,8 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         pl.tail_src = max(0.0, min(pl.clip.end - pl.hits[-1].t, pl.tail * per * op.speed))
     drop_beats = sum(p.beats for p in plans)
     outro_beats = 4 if 4 * per >= 2.5 else 8
+    if op.ambient and any(len(c.ambient) for c in clips):
+        outro_beats *= 2                  # half the nexus, half the stage or the crowd
 
     # Where the music starts: the drop act begins exactly on the song's drop,
     # or on the beat of music_start if it was given.
@@ -554,7 +622,7 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     segments.append(Segment(first.clip.source, [Piece(x0, x0, SILENCE_S)], "silence", first.clip.vf))
     events.append(Event(silence_start, "black", dur=SILENCE_S))
 
-    key_end_src = None
+    end_src: list[float] = []
     r = 0
     for n, (pl, recs) in enumerate(zip(plans, recipes)):
         c = pl.clip
@@ -616,28 +684,42 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         pieces = timing.clamp_speeds(pieces, 0.0, timing.MAX_SPEED)
         segments.append(Segment(c.source, pieces, c.id, c.vf))
         events.append(Event(T(r0), "whip", 0.8, WHIP_DUR) if n > 0 else Event(T(r0), "flash", 1.0, 0.2))
-        if n == key_p:
-            key_end_src = max(p.end for p in pieces)
+        end_src.append(max(p.end for p in pieces))
     drop_end = T(drop_beats)
     acts.append({"act": "silence", "start": silence_start, "end": drop_out, "clips": [],
                  "music": 0.0, "game": 0.0})
     acts.append({"act": "drop", "start": drop_out, "end": drop_end,
                  "clips": [p.clip.id for p in plans], "music": 1.0, "game": GAME_DROP})
 
-    # outro: the closing fight's tail (the nexus) in real time, frozen if it runs out.
-    oc = plans[key_p].clip
-    src = key_end_src if key_end_src is not None else oc.end
+    # outro: the tail (the nexus) in real time, frozen if it runs out: of the
+    # LAST fight when chronological (it goes on, it does not repeat the key one),
+    # of the key one if not. With ambient shots, its second half is the stage
+    # or the crowd (better: the reaction right after that fight).
+    oi = len(plans) - 1 if chrono else key_p
+    oc = plans[oi].clip
+    src = end_src[oi]
     od = T(drop_beats + outro_beats) - drop_end
+    shot = outro_shot
+    nexus_d = T(drop_beats + outro_beats // 2) - drop_end if shot else od
     avail = max(0.0, oc.end - src)
-    if avail >= od:
-        outro = [Piece(src, src + od, od)]
+    if avail >= nexus_d:
+        outro = [Piece(src, src + nexus_d, nexus_d)]
     elif avail > 0.05:
-        outro = [Piece(src, oc.end, avail), Piece(oc.end, oc.end, od - avail)]
+        outro = [Piece(src, oc.end, avail), Piece(oc.end, oc.end, nexus_d - avail)]
     else:
-        outro = [Piece(src, src, od)]
+        outro = [Piece(src, src, nexus_d)]
     segments.append(Segment(oc.source, outro, f"{oc.id}:outro", oc.vf))
+    outro_clips = [oc.id]
+    if shot:
+        i, a, b = shot
+        c = clips[i]
+        amb_d = od - nexus_d
+        pieces = [Piece(a, a + amb_d, amb_d)] if b - a >= amb_d else [Piece(a, b, b - a), Piece(b, b, amb_d - (b - a))]
+        events.append(Event(drop_end + nexus_d, "whip", 0.6, WHIP_DUR))
+        segments.append(Segment(c.source, pieces, f"{c.id}:ambient", c.ambient_vf or c.vf))
+        outro_clips.append(f"{c.id}:ambient")
     end = drop_end + od
-    acts.append({"act": "outro", "start": drop_end, "end": end, "clips": [oc.id],
+    acts.append({"act": "outro", "start": drop_end, "end": end, "clips": outro_clips,
                  "music": 1.0, "game": [GAME_DROP, 1.0]})
 
     # Volumes per act (short ramps: no clicks).

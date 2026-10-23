@@ -371,6 +371,10 @@ class EditParams:
     voice_language: str = "es"
     subs_style: dict | None = None    # SubtitlesParams fields for those subtitles
     review: bool = False              # pause with Ibai's segments before burning (/edit/finish)
+    chronological: bool = True        # acts: every fight in order, the cold open a teaser of the key one
+    teaser_s: float = 2.5             # that teaser (2–3 s)
+    short: bool = False               # acts: only the key fight and the best other one (~20–25 s)
+    ambient: bool = False             # acts: stage/crowd shots in the cold open and the outro
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
@@ -429,5 +433,9 @@ class EditParams:
             voice_language=choice("voice_language", sorted(VALID_LANGUAGES - {"auto"}), "es"),
             subs_style=_subs_style(SubtitlesParams.from_form(form)),
             review=_bool(form, "review", False),
+            chronological=_bool(form, "chronological", True),
+            teaser_s=_num(form, "teaser_s", 2.5, 2.0, 3.0, float),
+            short=_bool(form, "short", False),
+            ambient=_bool(form, "ambient", False),
             **_salida(form, base),
         )

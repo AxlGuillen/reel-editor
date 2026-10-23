@@ -159,3 +159,31 @@ class Render(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AmbientShots(unittest.TestCase):
+    """Without the scoreboard and without the game: the stage, the players,
+    the crowd. A replay (the game, no scoreboard) is not one."""
+
+    def test_detected_and_framed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mx, my, mw, mh = L.MARCADOR
+            game = "noise=alls=60:allf=t"                                   # green texture: the Rift
+            board = f"drawbox=x={mx}:y={my}:w={mw}:h={mh}:color=0xC8C8C8:t=fill"
+            src = _video(os.path.join(tmp, "amb.mp4"),
+                         # 0–4 live, 4–6 replay (game, no board), 6–9 a camera (dark blue, no board), 9–12 live
+                         f"[0:v]{game},{board}:enable='lt(t,4)+gte(t,9)',"
+                         f"drawbox=x={mx}:y={my}:w={mw}:h={mh}:color=0x101010:t=fill:enable='between(t,4,9)',"
+                         "drawbox=x=0:y=0:w=1920:h=1080:color=0x202848:t=fill:enable='between(t,6,9)'[v]",
+                         dur=12.0, inputs=("color=c=0x2E7A3A:s=1920x1080:r=10",))
+            ranges = L.ambient_ranges(src)
+            self.assertEqual(len(ranges), 1, ranges)
+            a, b = ranges[0]
+            self.assertAlmostEqual(a, 6.0, delta=0.6)
+            self.assertAlmostEqual(b, 9.0, delta=0.6)
+            # its geometry: the whole view in the middle of the gameplay box, the camera below
+            out = os.path.join(tmp, "out.mp4")
+            subprocess.run([config.FFMPEG_PATH, "-y", "-v", "error", "-ss", "6.5", "-t", "1", "-i", src,
+                            "-filter_complex", L.ambient_geometry(L.CAMARA_Y_DEFECTO) + "[v]", "-map", "[v]",
+                            "-c:v", "libx264", "-preset", "ultrafast", out], check=True)
+            self.assertEqual(ffmpeg_runner.probe_resolution(out), (1080, 1920))

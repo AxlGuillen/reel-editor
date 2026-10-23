@@ -359,6 +359,82 @@ def split_ranges(path: str, fps: float = 4, ss: float = 0.0,
     return out
 
 
+# --- Ambient shots ----------------------------------------------------------------
+AMBIENT_GREEN = 0.02          # the Rift: 5–43 % saturated green; real cameras: 0–0.1 %
+AMBIENT_MIN_S = 1.5
+
+
+def _green_share(rgb: np.ndarray) -> np.ndarray:
+    """Share of saturated green-teal pixels (the map) of each RGB frame."""
+    a = rgb / 255.0
+    mx, mn = a.max(axis=-1), a.min(axis=-1)
+    d = np.maximum(mx - mn, 1e-6)
+    s = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    h = np.where(mx == r, ((g - b) / d) % 6, np.where(mx == g, (b - r) / d + 2, (r - g) / d + 4)) * 60
+    green = (h >= 70) & (h <= 170) & (s > 0.25) & (mx > 0.12)
+    return green.mean(axis=(1, 2))
+
+
+def ambient_ranges(path: str, fps: float = 2) -> list[tuple[float, float]]:
+    """[(a, b)] seconds of the span with "ambient" shots: no scoreboard (not the
+    live game) and no game image either (no replay): the stage, the players,
+    the crowd. A real camera has no saturated green; the Rift always does
+    (measured in IG-GEN 23/10: 0–0.1 % against 5–43 %). At least AMBIENT_MIN_S."""
+    mx_, my_, mw, mh = MARCADOR
+    m = _gris(path, f"fps={fps},crop={mw}:{mh}:{mx_}:{my_},scale={mw // 4}:{mh // 4}:flags=area",
+              w=mw // 4, h=mh // 4)
+    jx, jy, jw, jh = JUEGO
+    raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-i", path, "-an", "-vf",
+                                 f"fps={fps},crop={jw}:{jh}:{jx}:{jy},scale=160:78,format=rgb24",
+                                 "-f", "rawvideo", "-"])
+    rgb = np.frombuffer(raw, np.uint8)
+    n = min(len(m), rgb.size // (160 * 78 * 3))
+    if n < 3:
+        return []
+    rgb = rgb[: n * 160 * 78 * 3].reshape(n, 78, 160, 3).astype(np.float32)
+    d = np.abs(m[:n] - np.median(m[:n], axis=0)).mean(axis=(1, 2))
+    live = d < max(18.0, 3 * float(np.median(d)))
+    ambient = ~live & (_green_share(rgb) < AMBIENT_GREEN)
+    out, start = [], None
+    for i, hit in enumerate(list(ambient) + [False]):
+        if hit and start is None:
+            start = i
+        elif not hit and start is not None:
+            # Half a sample inside each border: the cut falls somewhere between samples.
+            a, b = (start + 0.5) / fps, (i - 0.5) / fps
+            if b - a >= AMBIENT_MIN_S:
+                out.append((round(a, 2), round(b, 2)))
+            start = None
+    return out
+
+
+def ambient_geometry(camara: int | tuple, camera: bool = True) -> str:
+    """Geometry of an ambient shot in an edit (like edit_geometry): the clean
+    zone at full width in the middle of the gameplay box, over the whole frame
+    blurred, and Ibai's camera where it always is. Without the table and the
+    scoreboard (in these shots they are not there)."""
+    kx, ky, kw, kh = camara if isinstance(camara, tuple) else (CAMARA_X, camara, CAMARA_W, CAMARA_H)
+    jx, jy, jw, jh = JUEGO
+    n = 3 if camera else 2
+    partes = [
+        f"[0:v]split={n}[a_fondo][a_juego]" + ("[a_camara]" if camera else ""),
+        f"[a_fondo]scale=-2:{H // 4},crop={W // 4}:{H // 4},gblur=sigma=10,lutyuv=y=val*{BG_DIM},"
+        f"scale={W}:{H}:flags=bilinear,format=yuv420p,setsar=1[a_bg]",
+        f"[a_juego]crop={jw}:{jh}:{jx}:{jy},scale={W}:{SPLIT_H}:flags=lanczos,setsar=1[a_view]",
+        f"[a_bg][a_view]overlay=0:{ARRIBA_H + (JUEGO_H - SPLIT_H) // 2}[a_p]",
+    ]
+    if camera:
+        partes += [
+            *_rounded(f"[a_camara]crop={kw}:{kh}:{kx}:{ky},scale={CAMARA_ANCHO}:{CAMARA_H_OUT}:flags=lanczos,",
+                      CAMARA_ANCHO, CAMARA_H_OUT, RADIO_CAMARA, "a_cam"),
+            f"[a_p][a_cam]overlay={(W - CAMARA_ANCHO) // 2}:{CAMARA_Y_OUT},format=yuv420p,setsar=1",
+        ]
+    else:
+        partes.append("[a_p]format=yuv420p,setsar=1")
+    return ";".join(partes)
+
+
 # Dígitos de kills del marcador, a cada lado del logo central. El equipo azul
 # siempre va a la izquierda y el rojo a la derecha (en la G2 del día 1 C9 fue
 # azul y pasó a la izquierda). El oro, que cambia todo el tiempo, queda afuera.

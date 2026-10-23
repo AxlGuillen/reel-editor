@@ -607,6 +607,7 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 span_dur = ffmpeg_runner.probe_duration(span) or (end + MARGEN_CLIP_S)
                 an = layout.analizar(span, t_kill, max(0.0, start - 4), min(span_dur, end))
                 split = layout.split_ranges(span)
+                box = an.camara or an.camara_y
                 authors = c.get("authors") or [None] * len(c["eventos"])
                 counts = c.get("counts") or [1] * len(c["eventos"])
                 ks = [edit_plan.EditKill(t - ep.kill_lead_s + shift, side, (au or {}).get("player", ""),
@@ -623,7 +624,9 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 clips.append(edit_plan.EditClip(
                     c["id"], span, an.vivo_desde, an.vivo_hasta, ks, c["puntaje"], c.get("multikill"),
                     c.get("cierra", False), c["titulo"],
-                    layout.edit_geometry(an.camara or an.camara_y, ep.zoom, ep.with_camera, split)))
+                    layout.edit_geometry(box, ep.zoom, ep.with_camera, split),
+                    ambient=layout.ambient_ranges(span) if ep.ambient else [],
+                    ambient_vf=layout.ambient_geometry(box, ep.with_camera) if ep.ambient else ""))
 
         if not clips:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
@@ -632,7 +635,9 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                                    align_drop=ep.align_drop, music_start=ep.music_start, text=ep.text,
                                    music_accents=ep.music_accents, title=ep.edit_title,
                                    structure=ep.structure, recipes=ep.recipes,
-                                   cold_open_s=ep.cold_open_s, build_fights=ep.build_fights)
+                                   cold_open_s=ep.cold_open_s, build_fights=ep.build_fights,
+                                   chronological=ep.chronological, teaser_s=ep.teaser_s, short=ep.short,
+                                   ambient=ep.ambient)
         res = edit_plan.plan(clips, bm, op)
         edl = res.edl
         plan_info = {"structure": ep.structure, **res.plan_dict()}

@@ -319,6 +319,20 @@ class FullJob(unittest.TestCase):
         self.assertFalse(processor.edit_waiting(job))
         self.assertEqual(c.post("/api/competitivo/edit/finish", data={"job_id": job, "segments": "[]"}).status_code, 409)
 
+    def test_short_with_ambient_shots(self):
+        params = self._session()
+        music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
+        ep = EditParams.from_form({"short": "1", "ambient": "1", "voice_subs": "0"}, params)
+        job = job_manager.create_job("x", "")
+        with mock.patch.object(processor.layout, "ambient_ranges", return_value=[(0.5, 3.5)]):
+            processor.edit(job, "phase1", ep, music)
+        j = job_manager.get_job(job)
+        self.assertEqual(j["status"], "done", j["error"])
+        acts = {a["act"]: a for a in j["resultado"]["plan"]["acts"]}
+        self.assertEqual(list(acts), ["cold_open", "silence", "drop", "outro"])
+        self.assertTrue(any(c.endswith(":ambient") for c in acts["cold_open"]["clips"] + acts["outro"]["clips"]))
+        self.assertAlmostEqual(ffmpeg_runner.probe_duration(j["resultado"]["video"]), acts["outro"]["end"], delta=0.06)
+
     def test_a_span_without_video_is_skipped(self):
         params = self._session()
         music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
@@ -411,6 +425,7 @@ class Acts(unittest.TestCase):
                 _clip(4, [9.0, 11.5], 90, closes=True)]
 
     def _plan(self, clips=None, **kw):
+        kw.setdefault("chronological", False)          # the v2 order (best fight first)
         return E.plan(clips or self._clips(), self.BM, E.EditOptions(structure="acts", **kw))
 
     def test_acts_in_order_with_their_volumes(self):
@@ -534,6 +549,56 @@ class Acts(unittest.TestCase):
         early = self._plan(music_start=3.0)                              # before the cold open fits
         self.assertGreaterEqual(early.music_start, 0)
         self.assertIn("music_start", early.warning)
+
+    def test_chronological_teases_the_key_fight_and_keeps_the_order(self):
+        res = self._plan(chronological=True)
+        acts = {a["act"]: a for a in res.acts}
+        self.assertAlmostEqual(acts["cold_open"]["end"], 2.5, places=3)          # a teaser
+        self.assertEqual(acts["cold_open"]["clips"], ["1-4"])                    # of the key fight
+        self.assertEqual(acts["build"]["clips"], ["1-1", "1-2"])                 # the first ones
+        self.assertEqual(acts["drop"]["clips"], ["1-3", "1-4"])                  # the rest, in order
+        order = [k["clip"] for k in res.kills]
+        self.assertEqual(order, sorted(order))
+        # the outro goes on from where the drop left the last fight: no repeat
+        drop_seg = next(s_ for s_ in res.edl.segments if s_.label == "1-4")
+        outro = next(s_ for s_ in res.edl.segments if s_.label == "1-4:outro")
+        self.assertGreaterEqual(min(p.start for p in outro.pieces), max(p.end for p in drop_seg.pieces) - 1e-6)
+        # the key fight is not the last one: the outro is the last one's tail
+        clips = [_clip(1, [8.0, 9.1], 50), _clip(2, [9.0, 11.5], 95), _clip(3, [7.0, 12.0], 40)]
+        res = self._plan(clips, chronological=True)
+        acts = {a["act"]: a for a in res.acts}
+        self.assertEqual((acts["cold_open"]["clips"], acts["build"]["clips"], acts["drop"]["clips"],
+                          acts["outro"]["clips"]), (["1-2"], ["1-1"], ["1-2", "1-3"], ["1-3"]))
+
+    def test_short_is_the_key_fight_and_the_best_other(self):
+        clips = [_clip(i, [6.0, 9.0], 50 + i) for i in range(1, 6)] + [_clip(6, [8.0, 11.0], 99, closes=True)]
+        res = self._plan(clips, short=True)
+        acts = {a["act"]: a for a in res.acts}
+        self.assertEqual([a["act"] for a in res.acts], ["cold_open", "silence", "drop", "outro"])
+        self.assertEqual(acts["drop"]["clips"], ["1-5", "1-6"])
+        self.assertLessEqual(acts["outro"]["end"], E.SHORT_MAX_S + 1)
+        self.assertAlmostEqual(acts["cold_open"]["end"], 2.5, places=3)
+
+    def test_ambient_shots_in_the_cold_open_and_the_outro(self):
+        clips = self._clips()
+        clips[0].ambient = [(14.0, 18.0)]
+        clips[3].ambient = [(2.0, 3.6), (15.0, 19.5)]                           # after its last kill: 15
+        for c in clips:
+            c.ambient_vf = "AMBIENT"
+        res = self._plan(clips, chronological=True, ambient=True)
+        acts = {a["act"]: a for a in res.acts}
+        self.assertEqual(acts["outro"]["clips"], ["1-4", "1-4:ambient"])         # the reaction to the last one
+        amb = [s_ for s_ in res.edl.segments if s_.label.endswith(":ambient")]
+        self.assertEqual([(s_.label, s_.pieces[0].start, s_.vf) for s_ in amb],
+                         [("1-1:ambient", 14.0, "AMBIENT"), ("1-4:ambient", 15.0, "AMBIENT")])
+        self.assertEqual(acts["cold_open"]["clips"], ["1-4", "1-1:ambient"])
+        self.assertAlmostEqual(acts["cold_open"]["end"], 2.5 + E.AMBIENT_COLD_S, places=3)
+        self.assertEqual(len(res.voice_spans), 4)                                # teaser, ambient, 2 build
+        # the outro ends on its bar, half nexus half stage
+        bar = (acts["outro"]["end"] + res.music_start) / 0.5
+        self.assertAlmostEqual(bar % 4, 0, places=2)
+        # without ambient=1 they are not used
+        self.assertFalse(any(s_.label.endswith(":ambient") for s_ in self._plan(clips, chronological=True).edl.segments))
 
     def test_plan_dict_and_beat_still_works(self):
         res = self._plan()

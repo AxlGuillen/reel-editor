@@ -119,6 +119,9 @@ Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cu
 | `drop` | arranca EXACTO en el drop de la canción (o en el beat de `music_start`, si se manda); el resto de las peleas al beat, con una receta por kill y whips entre peleas | 100 % | 15 % |
 | `outro` | la cola de la pelea de cierre (el nexo) en tiempo real; el juego vuelve a subir y la canción cierra en su compás (fundido) | 100 % | 15 → 100 % |
 
+- **Orden cronológico** (`chronological=1`, por defecto): todas las peleas en orden. El `cold_open` es un **adelanto de 2–3 s** (`teaser_s`) del mejor momento de la pelea clave; el `build` son las primeras peleas (antes de la clave), el `drop` el resto en orden, y el `outro` sigue la cola de la ÚLTIMA pelea del drop: la clave no sale tres veces (antes salía en el arranque, en el drop y en el cierre). Con `chronological=0` queda el orden de v2 (la de más puntaje primero, 5–8 s).
+- **Versión corta** (`short=1`): el adelanto, el silencio y en el drop solo la pelea clave y la de más puntaje (en orden, con un compás de entrada cada una), ~20–25 s (tope 25 s).
+- **Planos de ambiente** (`ambient=1`): en cada tramo bajado, los segundos sin marcador que NO son juego (`layout.ambient_ranges`: sin verde saturado del mapa; el Rift tiene 5–43 % y una cámara real 0–0.1 %, medido en IG-GEN), al menos 1.5 s: el escenario, los jugadores, el coach, el público. Se usan después del adelanto (2.5 s, con la voz de Ibai) y en la segunda mitad del outro (que pasa a 8 beats), con prioridad para la reacción justo después de la última pelea. Van con su propia geometría (`layout.ambient_geometry`: la vista completa en el medio, sin tabla ni marcador, y la cámara de Ibai).
 - En `cold_open` y `build` hay un **push-in** lento (1.0 → 1.12×) apuntando a la acción de la kill más grande, y **whips** entre los planos. Los cambios de volumen tardan 0.05 s (sin clics).
 - **Recetas por kill** (`recipes`: `auto` o lista, p. ej. `ramp,hard_cut`), con un hash fijo (misma serie → mismo edit) que nunca repite dos veces seguidas:
   - `ramp`: 0.3× en la kill → 1× → 1.5× hacia la siguiente;
@@ -134,7 +137,8 @@ Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cu
 
 ```
 POST /api/competitivo/edit   … [structure (acts | beat), recipes (auto | lista), cold_open_s (5–8),
-      build_fights (0–2), voice_subs, voice_language, review, vignette, with_camera, sub_inv_size,
+      build_fights (0–2), chronological, teaser_s (2–3), short, ambient,
+      voice_subs, voice_language, review, vignette, with_camera, sub_inv_size,
       sub_inv_y, sub_inv_direction, sub_inv_words, sub_font]
 POST /api/competitivo/edit/finish   job_id + segments (JSON)              → 202 (edit con review=1)
 GET  /api/competitivo/status/<id> → … plan {structure, acts, kills}, [segments, vocabulary]
