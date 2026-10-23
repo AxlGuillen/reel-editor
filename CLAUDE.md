@@ -480,9 +480,15 @@ video_encode_flags(crf=18) -> list[str]   # flags del encoder: h264_nvenc si la
                                           # GPU está (probe cacheado), si no libx264
 encoder_info() -> str                     # "GPU NVENC" / "CPU" (lo muestra Info)
 atempo_chain(tempo) -> str                # cadena de atempo para tempos > 2.0
+expr_sum(terms) -> str                    # suma de términos de una expresión de FFmpeg,
+                                          # en árbol balanceado (ver abajo)
 capture(command) -> bytes                 # corre FFmpeg y devuelve su stdout (frames en
                                           # rawvideo para analizar con numpy)
 ```
+
+**Dos límites de FFmpeg que en la nube no aparecían:**
+- **Largo del comando (solo Windows).** Windows corta la línea de comando entera en 32 767 caracteres; Linux, cada argumento en 128 KB. Un edit con muchos eventos o el preview de beats de una canción larga no llegaban a arrancar (`WinError 206`). `run()` y `capture()` pasan solos los grafos de más de 8 000 caracteres por un archivo temporal (`-/filter_complex <archivo>`, FFmpeg 7+) y lo borran después.
+- **Profundidad de una expresión (todos los sistemas).** El parser de expresiones de FFmpeg corta en ~100 niveles, y una suma plana `a+b+c…` tiene tantos niveles como términos: 100 sacudidas en un edit o los ~400 beats de cualquier canción daban `Error when parsing the expression`. Toda suma larga dentro de una expresión (`enable=`, `eq`, `zoompan`) va con `expr_sum()`, que la arma en árbol balanceado (10 000 términos funcionan).
 
 **Todo módulo que encodea usa `video_encode_flags()`**: es lo que hace que la GPU
 se use en todos lados sin repetir la detección.
