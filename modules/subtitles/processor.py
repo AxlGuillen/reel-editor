@@ -17,6 +17,7 @@ al inferir (los errores de DLL de CUDA en Windows son lazy).
 """
 import glob
 import os
+import re
 import sys
 import threading
 import uuid
@@ -257,12 +258,16 @@ def _get_model(name: str, device: str, compute: str):
 
 
 def transcribe(video_path: str, params: SubtitlesParams,
-               job_id: str | None = None) -> list[dict]:
+               job_id: str | None = None, initial_prompt: str | None = None,
+               hotwords: str | None = None) -> list[dict]:
     """Transcribe el audio y devuelve segmentos con palabras y timestamps.
 
     Cada segmento: {"id", "start", "end", "text", "words":[{word,start,end}]}.
     Lanza RuntimeError si no se detecta voz.
+    `initial_prompt` / `hotwords`: faster-whisper's, to get names right
+    (competitivo passes the teams, players and champions of the game).
     """
+    hints = {k: v for k, v in (("initial_prompt", initial_prompt), ("hotwords", hotwords)) if v}
     device, compute = _get_device()
     try:
         model = _get_model(params.model, device, compute)
@@ -272,7 +277,7 @@ def transcribe(video_path: str, params: SubtitlesParams,
         model = _get_model(params.model, device, compute)
 
     try:
-        segments = _run_transcription(model, video_path, params, job_id)
+        segments = _run_transcription(model, video_path, params, job_id, **hints)
     except RuntimeError:
         if device != "cuda":
             raise
@@ -280,7 +285,7 @@ def transcribe(video_path: str, params: SubtitlesParams,
         # no debe morir por eso. Reintento único en CPU.
         print("[subtitles] la inferencia en cuda falló, reintentando en cpu/int8")
         model = _get_model(params.model, "cpu", "int8")
-        segments = _run_transcription(model, video_path, params, job_id)
+        segments = _run_transcription(model, video_path, params, job_id, **hints)
 
     if not segments:
         raise RuntimeError(
@@ -291,7 +296,7 @@ def transcribe(video_path: str, params: SubtitlesParams,
 
 
 def _run_transcription(model, video_path: str, params: SubtitlesParams,
-                       job_id: str | None) -> list[dict]:
+                       job_id: str | None, **hints) -> list[dict]:
     """Corre la transcripción completa y arma los segmentos (con progreso)."""
     duration = ffmpeg_runner.probe_duration(video_path) or 0
     lang = None if params.language == "auto" else params.language
@@ -301,6 +306,7 @@ def _run_transcription(model, video_path: str, params: SubtitlesParams,
         word_timestamps=True,
         vad_filter=True,
         beam_size=5,
+        **hints,
     )
 
     segments: list[dict] = []
@@ -630,6 +636,13 @@ def _invert_groups(segments: list[list[dict]], mode: str) -> list[tuple[int, lis
     return groups
 
 
+_INV_TRAILING = re.compile(r"[.,;:!?…»\"')\]]+$")
+
+
+def _inv_clean(word: str) -> str:
+    return _INV_TRAILING.sub("", (word or "").strip())
+
+
 def _build_invert_ass(segments: list[list[dict]], params: SubtitlesParams,
                       until: float | None = None) -> str:
     """`until`: nothing stays on screen after this (the edit's acts: Ibai's
@@ -658,6 +671,10 @@ Style: Inv,{font["family"]},{fs},{WHITE},{WHITE},{BLACK},{BLACK},{-1 if font["bo
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+    # Without the punctuation at the end of each word ("vamos!" → "VAMOS"):
+    # one word alone in the middle of the frame reads better clean.
+    segments = [[{**w, "word": c} for w in seg if (c := _inv_clean(w["word"]))] for seg in segments]
+    segments = [seg for seg in segments if seg]
     groups = _invert_groups(segments, params.inv_words)
     events = []
     for g, (first, words) in enumerate(groups):

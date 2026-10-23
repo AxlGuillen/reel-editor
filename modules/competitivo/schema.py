@@ -370,6 +370,7 @@ class EditParams:
     voice_subs: bool = True           # Ibai's words in cold_open/build, "invert" subtitles
     voice_language: str = "es"
     subs_style: dict | None = None    # SubtitlesParams fields for those subtitles
+    review: bool = False              # pause with Ibai's segments before burning (/edit/finish)
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
@@ -427,5 +428,6 @@ class EditParams:
             voice_subs=_bool(form, "voice_subs", True),
             voice_language=choice("voice_language", sorted(VALID_LANGUAGES - {"auto"}), "es"),
             subs_style=_subs_style(SubtitlesParams.from_form(form)),
+            review=_bool(form, "review", False),
             **_salida(form, base),
         )

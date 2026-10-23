@@ -76,6 +76,10 @@ class BuildAss(unittest.TestCase):
         self.assertIn("Montserrat ExtraBold", ass)
         self.assertIn(",0,0,5,0,0,0,1", ass)              # no outline, no shadow, centered
 
+    def test_no_punctuation_at_the_end_of_a_word(self):
+        ev = _events(P.build_ass(_segments(["¡vamos!", "qué", "pelea...", "«Jinx»,", "?"]), _params()))
+        self.assertEqual([e[3] for e in ev], ["¡VAMOS", "QUÉ", "PELEA", "«JINX"])      # "?" alone: no word
+
     def test_pauses(self):
         # 0.8 s of silence: the word bridges it; 3 s: it leaves 0.5 s after it is sung
         segs = [[{"word": "uno", "start": 0.0, "end": 0.4}, {"word": "dos", "start": 1.2, "end": 1.6},

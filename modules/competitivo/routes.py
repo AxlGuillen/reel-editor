@@ -5,6 +5,7 @@ Contrato (también para que Claude lo opere solo; ver CLAUDE.md):
     GET  /status/<job_id>         → estado; al terminar la fase 1: partidas, clips, seleccion
     POST /finish                  → 202 {job_id}   fase 2: render (job_id en el form)
     POST /edit                    → 202 {job_id}   modo edit: las peleas al ritmo de una canción
+    POST /edit/finish             → 202 {job_id}   edit con review=1: los segmentos de Ibai corregidos
                                                    (job_id de la fase 1 + `music` o `music_url`;
                                                    devuelve un job nuevo, con su /status y /download)
     GET  /download/<job_id>       → resumen.mp4
@@ -14,6 +15,7 @@ Contrato (también para que Claude lo opere solo; ver CLAUDE.md):
     GET  /resumenes               → resúmenes guardados (carpeta persistente)
     GET  /resumenes/<ruta>        → un archivo guardado (ruta relativa, con subcarpetas)
 """
+import json
 import os
 import threading
 
@@ -88,6 +90,29 @@ def edit():
     return jsonify(job_id=job_id), 202
 
 
+@bp.post("/edit/finish")
+def edit_finish():
+    """Resumes an edit paused with review=1: `segments` (JSON) are Ibai's
+    segments of its status, with the text fixed."""
+    job_id = (request.form.get("job_id") or "").strip()
+    if not job_manager.get_job(job_id):
+        return jsonify(error="job_id no encontrado"), 404
+    if not processor.edit_waiting(job_id):
+        return jsonify(error="Ese edit no está esperando revisión."), 409
+    try:
+        segments = json.loads(request.form.get("segments") or "null")
+        if not isinstance(segments, list) or not all(
+                isinstance(x, dict) and isinstance(x.get("text", ""), str)
+                and isinstance(x.get("start"), (int, float)) and isinstance(x.get("end"), (int, float))
+                and isinstance(x.get("words") or [], list) for x in segments):
+            raise ValueError
+    except ValueError:
+        return jsonify(error="'segments' tiene que ser la lista de segmentos del status "
+                             "({start, end, text, [words]}), en JSON."), 400
+    threading.Thread(target=processor.edit_finish, args=(job_id, segments), daemon=True).start()
+    return jsonify(job_id=job_id), 202
+
+
 @bp.get("/status/<job_id>")
 def status(job_id):
     job = job_manager.get_job(job_id)
@@ -99,6 +124,7 @@ def status(job_id):
         aviso=job.get("aviso"), vod=job.get("vod"), partidas=job.get("partidas"),
         clips=job.get("clips"), seleccion=job.get("seleccion"), resultado=job.get("resultado"),
         portada=job.get("portada"), intro=job.get("intro"), plan=job.get("plan"),
+        segments=job.get("segments"), vocabulary=job.get("vocabulary"),
     )
 
 

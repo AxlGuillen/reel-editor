@@ -128,13 +128,16 @@ Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cu
   - `stair_zoom`: peleas con 3+ kills: una kill por beat, con zoom 1.1 / 1.2 / 1.3 / 1.4×.
 - **El zoom apunta a la acción** (`layout.action_focus`): el centroide del movimiento (diferencia entre cuadros, el 5 % que más se mueve) dentro del gameplay alrededor de cada kill, llevado a coordenadas de la salida. Si no se mueve nada o se mueve todo (la cámara del observador paneando), el centro.
 - **La voz de Ibai con subtítulos invertidos** (`voice_subs`, `voice_language`=es): cada plano en tiempo real se transcribe con faster-whisper y sus palabras se queman con el layout `invert` (los mismos campos `sub_inv_*` y `sub_font` que Subtítulos), solo hasta el silencio: **nunca encima de la letra**, que en este modo sale recién desde el drop.
+- **Nombres bien escritos** (`competitivo/vocab.py`): Whisper recibe como `initial_prompt` y `hotwords` los equipos, los 10 jugadores y los 10 campeones de ESA partida (la fase 1 guarda el plantel del feed en `partidas[].roster`), y después se aplican las correcciones conocidas de `assets/vocab.json` (mal oído → correcto; sin mayúsculas ni tildes, también frases). En el layout invertido cada palabra va **sin la puntuación final**.
+- **Revisión antes de quemar** (`review=1`): el edit se pausa después de transcribir (`status=done`, `finished=false`, `stage="esperando_revision"`) con `segments` (uno por plano en tiempo real, en tiempo de la salida: `{id, start, end, text, words}`) y `vocabulary`. `POST /api/competitivo/edit/finish` con `job_id` y `segments` (JSON, el texto corregido) renderiza: un segmento con el mismo texto conserva sus tiempos; uno cambiado se reparte sobre lo que cubrían sus palabras. Como la sesión vive en memoria, reiniciar el server pierde el edit pausado.
 - El status (y `resultado.plan`) trae el **plan por actos** (`acts: [{act, start, end, clips, music, game}]`) y la **receta de cada kill** (`kills: [{clip, t, recipe, count, player, champion}]`), para revisarlo; `resultado.subtitle_words` dice cuántas palabras de Ibai se quemaron.
 
 ```
 POST /api/competitivo/edit   … [structure (acts | beat), recipes (auto | lista), cold_open_s (5–8),
-      build_fights (0–2), voice_subs, voice_language, sub_inv_size, sub_inv_y, sub_inv_direction,
-      sub_inv_words, sub_font]
-GET  /api/competitivo/status/<id> → … plan {structure, acts, kills}
+      build_fights (0–2), voice_subs, voice_language, review, vignette, with_camera, sub_inv_size,
+      sub_inv_y, sub_inv_direction, sub_inv_words, sub_font]
+POST /api/competitivo/edit/finish   job_id + segments (JSON)              → 202 (edit con review=1)
+GET  /api/competitivo/status/<id> → … plan {structure, acts, kills}, [segments, vocabulary]
 ```
 
 **Como lo opera Claude:** fase 1 (`/process` con `modo=revisar`) → `/edit` con el `job_id` y la canción → poll de `/status/<nuevo>` hasta `finished=true`.

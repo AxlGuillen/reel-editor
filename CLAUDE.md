@@ -35,7 +35,8 @@ reel-editor/
 │   ├── fonts/                  ← fuentes de subtítulos (Poppins Bold/ExtraBold/Black, Anton,
 │   │                             Archivo Black, Montserrat ExtraBold/Black); SOLO archivos de fuente
 │   ├── font_licenses/          ← licencias OFL de las fuentes (fuera de fonts/ a propósito)
-│   └── luts/                   ← LUTs .cube para la gradación de los edits (opcionales)
+│   ├── luts/                   ← LUTs .cube para la gradación de los edits (opcionales)
+│   └── vocab.json              ← correcciones de nombres en los subtítulos de Ibai (mal oído → correcto)
 │
 ├── modules/                    ← Cada feature es un módulo independiente
 │   ├── reel_express/           ← PIPELINE: encadena vertical+audio+mezcla+watermark+subs
@@ -331,6 +332,7 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `layout.py` | Layout, análisis del tramo (cámara del set, repeticiones, contador de kills) y comando de render |
 | `fuente.py` | yt-dlp con la config del Downloader (cookies, runtimes JS, reintentos): hora de inicio del directo (`release_timestamp`, o `timestamp` en Twitch), plataforma y tramos HLS. Un directo de YouTube **todavía en vivo** se rechaza: yt-dlp baja lo que se transmite en ese momento, no el tramo (salieron clips de HLE vs TES en vez de IG vs GEN). El VOD de Twitch sí sirve mientras crece (formato `b[height<=1080]`, video y audio juntos; **máximo 2 tramos a la vez** en todo el server y **2 reintentos** si uno falla). Un tramo que baja **sin video** se baja otra vez; si vuelve igual (`SpanWithoutVideo`), ese clip se salta y queda en `aviso` y `skipped_clips` |
 | `intro.py` | Portada (vertical, `portada.jpg`) y placa (horizontal) con plantilla fija; voz de la intro por URL; segmento "aparte" |
+| `vocab.py` | Nombres bien escritos en los subtítulos de Ibai (modo edit): vocabulario de la partida para Whisper (equipos, 10 jugadores, 10 campeones) y las correcciones de `assets/vocab.json` |
 | `salida.py` | Dónde queda cada resumen: estructura por día/partido o por serie, nombres limpios para Windows, publicación sin pisar (lo anterior a `_descartados`), listado y rutas seguras para `/resumenes` |
 | `schema.py` / `processor.py` / `routes.py` | Contrato estándar de dos fases |
 

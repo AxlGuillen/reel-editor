@@ -34,7 +34,7 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import fuente, intro, kills, layout, salida
+from modules.competitivo import fuente, intro, kills, layout, salida, vocab
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -54,6 +54,8 @@ TRABAJO = os.path.join(config.OUTPUT_FOLDER, "competitivo")
 # Datos de cada sesión entre la fase 1 y la 2 (los jobs guardan lo que se
 # muestra; acá queda lo que hace falta para renderizar).
 _SESIONES: dict[str, dict] = {}
+# Edits paused for review (review=1): what /edit/finish needs to render.
+_EDIT_REVIEW: dict[str, dict] = {}
 
 
 def _iso(dt: datetime) -> str:
@@ -193,6 +195,10 @@ def process(job_id: str, params: CompetitivoParams) -> None:
                 "n": i, "game_id": p.game_id, "azul": p.azul, "rojo": p.rojo,
                 "inicio_utc": _iso(p.t0), "minutos": minutos,
                 "objetivo_s": kills.objetivo_s(reglas, minutos),
+                # The 10 players and champions (Whisper's vocabulary in the edits).
+                "roster": [{"team": p.azul if pid <= 5 else p.rojo,
+                            "player": vocab.player_name(p.nombres.get(pid, ""), (p.azul, p.rojo)),
+                            "champion": p.champions.get(pid, "")} for pid in sorted(p.nombres)],
                 "seleccion_s": round(sum(pe.duracion for pe in pe_lista if id(pe) in seleccion), 1),
                 **ancla,
             })
@@ -505,13 +511,15 @@ def _edit_destination(ep: EditParams, sesion: dict) -> tuple[str, str]:
     return folder, name
 
 
-def _voice_words(spans: list[dict], language: str, work: str) -> list[dict]:
+def _voice_words(spans: list[dict], language: str, work: str, terms: dict | None = None) -> list[dict]:
     """Ibai's words in the real-time shots ("acts"), in OUTPUT time: each shot's
     audio is transcribed (faster-whisper) and shifted to where the shot goes.
-    A shot without a voice simply adds nothing."""
+    A shot without a voice simply adds nothing. `terms` (vocab.game_terms):
+    the game's names, as Whisper's prompt and hotwords."""
     from modules.subtitles import processor as subtitles
     from modules.subtitles.schema import SubtitlesParams
     params = SubtitlesParams(language=language)
+    initial_prompt, hotwords = vocab.prompt(terms) if terms else (None, None)
     out: list[dict] = []
     for k, s in enumerate(spans):
         dur = s["end"] - s["start"]
@@ -519,7 +527,7 @@ def _voice_words(spans: list[dict], language: str, work: str) -> list[dict]:
         ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-y", "-ss", f"{s['start']:.3f}",
                                "-t", f"{dur:.3f}", "-i", s["source"], "-vn", "-ac", "1", "-ar", "16000", wav])
         try:
-            segments = subtitles.transcribe(wav, params)
+            segments = subtitles.transcribe(wav, params, initial_prompt=initial_prompt, hotwords=hotwords)
         except RuntimeError:
             continue
         finally:
@@ -549,6 +557,7 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
     it with the editing engine."""
     sesion = _SESIONES.get(phase1_id)
     temp = downloaded = None
+    paused = False
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe (¿se reinició el servidor?). Volvé a generar la propuesta.")
@@ -628,59 +637,157 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
         edl = res.edl
         plan_info = {"structure": ep.structure, **res.plan_dict()}
         job_manager.update_job(job_id, plan=plan_info)
+        state = {"edl": edl, "res": res, "bm": bm, "ep": ep, "sesion": sesion, "temp": temp,
+                 "music_path": music_path, "downloaded": downloaded, "skipped": skipped, "plan": plan_info}
         if ep.structure == "acts" and ep.voice_subs and res.voice_spans:
             job_manager.update_job(job_id, stage="Transcribiendo a Ibai…", progress=31)
-            edl.subtitle_words = _voice_words(res.voice_spans, ep.voice_language, temp)
+            terms = vocab.game_terms([r for c in chosen for r in _roster(sesion, c["game_id"])],
+                                     _teams(sesion, chosen, ep))
+            words = vocab.correct(_voice_words(res.voice_spans, ep.voice_language, temp, terms))
+            edl.subtitle_words = words
             edl.subtitle_style = dict(ep.subs_style or {})
             edl.subtitle_until = res.subtitle_until
-        edl.music = music_path
-        edl.look, edl.lut, edl.glow, edl.vignette = ep.look, ep.lut, ep.glow, ep.vignette
-        edl.original_volume = ep.game_volume / 100      # "beat"; "acts" brings its own automation
-        watermark = os.path.join(config.WATERMARKS_FOLDER, ep.watermark) if ep.watermark else None
-        edl.watermark, edl.watermark_height = watermark, ep.marca_alto
-        folder, name = _edit_destination(ep, sesion)
-        # Rendered aside (same folder, so os.replace works on any drive): a
-        # failed render used to leave a broken "Edit Mapa N.mp4" among the
-        # summaries, and the retry came out as "(2)".
-        partial = os.path.join(folder, f".edit-{job_id}.tmp.mp4")
-        try:
-            render_info = editing.render(edl, partial, job_id, os.path.join(temp, "render"), progress=(30, 99),
-                                         intensity=ep.intensity, text_y=edit_text_y(ep.zoom),
-                                         watermark_crop=layout.recorte_marca(watermark) if watermark else None)
-        except BaseException:
-            file_utils.cleanup_paths(partial)
-            raise
-        destination = salida._unico(folder, name)
-        os.replace(partial, destination)
-        result = {
-            "video": destination, "folder": os.path.dirname(destination), "name": os.path.basename(destination),
-            "download_name": os.path.basename(destination), "total_duration": render_info["dur"],
-            "music_start": round(res.music_start, 3), "drop_aligned": res.drop_aligned,
-            "bpm": bm["bpm"], "used_clips": res.used, "dropped_clips": res.dropped,
-            "warning": res.warning, "skipped_clips": skipped, "plan": plan_info,
-            "subtitle_words": len(edl.subtitle_words),
-            "edl": edl.to_dict(),
-        }
-        with open(os.path.splitext(destination)[0] + ".json", "w", encoding="utf-8") as fh:
-            json.dump({**result, "created": datetime.now(timezone.utc).isoformat(),
-                       "params": {k: v for k, v in asdict(ep).items() if k not in ("music", "lyrics")}},
-                      fh, ensure_ascii=False, indent=2, default=str)
-        # `resultado` and `aviso` are the keys the competitivo status already exposes.
-        notes = [res.warning] if res.warning else []
-        if skipped:
-            notes.append(f"Se saltó {'la pelea' if len(skipped) == 1 else 'las peleas'} "
-                         f"{', '.join(f'«{t}»' for t in skipped)}: el tramo bajó sin video dos veces.")
-        job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
-                               output_path=destination, resultado=result, aviso=" ".join(notes) or None)
+            if ep.review:
+                # A pause for a human (or Claude) to fix the names before burning:
+                # the status brings Ibai's segments; /edit/finish resumes.
+                _EDIT_REVIEW[job_id] = state
+                paused = True
+                job_manager.update_job(job_id, status="done", progress=32, stage="esperando_revision",
+                                       finished=False, segments=review_segments(words, res.voice_spans),
+                                       vocabulary=terms)
+                return
+        _render_edit(job_id, state)
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:
-        if temp:
-            shutil.rmtree(temp, ignore_errors=True)
-        if downloaded:
-            file_utils.cleanup_paths(downloaded)
-        elif music_path and music_path.startswith(config.UPLOAD_FOLDER):
-            file_utils.cleanup_paths(music_path)
+        if not paused:
+            _cleanup_edit(temp, downloaded, music_path)
+
+
+def _cleanup_edit(temp: str | None, downloaded: str | None, music_path: str | None) -> None:
+    if temp:
+        shutil.rmtree(temp, ignore_errors=True)
+    if downloaded:
+        file_utils.cleanup_paths(downloaded)
+    elif music_path and music_path.startswith(config.UPLOAD_FOLDER):
+        file_utils.cleanup_paths(music_path)
+
+
+def _render_edit(job_id: str, state: dict) -> None:
+    """The edit's render, from the plan (and Ibai's words, already reviewed)."""
+    edl, res, bm, ep, sesion = state["edl"], state["res"], state["bm"], state["ep"], state["sesion"]
+    temp, skipped, plan_info = state["temp"], state["skipped"], state["plan"]
+    edl.music = state["music_path"]
+    edl.look, edl.lut, edl.glow, edl.vignette = ep.look, ep.lut, ep.glow, ep.vignette
+    edl.original_volume = ep.game_volume / 100      # "beat"; "acts" brings its own automation
+    watermark = os.path.join(config.WATERMARKS_FOLDER, ep.watermark) if ep.watermark else None
+    edl.watermark, edl.watermark_height = watermark, ep.marca_alto
+    folder, name = _edit_destination(ep, sesion)
+    # Rendered aside (same folder, so os.replace works on any drive): a
+    # failed render used to leave a broken "Edit Mapa N.mp4" among the
+    # summaries, and the retry came out as "(2)".
+    partial = os.path.join(folder, f".edit-{job_id}.tmp.mp4")
+    try:
+        render_info = editing.render(edl, partial, job_id, os.path.join(temp, "render"), progress=(33, 99),
+                                     intensity=ep.intensity, text_y=edit_text_y(ep.zoom),
+                                     watermark_crop=layout.recorte_marca(watermark) if watermark else None)
+    except BaseException:
+        file_utils.cleanup_paths(partial)
+        raise
+    destination = salida._unico(folder, name)
+    os.replace(partial, destination)
+    result = {
+        "video": destination, "folder": os.path.dirname(destination), "name": os.path.basename(destination),
+        "download_name": os.path.basename(destination), "total_duration": render_info["dur"],
+        "music_start": round(res.music_start, 3), "drop_aligned": res.drop_aligned,
+        "bpm": bm["bpm"], "used_clips": res.used, "dropped_clips": res.dropped,
+        "warning": res.warning, "skipped_clips": skipped, "plan": plan_info,
+        "subtitle_words": len(edl.subtitle_words),
+        "edl": edl.to_dict(),
+    }
+    with open(os.path.splitext(destination)[0] + ".json", "w", encoding="utf-8") as fh:
+        json.dump({**result, "created": datetime.now(timezone.utc).isoformat(),
+                   "subtitles": edl.subtitle_words,
+                   "params": {k: v for k, v in asdict(ep).items() if k not in ("music", "lyrics")}},
+                  fh, ensure_ascii=False, indent=2, default=str)
+    # `resultado` and `aviso` are the keys the competitivo status already exposes.
+    notes = [res.warning] if res.warning else []
+    if skipped:
+        notes.append(f"Se saltó {'la pelea' if len(skipped) == 1 else 'las peleas'} "
+                     f"{', '.join(f'«{t}»' for t in skipped)}: el tramo bajó sin video dos veces.")
+    job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
+                           output_path=destination, resultado=result, aviso=" ".join(notes) or None)
+
+
+def edit_waiting(job_id: str) -> bool:
+    return job_id in _EDIT_REVIEW
+
+
+def edit_finish(job_id: str, segments: list[dict]) -> None:
+    """Resumes an edit paused for review (review=1) with Ibai's segments as
+    they were fixed: the words get the corrections again and it renders."""
+    state = _EDIT_REVIEW.pop(job_id, None)
+    try:
+        if not state:
+            raise RuntimeError("Ese edit no está esperando revisión (¿se reinició el servidor?).")
+        job_manager.update_job(job_id, status="processing", progress=33, stage="Renderizando el edit…",
+                               finished=False, error=None)
+        until = state["edl"].subtitle_until
+        words = [w for w in reviewed_words(segments) if until is None or w["start"] < until]
+        state["edl"].subtitle_words = vocab.correct(words)
+        _render_edit(job_id, state)
+    except Exception as exc:  # noqa: BLE001
+        job_manager.update_job(job_id, status="error", error=str(exc))
+    finally:
+        if state:
+            _cleanup_edit(state["temp"], state["downloaded"], state["music_path"])
+
+
+def review_segments(words: list[dict], spans: list[dict]) -> list[dict]:
+    """Ibai's words for the review, one segment per real-time shot (output
+    time): {id, start, end, text, words}. A segment whose text comes back
+    changed gets its timing spread over the same span (reviewed_words)."""
+    out = []
+    for k, sp in enumerate(spans):
+        a, b = sp["out"], sp["out"] + sp["end"] - sp["start"]
+        ws = [w for w in words if a <= w["start"] < b]
+        if ws:
+            out.append({"id": k, "start": round(a, 3), "end": round(b, 3),
+                        "text": " ".join(w["word"] for w in ws), "words": ws})
+    return out
+
+
+def reviewed_words(segments: list[dict]) -> list[dict]:
+    """The words of the reviewed segments. If a segment keeps its words and
+    they still say its text, their timing stays; if the text changed, the
+    words are spread over the time the original ones covered (or the
+    segment's), proportional to their length."""
+    from modules.subtitles import processor as subtitles
+    out: list[dict] = []
+    for seg in segments:
+        text = " ".join(str(seg.get("text") or "").split())
+        words = [w for w in seg.get("words") or [] if str(w.get("word") or "").strip()]
+        if words and " ".join(str(w["word"]).strip() for w in words) == text:
+            out += [{"word": str(w["word"]).strip(), "start": float(w["start"]), "end": float(w["end"])}
+                    for w in words]
+        elif text:
+            a = float(words[0]["start"]) if words else float(seg["start"])
+            b = float(words[-1]["end"]) if words else float(seg["end"])
+            out += subtitles._redistribute(text, a, b)
+    return sorted(out, key=lambda w: w["start"])
+
+
+def _roster(sesion: dict, game_id: str) -> list[dict]:
+    return next((d.get("roster") or [] for d in sesion["partidas"] if d["game_id"] == game_id), [])
+
+
+def _teams(sesion: dict, chosen: list[dict], ep: EditParams) -> list[str]:
+    """Team names for Whisper: the full names if they came, and the codes."""
+    p = sesion["params"]
+    names = [getattr(p, "equipo_azul", ""), getattr(p, "equipo_rojo", "")]
+    codes = [x for d in sesion["partidas"] if d["game_id"] in {c["game_id"] for c in chosen}
+             for x in (d.get("azul"), d.get("rojo"))]
+    return [n for n in names + codes if n]
 
 
 # --- Resúmenes guardados ----------------------------------------------------------

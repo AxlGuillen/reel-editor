@@ -1,0 +1,8 @@
+{
+  "_info": "Correcciones de la transcripción de Ibai en los edits de competitivo: lo que Whisper oye mal → la forma correcta. Las claves no distinguen mayúsculas ni tildes y pueden ser varias palabras. Se aplican antes de quemar los subtítulos.",
+  "corrections": {
+    "James": "Jinx",
+    "Quillana": "Qiyana",
+    "Quiyana": "Qiyana"
+  }
+}

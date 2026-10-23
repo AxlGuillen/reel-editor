@@ -291,6 +291,34 @@ class FullJob(unittest.TestCase):
         self.assertEqual(st["plan"]["structure"], "acts")
         self.assertEqual(st["plan"]["kills"], res["plan"]["kills"])
 
+    def test_review_pause_then_finish(self):
+        from app import create_app
+        params = self._session()
+        music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
+        ep = EditParams.from_form({"review": "1"}, params)                      # acts, by default
+        words = [{"words": [{"word": "vamos", "start": 0.4, "end": 0.8}, {"word": "James!", "start": 1.0, "end": 1.4}]}]
+        job = job_manager.create_job("x", "")
+        with mock.patch("modules.subtitles.processor.transcribe", return_value=words) as tr:
+            processor.edit(job, "phase1", ep, music)
+        j = job_manager.get_job(job)
+        self.assertEqual((j["status"], j["stage"], j["finished"]), ("done", "esperando_revision", False), j["error"])
+        self.assertIn("KC", tr.call_args.kwargs["hotwords"])                     # the game's names
+        self.assertIn("KC contra C9", tr.call_args.kwargs["initial_prompt"])
+        segs = j["segments"]
+        self.assertEqual([s_["text"] for s_ in segs], ["vamos Jinx!", "vamos Jinx!"])   # vocab.json applied
+        self.assertTrue(processor.edit_waiting(job))
+        c = create_app().test_client()
+        self.assertEqual(c.post("/api/competitivo/edit/finish", data={"job_id": job, "segments": "nada"}).status_code, 400)
+        self.assertEqual(c.post("/api/competitivo/edit/finish", data={"job_id": "no", "segments": "[]"}).status_code, 404)
+        segs[0]["text"] = "vamos Jinx vamos"
+        processor.edit_finish(job, segs)
+        j = job_manager.get_job(job)
+        self.assertEqual((j["status"], j["finished"]), ("done", True), j["error"])
+        self.assertEqual(j["resultado"]["subtitle_words"], 5)
+        self.assertTrue(os.path.isfile(j["resultado"]["video"]))
+        self.assertFalse(processor.edit_waiting(job))
+        self.assertEqual(c.post("/api/competitivo/edit/finish", data={"job_id": job, "segments": "[]"}).status_code, 409)
+
     def test_a_span_without_video_is_skipped(self):
         params = self._session()
         music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)

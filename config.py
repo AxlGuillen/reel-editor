@@ -40,6 +40,8 @@ BEATMAPS_FOLDER = os.path.join(BASE_DIR, "cache", "beatmaps")
 
 # LUTs (.cube) for color grading the edits: persistent and versionable.
 LUTS_FOLDER = os.path.join(ASSETS_FOLDER, "luts")
+# Corrections of the names in Ibai's subtitles (competitivo/vocab.py)
+VOCAB_FILE = os.path.join(ASSETS_FOLDER, "vocab.json")
 
 # Anime edits and edits of series without a day folder: PERSISTENT, like the
 # competitivo folder. Override: REELFORGE_EDITS_FOLDER.
