@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 
 import config
+from core import ffmpeg_runner
 from modules.editing.edl import Event
 
 ZOOM_ATTACK = 0.04
@@ -56,7 +57,10 @@ def lut_filter(name: str) -> str:
     """lut3d with the path RELATIVE to BASE_DIR (FFmpeg runs with cwd=BASE_DIR):
     the "C:" of an absolute Windows path breaks the filter parser."""
     path = os.path.join(config.LUTS_FOLDER, os.path.basename(name))
-    rel = os.path.relpath(path, config.BASE_DIR).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+    # Inside '…' FFmpeg takes backslashes literally, so a quote can't be escaped.
+    if "'" in name or not os.path.isfile(path):
+        raise ValueError(f"LUT inválido o inexistente: {name!r} (va en assets/luts, sin comillas en el nombre).")
+    rel = os.path.relpath(path, config.BASE_DIR).replace("\\", "/")
     return f"lut3d=file='{rel}':interp=tetrahedral"
 
 
@@ -86,7 +90,7 @@ def _pulse(t0: float, dur: float, attack: float = 0.0, var: str = "t") -> str:
 
 
 def _sum(terms: list[str]) -> str:
-    return "+".join(terms) if terms else "0"
+    return ffmpeg_runner.expr_sum(terms)
 
 
 def flash(events: list[Event], intensity: float = 1.0) -> str:
@@ -124,7 +128,7 @@ def rgb(events: list[Event], intensity: float = 1.0) -> str:
     if not ev:
         return ""
     px = max(2, int(round(RGB_PX * intensity * max(e.intensity for e in ev))))
-    enable = "+".join(f"between(t,{_f(e.t)},{_f(e.t + e.dur)})" for e in ev)
+    enable = _sum([f"between(t,{_f(e.t)},{_f(e.t + e.dur)})" for e in ev])
     return f"rgbashift=rh=-{px}:bh={px}:enable='{enable}'"
 
 

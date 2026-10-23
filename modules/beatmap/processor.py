@@ -124,9 +124,7 @@ def write_beeps(bm: dict, path: str, sr: int = PREVIEW_SR) -> str:
 
 
 def _enable(spans: list[tuple[float, float]]) -> str:
-    if not spans:
-        return "0"
-    return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in spans)
+    return ffmpeg_runner.expr_sum([f"between(t,{a:.3f},{b:.3f})" for a, b in spans])
 
 
 def build_preview_command(audio: str, beeps: str, bm: dict, out: str) -> list[str]:

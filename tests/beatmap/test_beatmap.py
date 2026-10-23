@@ -132,6 +132,20 @@ class Process(unittest.TestCase):
         self.assertTrue(os.path.isfile(self.song))
 
 
+    def test_preview_with_hundreds_of_beats(self):
+        # ~400 beats is any 3-minute song. A flat sum of 100+ between() in
+        # enable= did not parse (on every OS) and the line passed Windows' limit.
+        from core import ffmpeg_runner
+        beats = [round(i * 0.04, 3) for i in range(500)]
+        bm = {"duration": 20.0, "beats": beats, "downbeats": beats[::4], "drop": 8.0,
+              "sections": [{"type": "verse", "start": 0.0, "end": 8.0},
+                           {"type": "chorus", "start": 8.0, "end": 20.0}]}
+        beeps = P.write_beeps(bm, os.path.join(self.tmp, "beeps.wav"))
+        out = os.path.join(self.tmp, "preview.mp4")
+        ffmpeg_runner.capture(P.build_preview_command(self.song, beeps, bm, out), timeout=600)
+        self.assertAlmostEqual(ffmpeg_runner.probe_duration(out), 20, delta=0.2)
+
+
 class Validation(unittest.TestCase):
     def test_defaults(self):
         p = BeatmapParams.from_form({})

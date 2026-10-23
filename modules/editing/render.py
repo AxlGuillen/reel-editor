@@ -21,7 +21,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 import config
-from core import external, ffmpeg_runner, job_manager
+from core import external, ffmpeg_runner, file_utils, job_manager
 from modules.editing import effects, timing, titles
 from modules.editing.edl import Edl, Piece, Segment
 
@@ -232,13 +232,20 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
             return path
 
         report(f"Planos: 0/{len(edl.segments)}…", lo)
-        with ThreadPoolExecutor(max_workers=PARALLEL) as ex:
+        # Not a `with` block: on error it would wait for EVERY queued shot (up to
+        # 1800 s each) before the job saw the failure. Cancel what hasn't started.
+        ex = ThreadPoolExecutor(max_workers=PARALLEL)
+        try:
             futures = {ex.submit(one, i): i for i in range(len(edl.segments))}
             for fut in futures:
                 intermediates[futures[fut]] = fut.result()
                 done += 1
                 report(f"Planos: {done}/{len(edl.segments)}…",
                        lo + int((mid - lo) * done / len(edl.segments)))
+        except BaseException:
+            ex.shutdown(wait=True, cancel_futures=True)
+            raise
+        ex.shutdown()
 
         concat_list = os.path.join(work, "list.txt")
         with open(concat_list, "w", encoding="utf-8") as fh:
@@ -254,8 +261,11 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
         else:
             ffmpeg_runner.capture(cmd, timeout=3600, cwd=config.BASE_DIR)
     finally:
-        if ass and os.path.exists(ass):
-            os.remove(ass)
+        # On Windows the .ass can still be held (Defender, the indexer): a
+        # PermissionError here hid the real error and skipped the rmtree, which
+        # left GBs of intermediates behind.
+        if ass:
+            file_utils.cleanup_paths(ass)
         shutil.rmtree(work, ignore_errors=True)
     return {"dur": round(timing.frame_count(edl) / edl.fps, 3), "shots": len(edl.segments),
             "rife": used["rife"], "esrgan": used["esrgan"]}

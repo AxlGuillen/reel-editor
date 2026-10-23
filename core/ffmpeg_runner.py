@@ -5,8 +5,10 @@ debe llamar a subprocess directamente.
 """
 import functools
 import json
+import os
 import re
 import subprocess
+import tempfile
 
 import config
 from core import job_manager
@@ -22,6 +24,38 @@ _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)")
 # duración salía None en silencio (sin speed match). errors="replace": un byte
 # raro en el log no puede tumbar un render.
 _TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
+# Windows caps a WHOLE command line at 32,767 characters (Linux caps each
+# argument at 128 KB, which is why it never showed up in the cloud). A dense
+# edit (one eq/zoompan term per event) or the beat preview of a long, fast song
+# builds graphs past that, and CreateProcess failed with WinError 206 ("file
+# name too long"). Long graphs go through a file instead: "-/<option> <file>"
+# (FFmpeg 7+) reads the option's value from that file. The path is an option
+# value, not filter syntax, so an absolute path with the drive colon is fine.
+_GRAPH_OPTIONS = {"-filter_complex", "-lavfi", "-vf", "-af", "-filter:v", "-filter:a"}
+MAX_INLINE_GRAPH = 8000
+
+
+def _spill_long_graphs(command: list[str]) -> tuple[list[str], list[str]]:
+    """Moves filter graphs longer than MAX_INLINE_GRAPH to temp files.
+    Returns the command to run and the files to delete afterwards."""
+    out, temps = list(command), []
+    for i in range(len(out) - 1):
+        if out[i] in _GRAPH_OPTIONS and len(out[i + 1]) > MAX_INLINE_GRAPH:
+            fd, path = tempfile.mkstemp(prefix="reelforge-", suffix=".ffgraph")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(out[i + 1])
+            out[i], out[i + 1] = "-/" + out[i].lstrip("-"), path
+            temps.append(path)
+    return out, temps
+
+
+def _remove(paths: list[str]) -> None:
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def probe_duration(input_path: str) -> float | None:
@@ -199,6 +233,26 @@ def encoder_info() -> str:
     return "GPU NVENC (h264_nvenc)" if _nvenc_available() else "CPU (libx264)"
 
 
+EXPR_LEAF = 32
+
+
+def expr_sum(terms: list[str]) -> str:
+    """Sum of FFmpeg expression terms that FFmpeg can parse at any length.
+
+    The expression parser (libavutil/eval.c) caps the depth of the expression
+    tree at ~100, and a flat a+b+c… is a chain as deep as its number of terms:
+    100+ terms failed with "Error when parsing the expression" on every OS (an
+    edit with 100 shakes, the beat preview of any real song, ~400 beats).
+    Splitting in halves keeps the depth at EXPR_LEAF + ~2 per level (measured:
+    10,000 terms parse)."""
+    if not terms:
+        return "0"
+    if len(terms) <= EXPR_LEAF:
+        return "+".join(terms)
+    mid = len(terms) // 2
+    return f"({expr_sum(terms[:mid])})+({expr_sum(terms[mid:])})"
+
+
 def atempo_chain(tempo: float) -> str:
     """Cadena atempo válida para cualquier factor > 0.
 
@@ -220,10 +274,13 @@ def capture(command: list[str], timeout: float = 300, cwd: str | None = None,
     para analizarlos con numpy). Lanza RuntimeError si FFmpeg falla.
     `cwd`: como en run(), para filtros con rutas relativas (drawtext).
     `stderr`: devuelve el stderr (lo que imprimen loudnorm o silencedetect)."""
+    command, graphs = _spill_long_graphs(command)
     try:
         result = subprocess.run(command, capture_output=True, timeout=timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
         raise RuntimeError("FFmpeg tardó demasiado en leer los frames.")
+    finally:
+        _remove(graphs)
     if result.returncode != 0:
         tail = result.stderr.decode("utf-8", "replace").strip().splitlines()[-5:]
         raise RuntimeError(f"FFmpeg falló (code {result.returncode}):\n" + "\n".join(tail))
@@ -261,14 +318,19 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
     lo, hi = progress_range
     job_manager.update_job(job_id, status="processing", progress=lo)
 
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        bufsize=1,
-        cwd=cwd,
-        **_TEXT,
-    )
+    command, graphs = _spill_long_graphs(command)
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            cwd=cwd,
+            **_TEXT,
+        )
+    except BaseException:
+        _remove(graphs)
+        raise
 
     stderr_tail: list[str] = []
     try:
@@ -296,6 +358,9 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
         if process.poll() is None:
             process.kill()
             process.wait()
+        # The pipe is a handle: unclosed, it leaked one per job (ResourceWarning).
+        process.stderr.close()
+        _remove(graphs)
 
     if process.returncode != 0:
         detail = "".join(stderr_tail).strip()

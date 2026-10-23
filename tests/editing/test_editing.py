@@ -1,6 +1,9 @@
 """Tests of the editing engine (EDL, timing, effects, titles and render)."""
 import os
+import subprocess
+import time
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -107,9 +110,13 @@ class Effects(unittest.TestCase):
     def test_looks(self):
         self.assertEqual(effects.color("neutral"), "")
         self.assertIn("colorbalance", effects.color("golden"))
-        self.assertTrue(effects.color("vivid", "x.cube").startswith("lut3d=file='assets/luts/x.cube'"))
+        with mock.patch("os.path.isfile", return_value=True):
+            self.assertTrue(effects.color("vivid", "x.cube").startswith("lut3d=file='assets/luts/x.cube'"))
         with self.assertRaises(ValueError):
             effects.color("sepia")
+        for bad in ("no-existe.cube", "it's.cube"):           # missing, or a quote FFmpeg can't escape
+            with self.assertRaises(ValueError):
+                effects.color("vivid", bad)
 
 
 class Titles(unittest.TestCase):
@@ -174,6 +181,48 @@ class Render(unittest.TestCase):
         d = np.abs(np.diff(fr.mean(axis=(1, 2))))
         # shot 1 → 2 at frame 30 (with the flash on top) and 2 → 3 at frame 75
         self.assertGreater(d[74], 10)
+
+
+class DenseEdit(unittest.TestCase):
+    """220 events (anime_edit's MAX_EVENTS): the final command passes Windows'
+    32,767-character limit, so its graph has to go through a file."""
+
+    def test_renders(self):
+        tmp = S.tmpdir("dense")
+        try:
+            video = S.shots_video(os.path.join(tmp, "v.mp4"), [2, 2])
+            segs = [Segment(video, timing.ramp(0.1, 1.9, 1.0), "a"),
+                    Segment(video, timing.ramp(2.1, 3.9, 1.0), "b")]
+            events = [Event(round(0.02 + i * 0.0085, 3), "shake") for i in range(220)]
+            edl = Edl(segs, width=360, height=640, fps=30, events=events)
+            out = os.path.join(tmp, "out.mp4")
+            cmd = R.build_final(os.path.join(tmp, "list.txt"), edl, out, None, 1.0, None)
+            self.assertGreater(len(subprocess.list2cmdline(cmd)), 32767)
+            info = R.render(edl, out, None, os.path.join(tmp, "work"))
+            self.assertAlmostEqual(ffmpeg_runner.probe_duration(out), info["dur"], delta=0.05)
+        finally:
+            S.remove(tmp)
+
+    def test_a_failing_shot_cancels_the_rest(self):
+        tmp = S.tmpdir("fail")
+        try:
+            video = S.shots_video(os.path.join(tmp, "v.mp4"), [2])
+            segs = [Segment(video, timing.ramp(0.1, 1.9, 1.0), str(i)) for i in range(12)]
+            edl = Edl(segs, width=360, height=640, fps=30)
+            calls = []
+
+            def fail(*args, **kwargs):
+                calls.append(1)
+                time.sleep(0.3)
+                raise RuntimeError("boom")
+
+            with mock.patch.object(R.ffmpeg_runner, "capture", side_effect=fail):
+                with self.assertRaisesRegex(RuntimeError, "boom"):
+                    R.render(edl, os.path.join(tmp, "out.mp4"), None, os.path.join(tmp, "work"))
+            self.assertLess(len(calls), len(segs))             # the queued shots never started
+            self.assertFalse(os.path.exists(os.path.join(tmp, "work")))
+        finally:
+            S.remove(tmp)
 
 
 class Formats(unittest.TestCase):
