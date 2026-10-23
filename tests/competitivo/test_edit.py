@@ -291,6 +291,25 @@ class FullJob(unittest.TestCase):
         self.assertEqual(st["plan"]["structure"], "acts")
         self.assertEqual(st["plan"]["kills"], res["plan"]["kills"])
 
+    def test_a_span_without_video_is_skipped(self):
+        params = self._session()
+        music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
+        ep = EditParams.from_form({"structure": "beat"}, params)
+
+        def span(url, a, b, destination):
+            if destination.endswith("tramo_01"):
+                raise processor.fuente.SpanWithoutVideo("sin video")
+            return self._span(url, a, b, destination)
+
+        job = job_manager.create_job("x", "")
+        with mock.patch.object(processor.fuente, "bajar_tramo", side_effect=span):
+            processor.edit(job, "phase1", ep, music)
+        j = job_manager.get_job(job)
+        self.assertEqual(j["status"], "done", j["error"])
+        self.assertEqual(j["resultado"]["used_clips"], ["1-2"])
+        self.assertEqual(j["resultado"]["skipped_clips"], ["pelea 1"])
+        self.assertIn("«pelea 1»", j["aviso"])
+
     def test_failed_render_leaves_nothing(self):
         params = self._session()
         music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)

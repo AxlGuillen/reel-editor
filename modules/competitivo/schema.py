@@ -224,7 +224,7 @@ class CompetitivoParams:
             raise ValueError("Máximo 7 partidas por serie.")
         vod = (form.get("vod_url") or "").strip()
         if not re.match(r"^https?://", vod):
-            raise ValueError("Falta 'vod_url': el link del VOD de Ibai en YouTube.")
+            raise ValueError("Falta 'vod_url': el link del VOD de Ibai (YouTube o Twitch).")
         modo = (form.get("modo") or "revisar").strip().lower()
         if modo not in MODOS:
             raise ValueError("'modo' tiene que ser 'revisar' o 'auto'.")

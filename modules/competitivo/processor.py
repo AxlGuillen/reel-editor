@@ -38,7 +38,12 @@ from modules.competitivo import fuente, intro, kills, layout, salida
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
-OFFSET_FORMULA_S = 38      # vod ≈ (utc − inicio del directo) + 38 s (medido en KC-C9 G3, día 1)
+# vod ≈ (utc − inicio del directo) + offset, per platform. YouTube: measured in
+# KC-C9 G3, day 1 (later games of the same day: −5 to +7.5 s around it).
+# Twitch: its VOD starts at its own timestamp (36 s before YouTube's on
+# 23/10) and runs behind it; IG-GEN on 23/10 measured +44.2 s (7/7 kills).
+OFFSET_FORMULA_S = {"youtube": 38, "twitch": 44}
+SUSPICIOUS_SHIFT_S = 15    # an anchor this far from the formula is "media" even with 2+ kills
 VENTANA_ANCLA_S = 30       # margen del tramo que se baja para calcular el ancla
 RANGO_ANCLA_S = 25         # desfase máximo contra la fórmula que se busca
 MARGEN_CLIP_S = 6          # cada clip se baja con este margen, para el ajuste fino
@@ -90,22 +95,37 @@ def _captura(src: str, t: float, out: str) -> None:
                            "-i", src, "-frames:v", "1", "-vf", "scale=960:-2", "-q:v", "3", out])
 
 
+def formula_offset(platform: str | None) -> float:
+    return OFFSET_FORMULA_S.get(platform or "youtube", OFFSET_FORMULA_S["youtube"])
+
+
+def confidence(matches: int, shift: float) -> tuple[str, bool]:
+    """(confianza, suspicious): 2+ aligned kills are "alta" only if the shift
+    against the platform's formula is plausible. A YouTube stream still live
+    gave 6/7 kills of ANOTHER game at −23.5 s: that has to stop modo=auto."""
+    suspicious = matches >= 2 and abs(shift) > SUSPICIOUS_SHIFT_S
+    if suspicious:
+        return "media", True
+    return ("alta" if matches >= 2 else "media" if matches == 1 else "baja"), False
+
+
 def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pelea],
-           carpeta: str, n_partida: int) -> dict:
+           carpeta: str, n_partida: int, offset: float = OFFSET_FORMULA_S["youtube"]) -> dict:
     """Segundo del VOD de la primera kill de la partida, alineando el contador
-    de kills del video con el feed en el tramo de la pelea más grande."""
+    de kills del video con el feed en el tramo de la pelea más grande.
+    `offset`: the platform's formula (formula_offset)."""
     eventos = [(p.frames[k.i].ts, _lado(p, k.equipo)) for k in kills._kills(p)]
     fb_utc = eventos[0][0]
-    propuesta = _vod(fb_utc, inicio, OFFSET_FORMULA_S)
+    propuesta = _vod(fb_utc, inicio, offset)
     ref = max(peleas, key=lambda pe: (pe.elegible, pe.total, pe.bruto))
-    a = _vod(ref.antes, inicio, OFFSET_FORMULA_S) - VENTANA_ANCLA_S
-    b = _vod(ref.ultima, inicio, OFFSET_FORMULA_S) + VENTANA_ANCLA_S
+    a = _vod(ref.antes, inicio, offset) - VENTANA_ANCLA_S
+    b = _vod(ref.ultima, inicio, offset) + VENTANA_ANCLA_S
     desfase, n, esperadas = 0.0, 0, 0
     frame = None
     try:
         tramo = fuente.bajar_tramo(url, a, b, os.path.join(carpeta, f"ancla_{n_partida}"))
         vistos = layout.cambios_kills(tramo)
-        esp = [(_vod(ts, inicio, OFFSET_FORMULA_S) - a, lado) for ts, lado in eventos]
+        esp = [(_vod(ts, inicio, offset) - a, lado) for ts, lado in eventos]
         esp = [e for e in esp if -RANGO_ANCLA_S <= e[0] <= (b - a) + RANGO_ANCLA_S]
         esperadas = sum(1 for t, _ in esp if 0 <= t <= b - a)
         desfase, n = layout.estimar_desfase(vistos, esp, rango=RANGO_ANCLA_S)
@@ -113,19 +133,20 @@ def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pele
             desfase = 0.0
         # Frame de control: la primera kill de la pelea de referencia, ya corregida.
         frame = f"ancla_{n_partida}.jpg"
-        _captura(tramo, _vod(ref.primera, inicio, OFFSET_FORMULA_S + desfase) - a + 0.5,
+        _captura(tramo, _vod(ref.primera, inicio, offset + desfase) - a + 0.5,
                  os.path.join(carpeta, frame))
         os.remove(tramo)
     except RuntimeError as exc:
         print(f"[competitivo] ancla de {p.game_id}: {exc}".encode("ascii", "replace").decode())
+    conf, suspicious = confidence(n, desfase)
     return {
         "ancla_s": round(propuesta + desfase, 2),
         "ancla_propuesta_s": round(propuesta, 2),
         "desfase_s": desfase,
-        "confianza": "alta" if n >= 2 else "media" if n == 1 else "baja",
+        "confianza": conf, "suspicious": suspicious,
         "coincidencias": n, "esperadas": esperadas,
         "referencia": ref.titulo,
-        "referencia_vod_s": round(_vod(ref.primera, inicio, OFFSET_FORMULA_S + desfase), 2),
+        "referencia_vod_s": round(_vod(ref.primera, inicio, offset + desfase), 2),
         "frame": frame,
         "primera_kill_utc": _iso(fb_utc),
     }
@@ -146,6 +167,7 @@ def process(job_id: str, params: CompetitivoParams) -> None:
         job_manager.update_job(job_id, status="processing", progress=2, stage="Leyendo el VOD…")
         vod = fuente.info_vod(params.vod_url)
         inicio = vod["inicio_utc"]
+        offset = formula_offset(vod.get("platform"))
 
         job_manager.update_job(job_id, progress=5,
                                stage=f"Bajando el feed de {len(params.game_ids)} partida(s)…")
@@ -162,7 +184,7 @@ def process(job_id: str, params: CompetitivoParams) -> None:
         job_manager.update_job(job_id, progress=45, stage="Sincronizando el VOD con el feed…")
         with ThreadPoolExecutor(max_workers=3) as ex:
             anclas = list(ex.map(lambda i: _ancla(params.vod_url, inicio, partidas[i], peleas[i],
-                                                  carpeta, i + 1), range(len(partidas))))
+                                                  carpeta, i + 1, offset=offset), range(len(partidas))))
 
         datos_partidas, clips = [], []
         for i, (p, pe_lista, ancla) in enumerate(zip(partidas, peleas, anclas), 1):
@@ -180,13 +202,17 @@ def process(job_id: str, params: CompetitivoParams) -> None:
         # Con UNA sola coincidencia siempre se puede alinear algo por casualidad:
         # el modo auto solo sigue si todas las anclas tienen 2+ kills alineadas.
         dudosas = [d["n"] for d in datos_partidas if d["confianza"] != "alta"]
+        lejos = [f"{d['n']} ({d['desfase_s']:+.1f} s)" for d in datos_partidas if d.get("suspicious")]
         _SESIONES[job_id] = {"params": params, "vod": vod, "partidas": datos_partidas, "clips": clips,
                              "carpeta": carpeta, "voz": (params.intro_audio_url, voz) if voz else None}
         job_manager.update_job(
             job_id, status="done", progress=100, stage="esperando_ancla", finished=False,
-            vod={"url": params.vod_url, "titulo": vod["titulo"], "inicio_utc": _iso(inicio)},
+            vod={"url": params.vod_url, "titulo": vod["titulo"], "inicio_utc": _iso(inicio),
+                 "platform": vod.get("platform"), "offset_formula_s": offset},
             partidas=datos_partidas, clips=clips, seleccion=ids_sel,
             aviso=(f"Ancla dudosa en la partida {', '.join(map(str, dudosas))}: revisala antes de renderizar."
+                   + (f" Desfase demasiado lejos de lo esperado en la partida {', '.join(lejos)}: "
+                      "¿el frame de control muestra la partida correcta?" if lejos else "")
                    if dudosas else None),
         )
         if params.modo == "auto" and not dudosas:
@@ -295,13 +321,19 @@ def finish(job_id: str, fp: FinishParams) -> None:
 
         n = len(elegidos)
         hechos = []
+        skipped: list[str] = []        # clips whose section came without video (twice)
         en_resumen: list[str] = []     # lo que entra al resumen (el clip 1 puede llevar la intro)
         with ThreadPoolExecutor(max_workers=3) as ex:
             futuros = [ex.submit(fuente.bajar_tramo, params.vod_url, *ventana(c),
                                  os.path.join(temp, f"tramo_{k:02d}")) for k, c in enumerate(elegidos, 1)]
             for k, (c, fut) in enumerate(zip(elegidos, futuros), 1):
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: bajando el tramo…")
-                tramo = fut.result()
+                try:
+                    tramo = fut.result()
+                except fuente.SpanWithoutVideo:
+                    skipped.append(c["titulo"])
+                    continue
+                first = not hechos           # the first clip that made it carries the intro
                 off = offsets[c["game_id"]]
                 a, _ = ventana(c)
                 # Ajuste fino con las kills del propio clip (el ancla es por partida).
@@ -320,8 +352,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 if dur < 3:
                     raise RuntimeError(f"El clip «{c['titulo']}» cae casi entero fuera del vivo "
                                        "(repetición o pausa). Quitalo o corregí el ancla.")
-                archivo = f"clip_{k:02d}.mp4"
-                if k == 1 and modo_intro == "encima":
+                archivo = f"clip_{len(hechos) + 1:02d}.mp4"
+                if first and modo_intro == "encima":
                     modo_intro, motivo = intro.modo_para_clip1(voz.D, dur, t_kill - an.vivo_desde)
                     if modo_intro == "aparte":
                         intro_info.update(modo_usado="aparte", motivo=motivo)
@@ -334,7 +366,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 cmd = layout.build_command(tramo, os.path.join(carpeta, archivo), an.vivo_desde, dur,
                                            an.camara_y, **render)
                 lo, hi = 5 + int(85 * (k - 1) / n), 5 + int(85 * k / n)
-                con_intro = k == 1 and modo_intro == "encima"
+                con_intro = first and modo_intro == "encima"
                 ffmpeg_runner.run(cmd, job_id, total_duration=dur,
                                   progress_range=(lo, (lo + hi) // 2 if con_intro else hi))
                 en_resumen.append(os.path.join(carpeta, archivo))
@@ -363,6 +395,11 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     "fuera_del_vivo_s": an.no_vivo_s, "camara_y": an.camara_y,
                 })
                 os.remove(tramo)
+        if not hechos:
+            raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
+        aviso = (f"Se saltó {'el clip' if len(skipped) == 1 else 'los clips'} "
+                 f"{', '.join(f'«{t}»' for t in skipped)}: el tramo bajó sin video dos veces."
+                 if skipped else None)
 
         job_manager.update_job(job_id, stage="Uniendo el resumen…", progress=92)
         lista = os.path.join(temp, "lista.txt")
@@ -392,6 +429,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 datetime.fromisoformat(d["primera_kill_utc"]) - inicio).total_seconds(), 2)}
                 for d in sesion["partidas"]],
             "clips": hechos,
+            "skipped_clips": skipped,
             "portada": "portada.jpg",
             "intro": intro_res,
             "intro_modo_usado": modo_intro,
@@ -407,12 +445,12 @@ def finish(job_id: str, fp: FinishParams) -> None:
                        "motivo": intro_info["motivo"], "placa_s": intro_info["placa_s"]}
         job_manager.update_job(
             job_id, status="done", progress=100, stage="listo", finished=True,
-            output_path=dest.video_final, portada="portada.jpg", intro=intro_corto,
+            output_path=dest.video_final, portada="portada.jpg", intro=intro_corto, aviso=aviso,
             resultado={"carpeta": dest.carpeta, "nombre": os.path.basename(dest.carpeta),
                        "video": dest.video_final, "ruta": dest.ruta_video,
                        "resumen": os.path.basename(dest.video_final), "organizada": dest.organizada,
                        "portada": "portada.jpg", "intro": intro_corto,
-                       "clips": hechos, "duracion_total": duracion_total},
+                       "clips": hechos, "skipped_clips": skipped, "duracion_total": duracion_total},
         )
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
@@ -532,13 +570,18 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             return a, b
 
         clips: list[edit_plan.EditClip] = []
+        skipped: list[str] = []
         with ThreadPoolExecutor(max_workers=3) as ex:
             futures = [ex.submit(fuente.bajar_tramo, params.vod_url, *window(c),
                                  os.path.join(temp, f"tramo_{k:02d}")) for k, c in enumerate(chosen, 1)]
             for k, (c, fut) in enumerate(zip(chosen, futures), 1):
                 job_manager.update_job(job_id, stage=f"Pelea {k}/{len(chosen)}: bajando y sincronizando…",
                                        progress=12 + int(18 * (k - 1) / len(chosen)))
-                span = fut.result()
+                try:
+                    span = fut.result()
+                except fuente.SpanWithoutVideo:
+                    skipped.append(c["titulo"])
+                    continue
                 off = offsets[c["game_id"]]
                 a, _ = window(c)
                 seen = layout.cambios_kills(span)
@@ -567,6 +610,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                     c.get("cierra", False), c["titulo"],
                     layout.edit_geometry(an.camara_y, ep.zoom, ep.with_camera)))
 
+        if not clips:
+            raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
         job_manager.update_job(job_id, stage="Armando el edit al ritmo…", progress=30)
         op = edit_plan.EditOptions(style=ep.style, speed=ep.speed, max_duration_s=ep.max_duration_s,
                                    align_drop=ep.align_drop, music_start=ep.music_start, text=ep.text,
@@ -606,7 +651,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             "download_name": os.path.basename(destination), "total_duration": render_info["dur"],
             "music_start": round(res.music_start, 3), "drop_aligned": res.drop_aligned,
             "bpm": bm["bpm"], "used_clips": res.used, "dropped_clips": res.dropped,
-            "warning": res.warning, "plan": plan_info, "subtitle_words": len(edl.subtitle_words),
+            "warning": res.warning, "skipped_clips": skipped, "plan": plan_info,
+            "subtitle_words": len(edl.subtitle_words),
             "edl": edl.to_dict(),
         }
         with open(os.path.splitext(destination)[0] + ".json", "w", encoding="utf-8") as fh:
@@ -614,8 +660,12 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                        "params": {k: v for k, v in asdict(ep).items() if k not in ("music", "lyrics")}},
                       fh, ensure_ascii=False, indent=2, default=str)
         # `resultado` and `aviso` are the keys the competitivo status already exposes.
+        notes = [res.warning] if res.warning else []
+        if skipped:
+            notes.append(f"Se saltó {'la pelea' if len(skipped) == 1 else 'las peleas'} "
+                         f"{', '.join(f'«{t}»' for t in skipped)}: el tramo bajó sin video dos veces.")
         job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
-                               output_path=destination, resultado=result, aviso=res.warning)
+                               output_path=destination, resultado=result, aviso=" ".join(notes) or None)
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:

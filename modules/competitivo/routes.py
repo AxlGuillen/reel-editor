@@ -66,7 +66,7 @@ def edit():
     if not sesion:
         return jsonify(error="Sesión no encontrada. Volvé a generar la propuesta (fase 1)."), 404
     # A /finish of the same session is downloading VOD sections too: both at
-    # once means 6 yt-dlp in parallel against YouTube.
+    # once means 6 yt-dlp in parallel against YouTube or Twitch.
     if (job_manager.get_job(phase1) or {}).get("status") == "processing":
         return jsonify(error="Ese trabajo todavía está procesando (fase 1 o /finish). Esperá a que termine."), 409
     try:
