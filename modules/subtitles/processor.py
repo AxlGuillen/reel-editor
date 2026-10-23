@@ -426,6 +426,8 @@ def build_ass(segments: list[list[dict]], params: SubtitlesParams) -> str:
     El tamaño que elige el usuario (font_size) es el em en px, igual que en el
     preview; el Fontsize del ASS se convierte por fuente (ver fonts.py).
     """
+    if params.layout == "invert":
+        return _build_invert_ass(segments, params)
     font = fonts.font_info(params.font)
     fs = fonts.ass_font_size(font, params.font_size)
     bold = -1 if font["bold"] else 0
@@ -577,6 +579,116 @@ def _word_events(params: SubtitlesParams, font: dict, shown: list[str],
     return events
 
 
+# ---------------------------------------------------------------------------
+# "invert": the word in the middle, in the negative of the video
+# ---------------------------------------------------------------------------
+# Measured on the reference edit (@med_uchiha, Levi): white text with a
+# DIFFERENCE blend. Inverting the frame shows the scene continuing inside the
+# letters, so each letter is the video in negative: blue over skin, white over
+# shadows. One word at a time, centered, in capitals, no outline or shadow.
+# libass cannot blend, so the .ass only draws the MASK (white on black) and
+# ass_filter() turns it into the difference blend (see INV_MARKER).
+INV_MARKER = "; reelforge-effect: invert"
+INV_TILT = 8                  # "diagonal": degrees (rising to the right)
+INV_POP = (0.86, 1.04)        # each word comes in at 86 %, overshoots to 104 %, settles
+INV_POP_MS = (90, 160)
+INV_FADE = (70, 40)           # ms: soft in and out (a hard cut flickered between words)
+INV_LINE_GAP = 0.16           # em between the capitals of two stacked words
+INV_BRIDGE = 1.0              # pause up to this long: the word stays until the next one
+INV_HOLD = 0.5                # longer pause: it stays this long after it is sung
+INV_MAX_W = {0: 1000, 90: 1700}   # usable length of a line: across / along the frame
+_INV_RANDOM = ("horizontal", "horizontal", "horizontal", "vertical", "diagonal", "diagonal_down")
+_INV_ANGLE = {"horizontal": 0, "vertical": 90, "diagonal": INV_TILT, "diagonal_down": -INV_TILT}
+
+
+def inv_group_size(mode: str, first: int) -> int:
+    """Words on screen at once for the group that starts at word `first`.
+    "mixed": 1 half of the time, 2 or 3 the rest (fixed per word index)."""
+    if mode != "mixed":
+        return int(mode)
+    r = _pick(first, 104729) % 10
+    return 1 if r < 5 else 2 if r < 8 else 3
+
+
+def inv_angle(direction: str, first: int) -> int:
+    """Rotation (degrees, \\frz) of the group; "random" draws it per group."""
+    if direction == "random":
+        direction = _INV_RANDOM[_pick(first, 31337) % len(_INV_RANDOM)]
+    return _INV_ANGLE[direction]
+
+
+def _invert_groups(segments: list[list[dict]], mode: str) -> list[tuple[int, list[dict]]]:
+    """(index of the first word, words) per group, never across segments."""
+    groups, first = [], 0
+    for seg_words in segments:
+        i = 0
+        while i < len(seg_words):
+            size = inv_group_size(mode, first)
+            groups.append((first, seg_words[i:i + size]))
+            first += len(seg_words[i:i + size])
+            i += size
+    return groups
+
+
+def _build_invert_ass(segments: list[list[dict]], params: SubtitlesParams) -> str:
+    font = fonts.font_info(params.font)
+    em = params.inv_size
+    fs = fonts.ass_font_size(font, em)
+    cap = font["cap"] / font["upm"]
+    desc = font["descent"]
+    asc = font["size_ratio"] - desc
+    cx, cy = ASS_W // 2, params.inv_y
+    header = f"""\
+[Script Info]
+ScriptType: v4.00+
+PlayResX: {ASS_W}
+PlayResY: {ASS_H}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: None
+{INV_MARKER}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Inv,{font["family"]},{fs},{WHITE},{WHITE},{BLACK},{BLACK},{-1 if font["bold"] else 0},{-1 if font["italic"] else 0},0,0,100,100,0,0,1,0,0,5,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    groups = _invert_groups(segments, params.inv_words)
+    events = []
+    for g, (first, words) in enumerate(groups):
+        shown = [w["word"].upper() for w in words]
+        angle = inv_angle(params.inv_direction, first)
+        # Until the next group if the pause is short (no empty frames between
+        # words, like the reference); after a real pause the screen clears.
+        last_end = words[-1]["end"]
+        nxt = groups[g + 1][1][0]["start"] if g + 1 < len(groups) else None
+        end = nxt if nxt is not None and nxt - last_end <= INV_BRIDGE else last_end + INV_HOLD
+        if nxt is not None:
+            end = min(end, nxt)
+        # Stacked, one word per line, the block centered on inv_y; too long a
+        # word shrinks the whole group (the vertical one has the frame's height).
+        widths = [fonts.text_width(font, w, em) for w in shown]
+        fit = min(1.0, INV_MAX_W[90 if abs(angle) == 90 else 0] / max(max(widths), 1))
+        step = (cap + INV_LINE_GAP) * em * fit
+        top = cy - (len(shown) * cap * em * fit + (len(shown) - 1) * INV_LINE_GAP * em * fit) / 2
+        rot = f"\\org({cx},{cy})\\frz{angle}" if angle else ""
+        a, b = INV_POP_MS
+        p0, p1, p2 = (f"{v * fit * 100:.1f}" for v in (*INV_POP, 1.0))
+        for k, (word, raw) in enumerate(zip(words, shown)):
+            t0 = word["start"]
+            if end - t0 < 0.05:
+                continue
+            baseline = top + cap * em * fit + k * step
+            y = baseline + (desc - asc) / 2 * em * fit      # \\an5: the middle of the line box
+            tags = (f"\\an5\\pos({cx},{y:.1f}){rot}\\fad({INV_FADE[0]},{INV_FADE[1]})"
+                    f"\\fscx{p0}\\fscy{p0}\\t(0,{a},\\fscx{p1}\\fscy{p1})\\t({a},{b},\\fscx{p2}\\fscy{p2})")
+            events.append(f"Dialogue: 0,{_seconds_to_ass(t0)},{_seconds_to_ass(end)},Inv,,0,0,0,,"
+                          f"{{{tags}}}{_esc_text(raw)}")
+    return header + "\n".join(events) + "\n"
+
+
 def _write_ass(content: str) -> str:
     os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
     path = os.path.join(config.UPLOAD_FOLDER, f"subs_{uuid.uuid4().hex[:12]}.ass")
@@ -591,14 +703,34 @@ def _esc_filter(path: str) -> str:
     return rel.replace(":", "\\:").replace("'", "\\'")
 
 
+def _is_invert(ass_path: str) -> bool:
+    try:
+        with open(ass_path, encoding="utf-8") as fh:
+            return INV_MARKER in fh.read(2048)
+    except OSError:
+        return False
+
+
 def ass_filter(ass_path: str) -> str:
     """Fragmento de filtro `ass=…:fontsdir=…` (para -vf o un filter_complex).
 
     Requiere correr FFmpeg con cwd=BASE_DIR (las rutas van relativas). Lo usan
     build_command y la pasada fusionada de reel_express.
+
+    With an "invert" .ass (INV_MARKER) it is a whole chain, still one input
+    and one output, so every caller keeps working: the .ass drawn white on a
+    black copy of the frame is the mask, and a DIFFERENCE blend with it leaves
+    the video as is where it is black and in negative inside the letters. In
+    RGB: the inversion is exact, the round trip changes nothing else (measured
+    < 1/255 outside the letters) and it was faster than negating in YUV.
     """
     fonts_dir = os.path.relpath(config.FONTS_FOLDER, config.BASE_DIR).replace("\\", "/")
-    return f"ass={_esc_filter(ass_path)}:fontsdir={fonts_dir}"
+    burn = f"ass={_esc_filter(ass_path)}:fontsdir={fonts_dir}"
+    if not _is_invert(ass_path):
+        return burn
+    return ("format=gbrp,split[_inv_v][_inv_m];"
+            f"[_inv_m]drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill,{burn}[_inv_k];"
+            "[_inv_v][_inv_k]blend=all_mode=difference,format=yuv420p")
 
 
 def prepare_ass(segments_data: list[dict], params: SubtitlesParams) -> str:

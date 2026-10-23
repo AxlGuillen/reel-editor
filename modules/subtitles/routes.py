@@ -15,7 +15,8 @@ from flask import Blueprint, jsonify, request, send_file
 import config
 from core import file_utils, job_manager
 from modules.subtitles import fonts, processor
-from modules.subtitles.schema import (OUTLINE_DEFAULT, OUTLINE_MAX, OUTLINE_MIN,
+from modules.subtitles.schema import (INV_SIZE_DEFAULT, INV_SIZE_MAX, INV_SIZE_MIN, INV_Y_DEFAULT,
+                                      INV_Y_MAX, INV_Y_MIN, OUTLINE_DEFAULT, OUTLINE_MAX, OUTLINE_MIN,
                                       ROTATE_PALETTE, SubtitlesParams)
 
 bp = Blueprint("subtitles", __name__, url_prefix="/api/subtitles")
@@ -30,11 +31,19 @@ def styles_route():
     """
     return jsonify(
         fonts=[{"file": f["file"], "label": f["label"], "descent": f["descent"],
+                "cap": f["cap"] / f["upm"], "size_ratio": f["size_ratio"],
                 # quote(): nombres con espacios o paréntesis ("Bebas Neue.ttf").
                 "url": f"/assets/fonts/{quote(f['file'])}"} for f in fonts.available_fonts()],
         default_font=config.DEFAULT_FONT_FILE,
         palette=list(ROTATE_PALETTE),
         outline={"min": OUTLINE_MIN, "max": OUTLINE_MAX, "default": OUTLINE_DEFAULT},
+        # "invert" (inverted, center): ranges and the timing constants the
+        # preview mirrors (processor._build_invert_ass).
+        invert={"size": {"min": INV_SIZE_MIN, "max": INV_SIZE_MAX, "default": INV_SIZE_DEFAULT},
+                "y": {"min": INV_Y_MIN, "max": INV_Y_MAX, "default": INV_Y_DEFAULT},
+                "tilt": processor.INV_TILT, "pop": list(processor.INV_POP),
+                "pop_ms": list(processor.INV_POP_MS), "fade_ms": list(processor.INV_FADE),
+                "line_gap": processor.INV_LINE_GAP},
     )
 
 

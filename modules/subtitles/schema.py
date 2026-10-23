@@ -29,9 +29,16 @@ OUTLINE_MIN, OUTLINE_MAX, OUTLINE_DEFAULT = 0, 20, 6   # px en el lienzo 1080x19
 # la recibe por GET /api/subtitles/styles: esta es la única definición.
 ROTATE_PALETTE = ("#FFE600", "#3DFF6E", "#FF4FD8", "#3DE8FF", "#FF9F1C")
 # Disposición de cada frase y tamaños de sus palabras (ver processor._group_style).
-LAYOUTS = {"line", "stairs", "mixed"}       # en línea / en escalera / variada
+LAYOUTS = {"line", "stairs", "mixed", "invert"}   # en línea / escalera / variada / invertido al centro
 SIZE_MODES = {"same", "grow", "random"}     # iguales / crecientes / variados
 NEON_MODES = {"off", "soft", "strong"}      # brillo del color de la palabra que se dice
+# "invert" (inverted, center): one word (or a few) at a time in the middle,
+# white with a DIFFERENCE blend, so each letter shows the video in negative
+# (see processor._build_invert_ass and ass_filter).
+INV_SIZE_MIN, INV_SIZE_MAX, INV_SIZE_DEFAULT = 60, 320, 150     # em in px
+INV_Y_MIN, INV_Y_MAX, INV_Y_DEFAULT = 200, 1720, 960             # center of the block
+INV_DIRECTIONS = {"horizontal", "vertical", "diagonal", "random"}
+INV_WORDS = {"1", "2", "3", "mixed"}
 _HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
 
 
@@ -51,6 +58,11 @@ class SubtitlesParams:
     layout:         str = "line"      # line | stairs | mixed
     sizes:          str = "same"      # same | grow | random
     neon:           str = "off"       # off | soft | strong
+    # layout "invert" only
+    inv_size:       int = INV_SIZE_DEFAULT
+    inv_y:          int = INV_Y_DEFAULT
+    inv_direction:  str = "horizontal"  # horizontal | vertical | diagonal | random
+    inv_words:      str = "1"           # words on screen at once: 1 | 2 | 3 | mixed
 
     @classmethod
     def from_form(cls, form) -> "SubtitlesParams":
@@ -109,7 +121,7 @@ class SubtitlesParams:
         layout = str(form.get("sub_layout") or "line").strip().lower()
         if layout not in LAYOUTS:
             raise ValueError(f"Disposición inválida: {layout!r}. Opciones: line (en línea), "
-                             "stairs (en escalera) o mixed (variada).")
+                             "stairs (en escalera), mixed (variada) o invert (invertido al centro).")
         values["layout"] = layout
 
         sizes = str(form.get("sub_sizes") or "same").strip().lower()
@@ -123,6 +135,22 @@ class SubtitlesParams:
             raise ValueError(f"Brillo neón inválido: {neon!r}. Opciones: off (sin brillo), "
                              "soft (suave) o strong (intenso).")
         values["neon"] = neon
+
+        for key, label, (default, lo, hi) in (
+                ("inv_size", "El tamaño de la palabra", (INV_SIZE_DEFAULT, INV_SIZE_MIN, INV_SIZE_MAX)),
+                ("inv_y", "La altura de la palabra", (INV_Y_DEFAULT, INV_Y_MIN, INV_Y_MAX))):
+            raw = form.get(f"sub_{key}")
+            value = default if raw in (None, "") else _to_int(label, raw)
+            values[key] = _clamp(label, value, lo, hi)
+        direction = str(form.get("sub_inv_direction") or "horizontal").strip().lower()
+        if direction not in INV_DIRECTIONS:
+            raise ValueError(f"Dirección inválida: {direction!r}. Opciones: horizontal, vertical, "
+                             "diagonal o random (aleatoria).")
+        values["inv_direction"] = direction
+        words = str(form.get("sub_inv_words") or "1").strip().lower()
+        if words not in INV_WORDS:
+            raise ValueError(f"Palabras a la vez inválido: {words!r}. Opciones: 1, 2, 3 o mixed (mezcladas).")
+        values["inv_words"] = words
 
         return cls(**values)
 

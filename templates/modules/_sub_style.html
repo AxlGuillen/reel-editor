@@ -19,12 +19,48 @@
       <option value="line">En línea</option>
       <option value="stairs">En escalera (va bajando)</option>
       <option value="mixed">Variada (a veces en línea, a veces en escalera)</option>
+      <option value="invert">Invertido al centro (la letra muestra el video en negativo)</option>
     </select>
   </label>
   <p class="hint hidden" id="{{ p }}layout-hint">
     La escalera es más alta que una línea: si tapa el HUD del juego, subí la
     posición vertical o achicá la letra (el preview muestra dónde cae).
   </p>
+
+  {# "Invertido al centro": palabra blanca en modo DIFERENCIA, una o varias a
+     la vez. Usa sus propios tamaño y altura; color, contorno y neón no aplican. #}
+  <div class="hidden" id="{{ p }}inv-opts">
+    <label class="control">
+      <span>Tamaño de la palabra <em id="{{ p }}inv-size-val">150</em> px</span>
+      <input type="range" id="{{ p }}inv-size" min="60" max="320" value="150">
+    </label>
+    <label class="control">
+      <span>Altura <em id="{{ p }}inv-y-val">960</em> px (centro del bloque)</span>
+      <input type="range" id="{{ p }}inv-y" min="200" max="1720" value="960">
+    </label>
+    <label class="control">
+      <span>Dirección</span>
+      <select id="{{ p }}inv-direction">
+        <option value="horizontal">Horizontal</option>
+        <option value="vertical">Vertical (de abajo hacia arriba)</option>
+        <option value="diagonal">Inclinada</option>
+        <option value="random">Aleatoria (cambia en cada palabra)</option>
+      </select>
+    </label>
+    <label class="control">
+      <span>Palabras a la vez</span>
+      <select id="{{ p }}inv-words">
+        <option value="1">Una</option>
+        <option value="2">Dos (van apareciendo)</option>
+        <option value="3">Tres (van apareciendo)</option>
+        <option value="mixed">Mezcladas (a veces una, a veces varias)</option>
+      </select>
+    </label>
+    <p class="hint">Siempre en mayúsculas y sin contorno: el contraste lo da el negativo del video.
+      La letra más parecida al edit de referencia es Montserrat ExtraBold.</p>
+  </div>
+
+  <div id="{{ p }}karaoke-opts">
   <label class="control">
     <span>Tamaño de las palabras</span>
     <select id="{{ p }}sizes">
@@ -73,4 +109,5 @@
     <span>Grosor del contorno <em id="{{ p }}outline-size-val">6</em> px</span>
     <input type="range" id="{{ p }}outline-size" min="0" max="20" value="6">
   </label>
+  </div>
 </div>

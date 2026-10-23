@@ -22,7 +22,6 @@ Subtítulos (opcional, default ON) → flujo de DOS fases (igual que reel_expres
     video 1 (la voz, limpia, sin música). Deja los segmentos y NO ensambla.
   - Fase 2 (finish): quema los subtítulos editados sobre el seg.1 y ensambla.
 """
-import os
 import threading
 
 import config
@@ -52,12 +51,6 @@ def _check_subjob(sub_id: str, etapa: str) -> dict:
 # ---------------------------------------------------------------------------
 # Ensamblado (FFmpeg)
 # ---------------------------------------------------------------------------
-
-def _esc_ass(path: str) -> str:
-    """Ruta relativa a BASE_DIR escapada para el parser de filtros (Windows)."""
-    rel = os.path.relpath(path, config.BASE_DIR).replace("\\", "/")
-    return rel.replace(":", "\\:").replace("'", "\\'")
-
 
 def build_assembly_command(video1_path: str, video2_path: str, music_path: str,
                            output_path: str, *, d1: float, d2: float, c2: float,
@@ -125,8 +118,9 @@ def build_assembly_command(video1_path: str, video2_path: str, music_path: str,
     # --- Subtítulos (opcional) sobre el video ya concatenado ---
     last = "[vcat]"
     if ass_path:
-        fonts_dir = os.path.relpath(config.FONTS_FOLDER, config.BASE_DIR).replace("\\", "/")
-        filters.append(f"[vcat]ass={_esc_ass(ass_path)}:fontsdir={fonts_dir}[vsub]")
+        # The same filter as the other modules (with "invert" it is the mask +
+        # difference blend chain, see subtitles.ass_filter).
+        filters.append(f"[vcat]{subtitles_processor.ass_filter(ass_path)}[vsub]")
         last = "[vsub]"
 
     # Normalización final a yuv420p rango tv. Al concatenar dos videos distintos

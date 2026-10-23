@@ -243,6 +243,7 @@ const SubStyle = (() => {
   const prefixes = [];
   const faces = {};   // archivo de fuente -> familia CSS ya cargada en el canvas
   const descents = {};  // archivo de fuente -> winDescent/UPM (ver drawSample)
+  const caps = {};      // archivo de fuente -> altura de las mayúsculas / em ("invertido")
   let opts = null;
 
   const load = () => {
@@ -255,8 +256,14 @@ const SubStyle = (() => {
     el(p + "single-color-row").classList.toggle("hidden", rotate);
     el(p + "palette-row").classList.toggle("hidden", !rotate);
     el(p + "outline-size-val").textContent = el(p + "outline-size").value;
-    el(p + "layout-hint").classList.toggle("hidden", el(p + "layout").value === "line");
+    const layout = el(p + "layout").value;
+    el(p + "layout-hint").classList.toggle("hidden", layout === "line" || layout === "invert");
     el(p + "color-preview").style.background = el(p + "highlight-color").value;
+    // "Invertido al centro" tiene sus propios controles; color, contorno y neón no aplican.
+    el(p + "inv-opts").classList.toggle("hidden", layout !== "invert");
+    el(p + "karaoke-opts").classList.toggle("hidden", layout === "invert");
+    el(p + "inv-size-val").textContent = el(p + "inv-size").value;
+    el(p + "inv-y-val").textContent = el(p + "inv-y").value;
   }
 
   // Solo valores que existen como opción: un localStorage viejo o corrupto
@@ -275,6 +282,10 @@ const SubStyle = (() => {
     setOption(p + "layout", s.layout);
     setOption(p + "sizes", s.sizes);
     setOption(p + "neon", s.neon);
+    if (s.inv_size != null) el(p + "inv-size").value = s.inv_size;
+    if (s.inv_y != null) el(p + "inv-y").value = s.inv_y;
+    setOption(p + "inv-direction", s.inv_direction);
+    setOption(p + "inv-words", s.inv_words);
     sync(p);
     // Los módulos que muestran un resumen del estilo (Reel Express) se enteran
     // aunque el cambio venga de otro módulo.
@@ -291,6 +302,10 @@ const SubStyle = (() => {
       layout: el(p + "layout").value,
       sizes: el(p + "sizes").value,
       neon: el(p + "neon").value,
+      inv_size: el(p + "inv-size").value,
+      inv_y: el(p + "inv-y").value,
+      inv_direction: el(p + "inv-direction").value,
+      inv_words: el(p + "inv-words").value,
     };
   }
 
@@ -315,7 +330,17 @@ const SubStyle = (() => {
     const out = el(p + "outline-size");
     out.min = opts.outline.min;
     out.max = opts.outline.max;
-    apply(p, { font: opts.default_font, outline_size: opts.outline.default, ...load() });
+    if (opts.invert) {
+      ["size", "y"].forEach((k) => {
+        el(p + "inv-" + k).min = opts.invert[k].min;
+        el(p + "inv-" + k).max = opts.invert[k].max;
+      });
+    }
+    apply(p, {
+      font: opts.default_font, outline_size: opts.outline.default,
+      inv_size: opts.invert && opts.invert.size.default, inv_y: opts.invert && opts.invert.y.default,
+      ...load(),
+    });
   }
 
   const ready = fetch("/api/subtitles/styles")
@@ -326,6 +351,7 @@ const SubStyle = (() => {
       // trae su peso (evita la negrita sintética que engordaba el preview).
       o.fonts.forEach((f, i) => {
         descents[f.file] = f.descent;
+        caps[f.file] = f.cap;
         const face = new FontFace(`SubFont${i}`, `url("${f.url}")`);
         face.load().then((ff) => { document.fonts.add(ff); faces[f.file] = `SubFont${i}`; })
           .catch(() => {});
@@ -336,9 +362,11 @@ const SubStyle = (() => {
 
   function init(p) {
     prefixes.push(p);
-    ["font", "uppercase", "color-mode", "outline-color", "layout", "sizes", "neon"].forEach((id) =>
+    ["font", "uppercase", "color-mode", "outline-color", "layout", "sizes", "neon",
+      "inv-direction", "inv-words"].forEach((id) =>
       el(p + id).addEventListener("change", () => { sync(p); save(p); }));
-    el(p + "outline-size").addEventListener("input", () => { sync(p); save(p); });
+    ["outline-size", "inv-size", "inv-y"].forEach((id) =>
+      el(p + id).addEventListener("input", () => { sync(p); save(p); }));
     el(p + "highlight-color").addEventListener("input", () => sync(p));
     sync(p);
     if (opts) fill(p);
@@ -359,6 +387,10 @@ const SubStyle = (() => {
       sub_layout: el(p + "layout").value,
       sub_sizes: el(p + "sizes").value,
       sub_neon: el(p + "neon").value,
+      sub_inv_size: el(p + "inv-size").value,
+      sub_inv_y: el(p + "inv-y").value,
+      sub_inv_direction: el(p + "inv-direction").value,
+      sub_inv_words: el(p + "inv-words").value,
     };
   }
 
@@ -468,7 +500,82 @@ const SubStyle = (() => {
     return out;
   }
 
+  // "Invertido al centro": espejo de _build_invert_ass (processor.py). Mismos
+  // grupos y direcciones (el mismo hash), el mismo rebote y los mismos fundidos;
+  // el negativo lo hace el canvas con el modo "difference", como el render.
+  const INV_RANDOM = ["horizontal", "horizontal", "horizontal", "vertical", "diagonal", "diagonal_down"];
+  const INV_SAMPLE = ["SOBREVIVIR", "VAMOS", "A", "GANAR", "ESTA", "PARTIDA", "AHORA", "SÍ"];
+  const INV_WORD_MS = 600;
+  function invGroupSize(mode, first) {
+    if (mode !== "mixed") return +mode;
+    const r = pick(first, 104729) % 10;
+    return r < 5 ? 1 : r < 8 ? 2 : 3;
+  }
+  function invAngle(direction, first, tilt) {
+    if (direction === "random") direction = INV_RANDOM[pick(first, 31337) % INV_RANDOM.length];
+    return { horizontal: 0, vertical: 90, diagonal: tilt, diagonal_down: -tilt }[direction];
+  }
+
+  function drawInvert(ctx, cw, ch, p) {
+    const inv = (opts && opts.invert) || { tilt: 8, pop: [0.86, 1.04], pop_ms: [90, 160],
+                                            fade_ms: [70, 40], line_gap: 0.16 };
+    const s = cw / 1080;
+    const file = el(p + "font").value;
+    const fam = faces[file];
+    const em = +el(p + "inv-size").value * s;
+    const cx = cw / 2, cy = (+el(p + "inv-y").value / 1920) * ch;
+    const cap = caps[file] || 0.7;
+    // Grupos de la muestra (una vuelta de 48 palabras) y cuál suena ahora.
+    const now = performance.now();
+    const idx = Math.floor(now / INV_WORD_MS) % 48;
+    let first = 0, size = 1;
+    while (true) {
+      size = invGroupSize(el(p + "inv-words").value, first);
+      if (idx < first + size) break;
+      first += size;
+    }
+    const shown = Array.from({ length: size }, (_, k) => INV_SAMPLE[(first + k) % INV_SAMPLE.length]);
+    const visible = idx - first + 1;               // las palabras van apareciendo
+    const angle = invAngle(el(p + "inv-direction").value, first, inv.tilt);
+    const setFont = (px) => { ctx.font = fam ? `${px}px "${fam}"` : `900 ${px}px sans-serif`; };
+    setFont(em);
+    const widths = shown.map((w) => ctx.measureText(w).width);
+    const maxW = (Math.abs(angle) === 90 ? 1700 : 1000) * s;
+    const fit = Math.min(1, maxW / Math.max(...widths, 1));
+    const step = (cap + inv.line_gap) * em * fit;
+    const top = cy - (size * cap * em * fit + (size - 1) * inv.line_gap * em * fit) / 2;
+    const groupEnd = (first + size) * INV_WORD_MS;
+    const [a, b] = inv.pop_ms;
+    const [p0, p1] = inv.pop;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "difference";
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.translate(cx, cy);
+    ctx.rotate((-angle * Math.PI) / 180);          // \frz gira al revés que el canvas
+    ctx.translate(-cx, -cy);
+    for (let k = 0; k < visible; k++) {
+      const start = (first + k) * INV_WORD_MS;
+      const e = (now % (48 * INV_WORD_MS)) - start;
+      const left = groupEnd - (now % (48 * INV_WORD_MS));
+      const pop = e < a ? p0 + (p1 - p0) * (e / a) : e < b ? p1 + (1 - p1) * ((e - a) / (b - a)) : 1;
+      ctx.globalAlpha = Math.max(0, Math.min(1, e / inv.fade_ms[0], left / inv.fade_ms[1]));
+      const base = top + cap * em * fit + k * step;
+      const mid = base - (cap * em * fit) / 2;    // el rebote es desde el centro de la palabra
+      ctx.save();
+      ctx.translate(cx, mid);
+      ctx.scale(pop, pop);
+      setFont(em * fit);
+      ctx.fillText(shown[k], 0, base - mid);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   function drawSample(ctx, cw, ch, p) {
+    if (el(p + "layout").value === "invert") return drawInvert(ctx, cw, ch, p);
     const s = cw / 1080;
     const fs = +el(p + "font-size").value * s;
     const y = (+el(p + "position-y").value / 1920) * ch;

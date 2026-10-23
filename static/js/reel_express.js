@@ -200,11 +200,17 @@ function updateBlockStatus() {
   else {
     const fontSel = el("rx-sub-font");
     const font = fontSel.selectedOptions[0] ? fontSel.selectedOptions[0].text : "Karaoke";
+    const invert = el("rx-sub-layout").value === "invert";
     const layout = { stairs: "escalera", mixed: "variada" }[el("rx-sub-layout").value];
     const sizes = { grow: "crecientes", random: "tamaños variados" }[el("rx-sub-sizes").value];
     const neon = el("rx-sub-neon").value !== "off" && "neón";
-    const look = [font, el("rx-sub-uppercase").checked && "MAYÚS", layout, sizes, neon,
-      el("rx-sub-color-mode").value === "rotate" && "colores"].filter(Boolean).join(" · ");
+    // "Invertido al centro" has its own controls: color, outline and neon do not apply.
+    const look = invert
+      ? [font, "invertido", { vertical: "vertical", diagonal: "inclinado", random: "dirección aleatoria" }[
+          el("rx-sub-inv-direction").value], { 2: "de a 2", 3: "de a 3", mixed: "palabras mezcladas" }[
+          el("rx-sub-inv-words").value]].filter(Boolean).join(" · ")
+      : [font, el("rx-sub-uppercase").checked && "MAYÚS", layout, sizes, neon,
+        el("rx-sub-color-mode").value === "rotate" && "colores"].filter(Boolean).join(" · ");
     setBlockStatus("subs", `${look} · ${el("rx-skip-review").checked ? "sin revisar" : "revisás antes"}`, "on");
   }
 
