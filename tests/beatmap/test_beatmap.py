@@ -54,6 +54,20 @@ class Analysis(unittest.TestCase):
         after = [v for b, v in zip(self.bm["beats"], e) if b > 17]
         self.assertGreater(np.mean(after), 2 * np.mean(before))
 
+    def test_tresillo_is_not_four_thirds(self):
+        # Dembow at 90 and 100 BPM: librosa alone said 120 and 134 (4/3).
+        for bpm in (90, 100):
+            bm = A.analyze(S.dembow(bpm=bpm, dur=40), sr=S.SR, engine="librosa")
+            self.assertAlmostEqual(bm["bpm"], bpm, delta=2, msg=bpm)
+            beats = np.array(bm["beats"])
+            per = 60 / bpm
+            err = np.abs(beats - (0.25 + np.round((beats - 0.25) / per) * per))
+            self.assertLess(float(np.median(err)), 0.03)
+        # and regular songs stay where they were
+        for bpm in (70, 128, 150):
+            self.assertAlmostEqual(A.analyze(S.signal(bpm=bpm, dur=40, loud_from=0), sr=S.SR,
+                                             engine="librosa")["bpm"], bpm, delta=2, msg=bpm)
+
     def test_invalid_engine(self):
         with self.assertRaises(ValueError):
             A.analyze(S.signal(dur=5), sr=S.SR, engine="x")

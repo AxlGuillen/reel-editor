@@ -31,7 +31,7 @@ HOP = 512                     # energy and kick
 # envelope: with 512 (23 ms) a 120 BPM song came out as 117.45 (a 22-frame lag)
 # and the beats drifted ~40 ms. With 128 (5.8 ms) it is 120.2 and ~16 ms.
 HOP_BEAT = 128
-VERSION = 2
+VERSION = 3                  # 3: tempo corrected for the tresillo (see _tempo)
 HIT_PERCENTILE = 80           # onsets above this percentile are hits (shakes)
 HIGH_THRESHOLD = 0.55         # relative bar energy (0–1) to count as "high"
 MIN_BARS = 2                  # a shorter run is merged into the previous one
@@ -78,6 +78,31 @@ def _beat_this(path: str) -> tuple[np.ndarray, np.ndarray]:
     raise RuntimeError("Beat This! no pudo analizar la canción.")
 
 
+def _strength(tempogram: np.ndarray, freqs: np.ndarray, bpm: float) -> float:
+    near = np.abs(freqs - bpm) <= bpm * 0.03
+    return float(tempogram[near].max()) if near.any() else 0.0
+
+
+def _tempo(onset: np.ndarray, sr: int) -> float:
+    """Tempo (BPM) for the beat tracker, corrected for the tresillo.
+
+    Dancehall and reggaeton (the dembow) put the snare on a 3+3+2 pattern:
+    something hits every 3 sixteenths, and librosa locks onto that as the
+    beat, 4/3 of the real tempo (measured: Cartoon's "On & On", 87 BPM, came
+    out at 116; a synthetic 90 BPM dembow at 120). The giveaway: the real
+    eighth notes, at 1.5× that wrong tempo, weigh more in the tempogram than
+    the wrong tempo itself. Then the beat is 3/4 of it. On regular songs the
+    1.5× bin is next to nothing (measured 70–174 BPM: no false correction)."""
+    import librosa
+
+    tempo = float(librosa.feature.tempo(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT)[0])
+    tempogram = librosa.feature.tempogram(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT).mean(axis=1)
+    freqs = librosa.tempo_frequencies(len(tempogram), sr=sr, hop_length=HOP_BEAT)
+    if _strength(tempogram, freqs, 1.5 * tempo) > _strength(tempogram, freqs, tempo):
+        tempo *= 0.75
+    return tempo
+
+
 def _mean_per_span(values: np.ndarray, times: np.ndarray, cuts: np.ndarray, end: float) -> np.ndarray:
     """Mean of `values` (sampled at `times`) in each [cuts[i], cuts[i+1])."""
     edges = np.append(cuts, end)
@@ -86,6 +111,24 @@ def _mean_per_span(values: np.ndarray, times: np.ndarray, cuts: np.ndarray, end:
         m = (times >= edges[i]) & (times < edges[i + 1])
         out[i] = float(values[m].mean()) if m.any() else 0.0
     return out
+
+
+def _on_the_kick(beats: np.ndarray, kick: np.ndarray, sr: int, duration: float) -> np.ndarray:
+    """The grid half a beat later if the kick hits clearly harder there. In a
+    dembow the tracker can lock onto the 3+3+2 snare and put every beat on the
+    off-beat (measured on a synthetic one: half a beat off); the cuts would
+    land against the music."""
+    if len(beats) < 4:
+        return beats
+    period = float(np.median(np.diff(beats)))
+
+    def at(times: np.ndarray) -> float:
+        return float(kick[np.clip(np.round(times * sr / HOP).astype(int), 0, len(kick) - 1)].mean())
+
+    if at(beats + period / 2) > 1.25 * at(beats):
+        shifted = beats + period / 2
+        return shifted[shifted < duration]
+    return beats
 
 
 def _downbeat_phase(beats: np.ndarray, kick: np.ndarray, sr: int) -> int:
@@ -208,8 +251,9 @@ def analyze(y: np.ndarray, sr: int = SR, engine: str = "auto", path: str | None 
     elif engine == "beat_this":
         raise RuntimeError("Beat This! no está instalado (pip install beat-this).")
     if beats is None:
-        _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT, trim=False)
-        beats = librosa.frames_to_time(frames, sr=sr, hop_length=HOP_BEAT)
+        _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT, trim=False,
+                                            bpm=_tempo(onset, sr))
+        beats = _on_the_kick(librosa.frames_to_time(frames, sr=sr, hop_length=HOP_BEAT), kick, sr, duration)
         downbeats = beats[_downbeat_phase(beats, kick, sr)::4]
     if len(beats) < 4:
         raise RuntimeError("No se encontró un pulso en la canción (¿es música con ritmo?).")

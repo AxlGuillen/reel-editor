@@ -33,6 +33,31 @@ def signal(bpm: float = 120, dur: float = 40, loud_from: float = 16,
     return y
 
 
+def dembow(bpm: float = 90, dur: float = 40, first_beat: float = 0.25) -> np.ndarray:
+    """Reggaeton / dancehall: kick on every beat, snare on the 3+3+2 tresillo
+    (sixteenths 3 and 6 of each half bar), hi-hat on the eighths."""
+    y = np.zeros(int(SR * dur), np.float32)
+    six = 60 / bpm / 4
+    tt = np.arange(int(SR * 0.12)) / SR
+    kick = (np.sin(2 * np.pi * 55 * tt) * np.exp(-tt * 30)).astype(np.float32)
+    snare = (np.random.default_rng(1).standard_normal(len(tt)) * np.exp(-tt * 40)).astype(np.float32) * 0.6
+    hat = (np.random.default_rng(0).standard_normal(len(tt)) * np.exp(-tt * 80)).astype(np.float32) * 0.15
+    n = 0
+    while True:
+        i = int((first_beat + n * six) * SR)
+        if i + len(tt) >= len(y):
+            break
+        pos = n % 16
+        if pos % 4 == 0:
+            y[i:i + len(tt)] += kick
+        if pos % 8 in (3, 6):
+            y[i:i + len(tt)] += snare
+        if pos % 2 == 0:
+            y[i:i + len(tt)] += hat
+        n += 1
+    return y
+
+
 def song(path: str, **kw) -> str:
     """16-bit mono WAV with signal(**kw)."""
     y = signal(**kw)
