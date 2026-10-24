@@ -1,0 +1,152 @@
+"""A record per job of competitivo, and the indicators made from them.
+
+Every phase 1, summary, edit, daily summary and transcription appends one
+line to METRICS_FILE (JSON lines, next to the videos: it survives restarts
+and "Limpiar archivos"): how long each stage took, what the automatic parts
+decided (anchors, clock, sure kills / full view), what was corrected by hand,
+retries, NVENC fallbacks and warnings. summary() turns them into the
+indicators of the Métricas view: is it getting faster, does the automatic
+camera need fewer corrections, does anything fail more often.
+"""
+from __future__ import annotations
+
+import json
+import os
+import statistics
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+
+import config
+from core import ffmpeg_runner
+
+_lock = threading.Lock()
+FILE: str | None = None          # another file (the tests: never the user's records)
+
+
+def metrics_file() -> str:
+    return FILE or os.path.join(config.COMPETITIVO_FOLDER, "_metricas", "jobs.jsonl")
+
+
+class Run:
+    """One job's record: Run(kind, job_id, ...) → mark(stage) → set(...) → finish(status)."""
+
+    def __init__(self, kind: str, job_id: str, **fields):
+        self.kind, self.job_id = kind, job_id
+        self.t0 = self.last = time.monotonic()
+        self.stages: dict[str, float] = {}
+        self.fields = dict(fields)
+        self.nvenc0 = ffmpeg_runner.stats["nvenc_fallbacks"]
+        self.done = False
+
+    def mark(self, stage: str) -> None:
+        now = time.monotonic()
+        self.stages[stage] = round(self.stages.get(stage, 0.0) + now - self.last, 1)
+        self.last = now
+
+    def set(self, **fields) -> None:
+        self.fields.update({k: v for k, v in fields.items() if v is not None})
+
+    def finish(self, status: str, error: str | None = None) -> dict | None:
+        if self.done:
+            return None
+        self.done = True
+        record = {"kind": self.kind, "job_id": self.job_id, "at": datetime.now(timezone.utc).isoformat(),
+                  "status": status, "seconds": round(time.monotonic() - self.t0, 1), "stages": self.stages,
+                  "nvenc_fallbacks": ffmpeg_runner.stats["nvenc_fallbacks"] - self.nvenc0, **self.fields}
+        if error:
+            record["error"] = str(error)[:300]
+        write(record)
+        return record
+
+
+def write(record: dict) -> None:
+    path = metrics_file()
+    try:
+        with _lock:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except OSError as exc:                       # the metrics never break a job
+        print(f"[metrics] no se pudo escribir: {exc}")
+
+
+def load(days: int | None = None) -> list[dict]:
+    path = metrics_file()
+    if not os.path.isfile(path):
+        return []
+    since = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+    out = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if since and datetime.fromisoformat(r["at"]) < since:
+                continue
+            out.append(r)
+    return out
+
+
+def _median(xs):
+    xs = [x for x in xs if x is not None]
+    return round(statistics.median(xs), 1) if xs else None
+
+
+def _pct(num, den):
+    return round(100 * num / den, 1) if den else None
+
+
+def summary(records: list[dict]) -> dict:
+    """The indicators of a set of records."""
+    by_kind: dict[str, list[dict]] = {}
+    for r in records:
+        by_kind.setdefault(r["kind"], []).append(r)
+    kinds = {}
+    for kind, rs in sorted(by_kind.items()):
+        ok = [r for r in rs if r["status"] in ("ok", "paused")]
+        kinds[kind] = {"jobs": len(rs), "ok": len(ok), "failed": len(rs) - len(ok),
+                       "median_s": _median([r["seconds"] for r in ok]),
+                       "median_video_s": _median([r.get("video_s") for r in ok])}
+    phase1 = by_kind.get("fase1", [])
+    anchors = [c for r in phase1 for c in r.get("anchors", [])]
+    clocks = [c for r in phase1 for c in r.get("clock_calibrated", [])]
+    edits = by_kind.get("edit", []) + by_kind.get("edit_render", [])
+    renders = [r for r in edits if r["status"] == "ok"]
+    # Only what was rendered: an edit paused for the storyboard is counted by its edit_render.
+    shots = [r for r in by_kind.get("resumen", []) + edits if r.get("kills") and r["status"] == "ok"]
+    kills = sum(r["kills"] for r in shots)
+    days: dict[str, dict[str, int]] = {}
+    for r in records:
+        d = r["at"][:10]
+        days.setdefault(d, {})
+        days[d][r["kind"]] = days[d].get(r["kind"], 0) + 1
+    return {
+        "jobs": len(records),
+        "kinds": kinds,
+        "anchors_high_pct": _pct(sum(1 for c in anchors if c == "alta"), len(anchors)),
+        "anchors": len(anchors),
+        "clock_calibrated_pct": _pct(sum(1 for c in clocks if c), len(clocks)),
+        "kills": kills,
+        "kills_sure_pct": _pct(sum(r.get("kills_sure", 0) for r in shots), kills),
+        "kills_full_pct": _pct(sum(r.get("kills_full", 0) for r in shots), kills),
+        "overrides_per_edit": round(sum(r.get("overrides", 0) for r in renders) / len(renders), 2) if renders else None,
+        "retries": sum(r.get("retries", 0) for r in records),
+        "nvenc_fallbacks": sum(r.get("nvenc_fallbacks", 0) for r in records),
+        "skipped_spans": sum(r.get("skipped", 0) for r in records),
+        "warnings": sum(1 for r in records if r.get("warning")),
+        "failed": sum(1 for r in records if r["status"] == "error"),
+        "presets": {p: sum(1 for r in records if r.get("preset") == p) for p in {r.get("preset") for r in records} if p},
+        "days": dict(sorted(days.items())),
+    }
+
+
+def discarded() -> int:
+    """Videos sent to _descartados (a summary rendered again)."""
+    n = 0
+    for root, dirs, files in os.walk(config.COMPETITIVO_FOLDER):
+        if os.path.basename(root) == "_descartados":
+            n += sum(1 for f in files if f.endswith(".mp4")) + len(dirs)
+            dirs[:] = []
+    return n

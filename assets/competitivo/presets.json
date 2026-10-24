@@ -1,0 +1,40 @@
+{
+  "_info": "Presets de competitivo: preset=<nombre> en /process, /finish, /edit o /daily llena estos parámetros; lo que se mande explícito en el pedido los pisa. Se pueden editar y agregar.",
+  "presets": {
+    "edit_estandar": {
+      "description": "El edit de la semana del 23/10: actos en orden cronológico, sin letreros, 3 s antes y 2 s después de cada kill, picos de Ibai, cámara automática y storyboard antes del render.",
+      "endpoints": ["edit"],
+      "params": {"structure": "acts", "chronological": "1", "text": "off", "kill_before_s": "3", "kill_after_s": "2",
+                 "voice_peaks": "1", "zoom_mode": "auto", "storyboard": "1", "max_duration_s": "60"}
+    },
+    "edit_corto": {
+      "description": "La versión corta (~20–25 s): la pelea clave y la de más puntaje en el drop.",
+      "endpoints": ["edit"],
+      "params": {"structure": "acts", "short": "1", "text": "off", "kill_before_s": "3", "kill_after_s": "2",
+                 "voice_peaks": "1", "zoom_mode": "auto", "storyboard": "1"}
+    },
+    "edit_equipo": {
+      "description": "Todas las peleas y picks de un equipo, sin tope de duración (la canción manda). Falta mandar team=<código>.",
+      "endpoints": ["edit"],
+      "params": {"structure": "acts", "chronological": "1", "text": "off", "kill_before_s": "3", "kill_after_s": "2",
+                 "voice_peaks": "1", "zoom_mode": "auto", "storyboard": "1", "max_duration_s": "0", "build_fights": "3"}
+    },
+    "edit_aura_triste": {
+      "description": "El estándar con la última pelea y el outro en blanco y negro (TL vs CFO, 23/10).",
+      "endpoints": ["edit"],
+      "params": {"structure": "acts", "chronological": "1", "text": "off", "kill_before_s": "3", "kill_after_s": "2",
+                 "voice_peaks": "1", "zoom_mode": "auto", "storyboard": "1", "max_duration_s": "60",
+                 "last_fight_look": "bw"}
+    },
+    "resumen_highlights": {
+      "description": "Los highlights por partido del resumen diario del 23/10: zoom 1.4, 7 s antes y 4 s después, sin intro (en la fase 1: el /finish los hereda).",
+      "endpoints": ["process"],
+      "params": {"zoom": "1.4", "pre_s": "7", "post_s": "4", "intro_modo": "off", "titulo": "highlights"}
+    },
+    "resumen_diario": {
+      "description": "El resumen del día como el del 23/10 (por partido la de cierre y las mejores del ganador; montaje con audio).",
+      "endpoints": ["daily"],
+      "params": {"zoom": "1.4", "pre_s": "7", "post_s": "4", "zoom_mode": "zoom", "titulo": "highlights"}
+    }
+  }
+}

@@ -23,20 +23,80 @@ from flask import Blueprint, jsonify, request, send_file
 
 import config
 from core import file_utils, job_manager
-from modules.competitivo import processor, salida
+from modules.competitivo import calibration, metrics, presets, processor, salida
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 
 bp = Blueprint("competitivo", __name__, url_prefix="/api/competitivo")
 
 
+@bp.get("/presets")
+def presets_list():
+    """The named sets of parameters (assets/competitivo/presets.json)."""
+    return jsonify(presets=presets.listing())
+
+
+@bp.get("/metrics")
+def metrics_view():
+    """The indicators of the last `days` days (default 7; 0 = everything) and the last jobs."""
+    try:
+        days = max(0, int(request.args.get("days", 7)))
+    except ValueError:
+        return jsonify(error="'days' tiene que ser un número de días."), 400
+    records = metrics.load(days or None)
+    return jsonify(days=days, file=metrics.metrics_file(), summary=metrics.summary(records),
+                   discarded=metrics.discarded(), recent=records[-40:][::-1],
+                   calibration=_calibration_brief(calibration.last_report()))
+
+
+def _calibration_brief(report):
+    if not report:
+        return None
+    return {k: report.get(k) for k in ("at", "cases", "ok", "fail", "error", "missing", "known", "fixed",
+                                       "passed", "seconds")}
+
+
+@bp.get("/calibration")
+def calibration_get():
+    """The calibration set: its cases and the last report."""
+    return jsonify(folder=calibration.folder(), cases=[
+        {k: c.get(k) for k in ("id", "check", "note", "known_issue")} for c in calibration.load_cases()],
+        report=calibration.last_report())
+
+
+@bp.post("/calibration")
+def calibration_run():
+    """Runs the calibration set in a job ([ids] = some cases, comma-separated) → 202 {job_id}."""
+    if not calibration.load_cases():
+        return jsonify(error=f"No hay casos de calibración en {calibration.folder()}."), 400
+    ids = [x for x in (request.form.get("ids") or "").replace(" ", "").split(",") if x] or None
+    job_id = job_manager.create_job("calibration", output_path="")
+    job_manager.update_job(job_id, modo="calibration")
+
+    def work():
+        try:
+            def progress(k, n, cid):
+                job_manager.update_job(job_id, status="processing", progress=int(100 * k / n),
+                                       stage=f"Caso {k + 1}/{n}: {cid}…")
+            report = calibration.run(ids, progress)
+            job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
+                                   resultado=report,
+                                   aviso=None if report["passed"] else "La calibración tiene casos que fallan.")
+        except Exception as exc:  # noqa: BLE001
+            job_manager.update_job(job_id, status="error", error=str(exc))
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify(job_id=job_id), 202
+
+
 @bp.post("/process")
 def process():
     try:
-        params = CompetitivoParams.from_form(request.form)
+        form, preset = presets.apply(request.form, "process")
+        params = CompetitivoParams.from_form(form)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     job_id = job_manager.create_job(params.vod_url, output_path="")
-    job_manager.update_job(job_id, modo=params.modo)
+    job_manager.update_job(job_id, modo=params.modo, preset=preset or None)
     threading.Thread(target=processor.process, args=(job_id, params), daemon=True).start()
     return jsonify(job_id=job_id), 202
 
@@ -51,9 +111,11 @@ def finish():
     if job["status"] == "processing":
         return jsonify(error="Ese trabajo todavía está procesando."), 409
     try:
-        fp = FinishParams.from_form(request.form, sesion["params"])
+        form, preset = presets.apply(request.form, "finish")
+        fp = FinishParams.from_form(form, sesion["params"])
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+    job_manager.update_job(job_id, preset=preset or None)
     job_manager.update_job(job_id, status="processing", progress=0, finished=False,
                            stage="Preparando el render…", error=None, resultado=None,
                            portada=None, intro=None)
@@ -72,7 +134,8 @@ def edit():
     if (job_manager.get_job(phase1) or {}).get("status") == "processing":
         return jsonify(error="Ese trabajo todavía está procesando (fase 1 o /finish). Esperá a que termine."), 409
     try:
-        ep = EditParams.from_form(request.form, sesion["params"])
+        form, preset = presets.apply(request.form, "edit")
+        ep = EditParams.from_form(form, sesion["params"])
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     if ep.team and ep.team not in processor.team_codes(sesion):
@@ -88,7 +151,7 @@ def edit():
         music_path = file_utils.save_upload(music)
     job_id = job_manager.create_job(sesion["params"].vod_url, output_path="")
     # `modo` is the key the competitivo status already exposes.
-    job_manager.update_job(job_id, modo="edit", phase1=phase1)
+    job_manager.update_job(job_id, modo="edit", phase1=phase1, preset=preset or None)
     threading.Thread(target=processor.edit, args=(job_id, phase1, ep, music_path), daemon=True).start()
     return jsonify(job_id=job_id), 202
 
@@ -99,7 +162,10 @@ def daily():
     carpeta_dia, [titulo, montage_name, picks (JSON {gameId: [ids]}), zoom,
     pre_s, post_s, zoom_mode, watermark] → 202 {job_id}."""
     import re as _re
-    f = request.form
+    try:
+        f, preset = presets.apply(request.form, "daily")
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     ids = [x for x in _re.split(r"[\s,;]+", f.get("game_ids") or "") if x]
     vod = (f.get("vod_url") or "").strip()
     carpeta = (f.get("carpeta_dia") or "").strip()
@@ -123,7 +189,7 @@ def daily():
     if f.get("watermark"):
         render["watermark"] = f["watermark"]
     job_id = job_manager.create_job(vod, output_path="")
-    job_manager.update_job(job_id, modo="daily")
+    job_manager.update_job(job_id, modo="daily", preset=preset or None)
     threading.Thread(target=processor.daily, daemon=True,
                      args=(job_id, ids, vod, carpeta, (f.get("titulo") or "highlights").strip(), picks, render,
                            (f.get("montage_name") or "").strip())).start()

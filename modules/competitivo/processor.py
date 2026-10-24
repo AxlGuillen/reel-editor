@@ -34,8 +34,8 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import (camera, clock, creator, fuente, intro, kills, layout, salida, storyboard,
-                                 transcript, vocab, voice)
+from modules.competitivo import (camera, clock, creator, fuente, intro, kills, layout, metrics, salida,
+                                 storyboard, transcript, vocab, voice)
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -251,7 +251,18 @@ def utc_at_clock(partida: dict, clock_s: float) -> datetime | None:
 
 
 # --- Fase 1 ---------------------------------------------------------------------
+def _preset(job_id: str) -> str | None:
+    return (job_manager.get_job(job_id) or {}).get("preset")
+
+
+def _shot_counts(shots: list[dict]) -> dict:
+    """How the automatic camera did: kills followed with confidence, kills in the full view."""
+    return {"kills": len(shots), "kills_sure": sum(1 for s in shots if s.get("sure")),
+            "kills_full": sum(1 for s in shots if s.get("mode") == "full")}
+
+
 def process(job_id: str, params: CompetitivoParams) -> None:
+    run = metrics.Run("fase1", job_id, games=len(params.game_ids), modo=params.modo, preset=_preset(job_id))
     try:
         carpeta = os.path.join(TRABAJO, job_id)
         os.makedirs(carpeta, exist_ok=True)
@@ -278,11 +289,13 @@ def process(job_id: str, params: CompetitivoParams) -> None:
             raise RuntimeError(f"La partida {sin_kills[0]} no tiene kills en el feed.")
         elegidas = kills.seleccionar(peleas, reglas)
         seleccion = {id(pe) for pe in elegidas}
+        run.mark("feed")
 
         job_manager.update_job(job_id, progress=45, stage="Sincronizando el VOD con el feed…")
         with ThreadPoolExecutor(max_workers=3) as ex:
             anclas = list(ex.map(lambda i: _ancla(params.vod_url, inicio, partidas[i], peleas[i],
                                                   carpeta, i + 1, offset=offset), range(len(partidas))))
+        run.mark("anchors")
 
         datos_partidas, clips = [], []
         for i, (p, pe_lista, ancla) in enumerate(zip(partidas, peleas, anclas), 1):
@@ -324,10 +337,16 @@ def process(job_id: str, params: CompetitivoParams) -> None:
                    if dudosas else None),
         )
         save_session(job_id)
+        run.set(platform=vod.get("platform"), anchors=[d["confianza"] for d in datos_partidas],
+                clock_calibrated=[bool(d.get("clock0_utc")) for d in datos_partidas],
+                suspicious=sum(1 for d in datos_partidas if d.get("suspicious")),
+                fights=len(clips), warning=bool(dudosas))
+        run.finish("ok")
         if params.modo == "auto" and not dudosas:
             finish(job_id, FinishParams.desde(params))
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
         job_manager.update_job(job_id, status="error", error=str(exc))
+        run.finish("error", str(exc))
 
 
 # --- Fase 2 ---------------------------------------------------------------------
@@ -361,6 +380,8 @@ def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
 def finish(job_id: str, fp: FinishParams) -> None:
     sesion = get_session(job_id)
     temp = dest = None
+    run = metrics.Run("resumen", job_id, preset=_preset(job_id), zoom_mode=fp.zoom_mode,
+                      overrides=len(fp.kill_overrides or []), creator=bool(fp.creator_vod_url))
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe (¿se reinició el servidor?). Volvé a generar la propuesta.")
@@ -529,6 +550,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                                      if b > an.vivo_desde and a < an.vivo_hasta],
                 })
                 os.remove(tramo)
+        run.mark("clips")
         if not hechos:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
         aviso = (f"Se saltó {'el clip' if len(skipped) == 1 else 'los clips'} "
@@ -589,8 +611,13 @@ def finish(job_id: str, fp: FinishParams) -> None:
                        "clips": hechos, "skipped_clips": skipped, "duracion_total": duracion_total},
         )
         save_session(job_id)
+        run.mark("concat")
+        run.set(clips=len(hechos), skipped=len(skipped), video_s=duracion_total, intro=modo_intro,
+                warning=bool(aviso), **_shot_counts([s for h in hechos for s in h["camera"]]))
+        run.finish("ok")
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
+        run.finish("error", str(exc))
         # Lo que quedó a medias se borra (si no, el reintento terminaba en
         # "… (2)" con una carpeta rota al lado); lo publicado antes, nunca.
         salida.descartar(dest)
@@ -704,6 +731,9 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
     sesion = get_session(phase1_id)
     temp = downloaded = None
     paused = False
+    run = metrics.Run("edit", job_id, preset=_preset(job_id), structure=ep.structure, short=ep.short,
+                      overrides=len(ep.kill_overrides or []), moments=len(ep.moments or []),
+                      creator=bool(ep.creator_vod_url), storyboard=ep.storyboard, review=ep.review)
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe (¿se reinició el servidor?). Volvé a generar la propuesta.")
@@ -722,6 +752,7 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
         if not music_path:
             raise RuntimeError("Falta la música del edit.")
         bm = beatmap.get(music_path, ep.engine, ep.lyrics, job_id=job_id)
+        run.mark("music")
         job_manager.update_job(job_id, status="processing", progress=12, stage="Bajando los tramos del VOD…")
 
         def window(c):
@@ -804,6 +835,7 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             r["peaks"] = voice.peaks(r["feat"], *medians[r["c"]["game_id"]]) if r["feat"] is not None else []
             r["feat"] = None
 
+        run.mark("spans")
         if not raw:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
         job_manager.update_job(job_id, stage="Armando el edit al ritmo…", progress=30)
@@ -817,6 +849,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
         res, plan_info = _plan_edit(job_id, state, overrides)
         edl = res.edl
         state.update(edl=edl, res=res, plan=plan_info)
+        run.mark("plan")
+        run.set(clips=len(raw), skipped=len(skipped), drop_aligned=res.drop_aligned, **_edit_shots(state))
         if ep.structure == "acts" and ep.voice_subs and res.voice_spans:
             job_manager.update_job(job_id, stage="Transcribiendo a Ibai…", progress=31)
             terms = vocab.game_terms([r for c in chosen for r in _roster(sesion, c["game_id"])],
@@ -826,6 +860,7 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             edl.subtitle_style = dict(ep.subs_style or {})
             if ep.review:
                 job_manager.update_job(job_id, segments=review_segments(words, res.voice_spans), vocabulary=terms)
+            run.mark("voice")
         if ep.review or ep.storyboard:
             # A pause before the long render: Ibai's segments to fix the names
             # (review) and/or a storyboard with a thumbnail per kill to correct
@@ -836,16 +871,24 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             _EDIT_REVIEW[job_id] = state
             paused = True
             job_manager.update_job(job_id, status="done", progress=33, stage="esperando_revision", finished=False)
+            run.finish("paused")
             return
         try:
-            _render_edit(job_id, state)
+            result = _render_edit(job_id, state)
+            run.mark("render")
+            run.set(video_s=result["total_duration"], warning=bool(res.warning))
+            run.finish("ok")
         except Exception as exc:  # noqa: BLE001
             # The plan, the spans and Ibai's words stay: /edit/finish renders again.
             _EDIT_REVIEW[job_id] = state
+            state["failed"] = True
             paused = True
             job_manager.update_job(job_id, status="error", error=str(exc), retryable=True)
+            run.set(retryable=True)
+            run.finish("error", str(exc))
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
+        run.finish("error", str(exc))
     finally:
         if not paused:
             _cleanup_edit(temp, downloaded, music_path)
@@ -860,7 +903,11 @@ def _cleanup_edit(temp: str | None, downloaded: str | None, music_path: str | No
         file_utils.cleanup_paths(music_path)
 
 
-def _render_edit(job_id: str, state: dict) -> None:
+def _edit_shots(state: dict) -> dict:
+    return _shot_counts([s for info in state["plan"]["camera"].values() for s in info.get("shots") or []])
+
+
+def _render_edit(job_id: str, state: dict) -> dict:
     """The edit's render, from the plan (and Ibai's words, already reviewed)."""
     edl, res, bm, ep, sesion = state["edl"], state["res"], state["bm"], state["ep"], state["sesion"]
     temp, skipped, plan_info = state["temp"], state["skipped"], state["plan"]
@@ -904,6 +951,7 @@ def _render_edit(job_id: str, state: dict) -> None:
                      f"{', '.join(f'«{t}»' for t in skipped)}: el tramo bajó sin video dos veces.")
     job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
                            output_path=destination, resultado=result, aviso=" ".join(notes) or None)
+    return result
 
 
 def check_overrides(job_id: str, overrides: list) -> None:
@@ -924,9 +972,15 @@ def edit_finish(job_id: str, segments: list[dict] | None, kill_overrides: list |
     again it can be retried again."""
     state = _EDIT_REVIEW.pop(job_id, None)
     kept = False
+    run = metrics.Run("edit_render", job_id, preset=_preset(job_id))
     try:
         if not state:
             raise RuntimeError("Ese edit no está esperando revisión ni se puede reintentar (¿se reinició el servidor?).")
+        if state.pop("failed", False):
+            state["retries"] = state.get("retries", 0) + 1
+        state["overrides"] = state.get("overrides", len(state["ep"].kill_overrides or [])) + len(kill_overrides or [])
+        run.set(retries=1 if state.get("retries") else 0, overrides=state["overrides"],
+                reviewed=segments is not None, structure=state["ep"].structure)
         job_manager.update_job(job_id, status="processing", progress=33, stage="Renderizando el edit…",
                                finished=False, error=None, retryable=False)
         if kill_overrides:
@@ -941,13 +995,17 @@ def edit_finish(job_id: str, segments: list[dict] | None, kill_overrides: list |
             words = [w for w in reviewed_words(segments) if _in_windows(w["start"], edl)]
             edl.subtitle_words = vocab.correct(words)
         try:
-            _render_edit(job_id, state)
+            result = _render_edit(job_id, state)
         except Exception:
             _EDIT_REVIEW[job_id] = state
-            kept = True
+            state["failed"] = kept = True
             raise
+        run.set(video_s=result["total_duration"], warning=bool(state["res"].warning), **_edit_shots(state))
+        run.finish("ok")
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc), retryable=kept)
+        run.set(retryable=kept)
+        run.finish("error", str(exc))
     finally:
         if state and not kept:
             _cleanup_edit(state["temp"], state["downloaded"], state["music_path"])
@@ -1147,6 +1205,7 @@ def daily(job_id: str, game_ids: list[str], vod_url: str, carpeta_dia: str, titu
     says so) instead of putting a wrong video in the montage."""
     render = {"pre_s": 7.0, "post_s": 4.0, "zoom": 1.4, "color": "vivo", "zoom_mode": "zoom", **(render or {})}
     games, notes = [], []
+    run = metrics.Run("diario", job_id, preset=_preset(job_id), games=len(game_ids))
     try:
         n = len(game_ids)
         for k, gid in enumerate(game_ids, 1):
@@ -1211,8 +1270,12 @@ def daily(job_id: str, game_ids: list[str], vod_url: str, carpeta_dia: str, titu
                                aviso=" ".join(notes) or None,
                                resultado={"video": out, "duration": round(total, 2), "games": games,
                                           "order": [g["match"] for g in ok]})
+        run.set(ok=len(ok), doubtful=sum(1 for g in games if g["status"] == "ancla_dudosa"),
+                video_s=round(total, 2), warning=bool(notes))
+        run.finish("ok")
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc), resultado={"games": games})
+        run.finish("error", str(exc))
 
 
 # --- The whole game transcribed --------------------------------------------------
@@ -1230,6 +1293,7 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
     from modules.subtitles.schema import SubtitlesParams
     sesion = get_session(phase1_id)
     work = None
+    run = metrics.Run("transcripcion", job_id, language=language)
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe. Volvé a generar la propuesta (fase 1).")
@@ -1255,12 +1319,14 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
         os.makedirs(work, exist_ok=True)
         job_manager.update_job(job_id, progress=5, stage=f"Bajando el audio de la partida ({(b - a) / 60:.0f} min)…")
         audio = fuente.bajar_audio(params.vod_url, a, b, os.path.join(work, "audio"))
+        run.mark("audio")
         job_manager.update_job(job_id, progress=25, stage="Transcribiendo la partida…")
         terms = vocab.game_terms(d.get("roster") or [], [x for x in (params.equipo_azul, params.equipo_rojo,
                                                                      d["azul"], d["rojo"]) if x])
         initial_prompt, hotwords = vocab.prompt(terms)
         segs = subtitles.transcribe(audio, SubtitlesParams(language=language), job_id=job_id,
                                     initial_prompt=initial_prompt, hotwords=hotwords)
+        run.mark("whisper")
         fixes = vocab.load()
         segments = []
         for seg in segs:
@@ -1302,8 +1368,11 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
                                output_path=files["txt"],
                                resultado={**files, "segments": len(segments), "moments": index,
                                           "game_id": d["game_id"], "minutes": round((b - a) / 60, 1)})
+        run.set(minutes=round((b - a) / 60, 1), segments=len(segments), moments=len(index))
+        run.finish("ok")
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
+        run.finish("error", str(exc))
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)

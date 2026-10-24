@@ -1,0 +1,62 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-gauge"/></svg> Métricas</h1>
+  <p class="subtitle">
+    Cómo vienen los trabajos de Competitivo: tiempos, qué tanto acierta lo automático
+    (anclas, reloj, cámara), qué se corrigió a mano y qué falló. Debajo, la calibración
+    con los casos reales de la semana.
+  </p>
+</div>
+
+<div class="card mt-toolbar">
+  <div class="tl-filters" id="mt-days">
+    <button type="button" class="tl-chip" data-days="1">Hoy</button>
+    <button type="button" class="tl-chip active" data-days="7">7 días</button>
+    <button type="button" class="tl-chip" data-days="30">30 días</button>
+    <button type="button" class="tl-chip" data-days="0">Todo</button>
+  </div>
+  <button type="button" class="btn-secondary" id="mt-reload">
+    <svg class="icon"><use href="#i-refresh"/></svg> Actualizar
+  </button>
+</div>
+
+<p id="mt-loading" class="hint" style="padding:16px 0;">Leyendo las métricas…</p>
+
+<div id="mt-body" class="hidden">
+  <div class="mt-stats" id="mt-kpis"></div>
+
+  <div class="card">
+    <h3>Por tipo de trabajo</h3>
+    <table class="info-table">
+      <thead><tr><th>Tipo</th><th>Trabajos</th><th>Bien</th><th>Fallaron</th>
+        <th>Mediana</th><th>Video (mediana)</th></tr></thead>
+      <tbody id="mt-kinds"></tbody>
+    </table>
+    <p id="mt-kinds-empty" class="hint hidden">Todavía no hay trabajos en este período.</p>
+  </div>
+
+  <div class="card">
+    <div class="mt-cal-head">
+      <h3>Calibración</h3>
+      <button type="button" class="btn-primary" id="mt-cal-run">Correr la calibración</button>
+    </div>
+    <p class="hint">
+      Casos reales (cámara dividida, recuadro de la cámara, reloj, contador de kills, picos de Ibai,
+      momentos) con el resultado correcto. Correrla antes de cada día de partidos y después de cada
+      cambio. Tarda ~40 s.
+    </p>
+    <p id="mt-cal-status" class="mt-cal-status"></p>
+    <table class="info-table hidden" id="mt-cal-table">
+      <thead><tr><th>Caso</th><th>Chequeo</th><th>Resultado</th><th>Detalle</th></tr></thead>
+      <tbody id="mt-cal-rows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Últimos trabajos</h3>
+    <table class="info-table">
+      <thead><tr><th>Cuándo</th><th>Tipo</th><th>Estado</th><th>Tiempo</th><th>Detalle</th></tr></thead>
+      <tbody id="mt-recent"></tbody>
+    </table>
+  </div>
+  <p class="hint" id="mt-file"></p>
+</div>

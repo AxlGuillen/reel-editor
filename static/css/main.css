@@ -1880,3 +1880,26 @@ a:focus:not(:focus-visible) { outline: none; }
   width: auto; margin-top: 0; padding: 9px 16px;
 }
 #bm-result-wrap p { display: flex; gap: 10px; }
+
+/* ── Métricas: indicadores de Competitivo y calibración ───────────────────
+   Reusa las tarjetas del Historial (tl-stat) y la tabla de Info. El color
+   solo marca lo que hay que mirar: lo que falló. */
+.mt-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mt-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.mt-stats .tl-stat-num { font-size: 28px; }
+.mt-stat-sub { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+.mt-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mt-cal-head h3 { margin: 0; }
+.mt-cal-status { font-family: var(--font-mono); font-size: 12.5px; margin: 10px 0; }
+.mt-nowrap { white-space: nowrap; }
+.mt-detail { color: var(--muted); font-size: 12px; }
+.mt-ok, .mt-cal-ok, .mt-cal-fixed { color: var(--ok); }
+.mt-bad, .mt-error, .mt-cal-fail, .mt-cal-error { color: var(--err); font-weight: 600; }
+.mt-paused, .mt-cal-known, .mt-cal-missing { color: var(--muted); }
+.mt-toolbar .btn-secondary,
+.mt-cal-head .btn-primary { width: auto; flex: 0 0 auto; margin: 0; }

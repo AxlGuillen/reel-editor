@@ -86,6 +86,8 @@ Sin ellos todo funciona; `REELFORGE_RIFE` / `REELFORGE_REALESRGAN` apuntan al ej
 
 Las peleas de la fase 1 al ritmo de una canción. Con algo que un edit de anime no tiene: **los datos**. Cada kill ya está ubicada al cuadro (feed + contador del marcador), así que no se busca en el video qué coincide con la música: **se fuerza que cada kill caiga en un beat** estirando o comprimiendo el tramo de antes.
 
+**Presets.** Lo que funcionó la semana del 23/10 está con nombre en `assets/competitivo/presets.json`: `preset=edit_estandar` (actos cronológicos, sin letreros, 3 s antes y 2 s después de cada kill, picos de Ibai, `zoom_mode=auto` y **storyboard** antes del render), `edit_corto`, `edit_equipo` (+ `team`) y `edit_aura_triste`. Lo que se mande explícito gana sobre el preset; `GET /api/competitivo/presets` los lista. Cada edit queda en las métricas (`edit` / `edit_render`: kills con foco seguro, en plano entero, correcciones, reintentos), ver CLAUDE.md.
+
 - Cada pelea: **entrada** (1 compás, 2 si hay mucho antes), **kills** separadas por `n` beats (lo más cerca de la velocidad base, entre 0.5× y 2.5×) y **cola** hasta cerrar el compás. Así cada pelea arranca en un primer tiempo.
 - La **pelea clave** (la de cierre, o la de más puntaje) se ajusta para que su última kill caiga en un primer tiempo, y **la música arranca de modo que esa kill caiga en el drop**.
 - Si se pasa de `max_duration_s` salen las de menos puntaje (nunca la clave).

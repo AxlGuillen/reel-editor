@@ -235,6 +235,8 @@ def video_encode_flags(crf: int = 18) -> list[str]:
 # fails anyway is run again with libx264.
 NVENC_MAX = 3
 NVENC_SLOTS = threading.BoundedSemaphore(NVENC_MAX)
+# Counters for the jobs' metrics (competitivo/metrics.py).
+stats = {"nvenc_fallbacks": 0}
 _NVENC_ERRORS = ("nvenc", "encodesession", "(-22)", "error while opening encoder")
 
 
@@ -325,6 +327,7 @@ def capture(command: list[str], timeout: float = 300, cwd: str | None = None,
             if not nvenc_failed(str(exc)):
                 raise
             print("[ffmpeg] NVENC falló (sin sesión libre?): de nuevo con libx264")
+            stats["nvenc_fallbacks"] += 1
             command = cpu_fallback(command)
     return _capture(command, timeout, cwd, stderr)
 
@@ -381,6 +384,7 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
             if not nvenc_failed(str(exc)):
                 raise
             print("[ffmpeg] NVENC falló (sin sesión libre?): de nuevo con libx264")
+            stats["nvenc_fallbacks"] += 1
             command = cpu_fallback(command)
     _run(command, job_id, total_duration, cwd, lo, hi)
 
