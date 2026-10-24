@@ -70,6 +70,10 @@ FREEZE_S, FREEZE_ZOOM = 0.15, 0.3
 REPLAY_SHOW, REPLAY_BACK, REPLAY_SPEED, REPLAY_ZOOM = 0.45, 1.5, 0.4, 0.6
 STAIR = (0.1, 0.2, 0.3, 0.4)
 TEASER_MIN, TEASER_MAX = 2.0, 3.0
+BUILD_LONGEST = 12.0          # a real-time build shot at most this long
+PEAK_MUSIC = 0.30             # the music while Ibai's voice peaks (drop)
+PEAK_RAMP = 0.3
+LOOKS_PER_ACT = ("none", "bw")
 SHORT_MAX_S = 25.0
 AMBIENT_COLD_S = 2.5          # the ambient shot after the teaser
 AMBIENT_MIN_S = 1.5
@@ -99,6 +103,7 @@ class EditClip:
     vf: str = ""                      # geometry (vertical layout) of this span
     ambient: list = field(default_factory=list)   # [(a, b)] s of the span: stage, players, crowd
     ambient_vf: str = ""              # geometry of those shots (layout.ambient_geometry)
+    voice_peaks: list = field(default_factory=list)  # [(a, b, dB)] s of the span: Ibai gets excited
 
 
 @dataclass
@@ -122,6 +127,10 @@ class EditOptions:
     teaser_s: float = 2.5             # chronological: the key fight's teaser (2–3 s)
     short: bool = False               # acts: only the key fight and the best other one, ~20–25 s
     ambient: bool = False             # acts: stage/crowd shots in the cold open and the outro
+    kill_before_s: float = 3.0        # acts: game shown before the first kill of each fight
+    kill_after_s: float = 2.0         # and after the last one (both rounded to beats)
+    voice_peaks: bool = True          # acts: Ibai's peaks play in real time over the drop
+    last_fight_look: str = "none"     # acts: none | bw (the last fight and the outro)
 
 
 @dataclass
@@ -159,9 +168,11 @@ class EditResult:
     # [{source, start, end, out}] (s in the source / output start).
     voice_spans: list = field(default_factory=list)
     subtitle_until: float | None = None
+    subtitle_windows: list = field(default_factory=list)   # [(a, b)] output s with Ibai's subtitles
+    voice_peaks: list = field(default_factory=list)        # [{t, dur, db, clip}] used on the drop
 
     def plan_dict(self) -> dict:
-        return {"acts": self.acts, "kills": self.kills}
+        return {"acts": self.acts, "kills": self.kills, "voice_peaks": self.voice_peaks}
 
 
 def merge(kills: list[EditKill]) -> list[EditKill]:
@@ -263,7 +274,7 @@ def plan(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     def dur(pl):
         return sum(p.beats for p in pl) * per
 
-    while len(plans) > 1 and dur(plans) > op.max_duration_s:
+    while op.max_duration_s > 0 and len(plans) > 1 and dur(plans) > op.max_duration_s:   # 0 = no cap
         key = _climax(plans)
         worst = min((i for i in range(len(plans)) if i != key),
                     key=lambda i: (plans[i].clip.score, -i))
@@ -440,6 +451,83 @@ def _ramp_recipe(a: float, b: float, d: float) -> list[Piece]:
     return timing.ramp(a, b, d, RAMP_PROFILE)
 
 
+def _structure_acts(clip: EditClip, per: float, op: EditOptions) -> _Plan:
+    """The beat structure with kill_before_s before the first kill and
+    kill_after_s after the last one, in whole beats (the kill stays on its
+    beat and the fight still starts on a downbeat). Between the kills of a
+    fight nothing is cut: the gaps show the game continuously."""
+    pl = structure(clip, per, op.speed)
+    unit = per * op.speed
+    pl.lead_in_src = max(0.0, min(pl.hits[0].t - clip.start, op.kill_before_s))
+    pl.lead_in = max(1, round(pl.lead_in_src / unit))
+    after = max(0.0, min(clip.end - pl.hits[-1].t, op.kill_after_s))
+    _close_bar(pl, max(MIN_TAIL, math.ceil(after / unit - 1e-6)))
+    return pl
+
+
+def _overlap(peaks: list, x: float, y: float) -> float:
+    return sum(max(0.0, min(b, y) - max(a, x)) for a, b, *_ in peaks)
+
+
+def _beats_with_peaks(peaks: list, x: float, y: float, beats: int, per: float) -> int:
+    """Enough beats for [x, y] of source if its peaks play at 1×: the rest may
+    go up to MAX_GAP_SPEED."""
+    p = _overlap(peaks, x, y)
+    if p <= 0:
+        return beats
+    return max(beats, math.ceil((p + max(0.0, y - x - p) / MAX_GAP_SPEED) / per - 1e-6))
+
+
+def _fit_peaks(pl: _Plan, per: float, speed: float) -> None:
+    """More beats where Ibai's peaks fall, so they fit at real speed."""
+    peaks, h = pl.clip.voice_peaks, pl.hits
+    if not peaks:
+        return
+    pl.lead_in = _beats_with_peaks(peaks, h[0].t - pl.lead_in_src, h[0].t, pl.lead_in, per)
+    pl.gaps = [_beats_with_peaks(peaks, a.t, b.t, n, per) for a, b, n in zip(h, h[1:], pl.gaps)]
+    after = min(pl.clip.end - h[-1].t, pl.tail * per * speed)
+    tail = _beats_with_peaks(peaks, h[-1].t, h[-1].t + after, pl.tail, per)
+    if tail != pl.tail:
+        _close_bar(pl, tail)
+
+
+def _peak_pieces(x: float, y: float, d: float, peaks: list) -> list[Piece]:
+    """[x, y] of source in d s of output with the peaks at 1× and the rest at
+    the one constant speed that fills the remaining time."""
+    cuts = sorted({x, y, *(min(max(v, x), y) for a, b, *_ in peaks for v in (a, b))})
+    parts = [(a, b, any(pa <= a and b <= pb for pa, pb, *_ in peaks)) for a, b in zip(cuts, cuts[1:]) if b - a > 1e-4]
+    peak_len = sum(b - a for a, b, hot in parts if hot)
+    rest_src = (y - x) - peak_len
+    rest_out = d - peak_len
+    if rest_out <= 1e-3:
+        return _constant(x, y, d)
+    out = []
+    for a, b, hot in parts:
+        if hot:
+            out.append(Piece(a, b, b - a))
+        elif rest_src > 1e-4:
+            out.append(Piece(a, b, (b - a) * rest_out / rest_src))
+    if rest_src <= 1e-4:
+        out.append(Piece(y, y, rest_out))
+    return out
+
+
+def _peak_windows(pieces: list[Piece], t0: float, peaks: list) -> list[tuple[float, float, float, float, float]]:
+    """Output windows (start, end, source start, source end, dB) of the pieces
+    that are a peak at real speed."""
+    out, t = [], t0
+    for p in pieces:
+        if not p.frozen and abs(p.speed - 1) < 1e-6:
+            hit = next((pk for pk in peaks if pk[0] - 1e-4 <= p.start and p.end <= pk[1] + 1e-4), None)
+            if hit:
+                if out and abs(out[-1][1] - t) < 1e-6 and abs(out[-1][3] - p.start) < 1e-4:
+                    out[-1] = (out[-1][0], t + p.dur, out[-1][2], p.end, out[-1][4])
+                else:
+                    out.append((t, t + p.dur, p.start, p.end, hit[2] if len(hit) > 2 else 0.0))
+        t += p.dur
+    return out
+
+
 def _ambient_shot(clips: list[EditClip], used: set, prefer: int | None = None,
                   after: float | None = None) -> tuple[int, float, float] | None:
     """An unused ambient shot (clip index, a, b), the longest; with `prefer`,
@@ -540,9 +628,10 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     build_start = t
     for i in build:
         hs = hits_of[i]
-        a, b = hs[0].t - BUILD_BEFORE, hs[-1].t + BUILD_AFTER
-        if b - a > BUILD_MAX:
-            a = b - BUILD_MAX
+        a, b = hs[0].t - op.kill_before_s, hs[-1].t + op.kill_after_s
+        if b - a > BUILD_LONGEST:
+            a = b - BUILD_LONGEST
+        a = b - max(1, round((b - a) / per)) * per            # whole beats
         events.append(Event(t, "whip", 0.8, WHIP_DUR))
         t += real_shot(i, a, b, "build", t, max(hs, key=lambda h: (h.count, h.t)))
     if build:
@@ -552,39 +641,47 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     drop_out = silence_start + SILENCE_S
 
     # drop: the beat structure, with a recipe per kill.
-    plans = [structure(clips[i], per, op.speed) for i in drop_idx]
-    ids = list(drop_idx)
     outro_est = 4 * per
     dropped: list[str] = []
 
-    def drop_dur(pl: list[_Plan]) -> float:
-        return sum(p.beats for p in pl) * per
-
-    def key_index() -> int:
-        return ids.index(key) if key in ids else max(range(len(plans)), key=lambda n: plans[n].clip.score)
-
-    key_p = key_index()
-    while len(plans) > 1 and drop_out + drop_dur(plans) + outro_est > max_duration:
-        worst = min((n for n in range(len(plans)) if n != key_p), key=lambda n: (plans[n].clip.score, -n))
-        dropped.append(plans.pop(worst).clip.id)
-        ids.pop(worst)
-        key_p = key_index()
-    if op.short:
-        # ~20–25 s: one bar of lead-in per fight (two fit only that way).
+    def build_plans(idx: list[int]):
+        plans = [_structure_acts(clips[i], per, op) for i in idx]
+        key_p = idx.index(key) if key in idx else max(range(len(plans)), key=lambda n: plans[n].clip.score)
+        if op.short:
+            # ~20–25 s: one bar of lead-in per fight at most (two fit only that way).
+            for pl in plans:
+                if pl.lead_in > 4:
+                    pl.lead_in = 4
+                    pl.lead_in_src = min(pl.lead_in_src, 4 * per * op.speed)
+        recipes = assign_recipes(plans, key_p, allowed)
+        for pl, recs in zip(plans, recipes):
+            if recs and all(r == "stair_zoom" for r in recs):
+                pl.gaps = [1] * len(pl.gaps)                       # one kill per beat
+                _close_bar(pl)
+        if op.voice_peaks:
+            for pl in plans:
+                _fit_peaks(pl, per, op.speed)
+        _align_climax(plans[key_p])
+        if recipes[key_p] and recipes[key_p][-1] == "instant_replay":
+            replay = (REPLAY_BACK + 0.3) / REPLAY_SPEED
+            _close_bar(plans[key_p], math.ceil((REPLAY_SHOW + replay + 0.6) / per))
         for pl in plans:
-            pl.lead_in = 4
-            pl.lead_in_src = min(pl.lead_in_src, 4 * per * op.speed)
-    recipes = assign_recipes(plans, key_p, allowed)
-    for pl, recs in zip(plans, recipes):
-        if recs and all(r == "stair_zoom" for r in recs):
-            pl.gaps = [1] * len(pl.gaps)                       # one kill per beat
-            _close_bar(pl)
-    _align_climax(plans[key_p])
-    if recipes[key_p] and recipes[key_p][-1] == "instant_replay":
-        replay = (REPLAY_BACK + 0.3) / REPLAY_SPEED
-        _close_bar(plans[key_p], math.ceil((REPLAY_SHOW + replay + 0.6) / per))
-    for pl in plans:
-        pl.tail_src = max(0.0, min(pl.clip.end - pl.hits[-1].t, pl.tail * per * op.speed))
+            pl.tail_src = max(0.0, min(pl.clip.end - pl.hits[-1].t, pl.tail * per * op.speed))
+        return plans, recipes, key_p
+
+    def drop_one(idx: list[int], plans: list[_Plan], key_p: int) -> None:
+        """Out goes the lowest score (never the key fight)."""
+        worst = min((n for n in range(len(plans)) if n != key_p), key=lambda n: (plans[n].clip.score, -n))
+        dropped.append(plans[worst].clip.id)
+        idx.pop(worst)
+
+    ids = list(drop_idx)
+    plans, recipes, key_p = build_plans(ids)
+    # max_duration_s = 0: no cap (only the song limits it, below).
+    while max_duration > 0 and len(plans) > 1 and \
+            drop_out + sum(p.beats for p in plans) * per + outro_est > max_duration:
+        drop_one(ids, plans, key_p)
+        plans, recipes, key_p = build_plans(ids)
     drop_beats = sum(p.beats for p in plans)
     outro_beats = 4 if 4 * per >= 2.5 else 8
     if op.ambient and any(len(c.ambient) for c in clips):
@@ -607,10 +704,21 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
                    "La canción tiene poco antes del drop: el drop del edit no cae en el de la canción.")
         d0 = next((i for i, b in enumerate(beats) if b >= drop_out and round(b, 3) in downs),
                   next((i for i, b in enumerate(beats) if b >= drop_out), len(beats) - 1))
+    # The song is the limit: if it ends before, fights go out (not the key one).
+    left_out = 0
+    while d0 + drop_beats + outro_beats >= len(beats) and len(plans) > 1:
+        drop_one(ids, plans, key_p)
+        plans, recipes, key_p = build_plans(ids)
+        drop_beats = sum(p.beats for p in plans)
+        left_out += 1
     if d0 + drop_beats + outro_beats >= len(beats):
         missing = (d0 + drop_beats + outro_beats - len(beats) + 1) * per
-        raise ValueError(f"La canción es corta para estas peleas (faltan {missing:.0f} s de música). "
-                         "Bajá max_duration_s o elegí otra canción.")
+        raise ValueError(f"La canción es corta incluso para una pelea (faltan {missing:.0f} s de música). "
+                         "Elegí otra canción o un music_start más temprano.")
+    if left_out:
+        note = (f"La canción no alcanza: {'quedó fuera 1 pelea' if left_out == 1 else f'quedaron fuera {left_out} peleas'} "
+                f"({', '.join(dropped[-left_out:])}).")
+        warning = f"{warning} {note}" if warning else note
     music_start = beats[d0] - drop_out
 
     def T(r: int) -> float:
@@ -623,14 +731,20 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     events.append(Event(silence_start, "black", dur=SILENCE_S))
 
     end_src: list[float] = []
+    peak_wins: list[tuple] = []                 # (out start, out end, source, src a, src b, dB, clip)
     r = 0
     for n, (pl, recs) in enumerate(zip(plans, recipes)):
         c = pl.clip
         r0 = r
         h = pl.hits
+        peaks = c.voice_peaks if op.voice_peaks else []
         pieces: list[Piece] = []
         r = r0 + pl.lead_in
-        pieces += _fill(h[0].t - pl.lead_in_src, h[0].t, T(r) - T(r0), _constant, "start")
+        lead = (h[0].t - pl.lead_in_src, h[0].t)
+        if _overlap(peaks, *lead) > 0:
+            pieces += _peak_pieces(*lead, T(r) - T(r0), peaks)
+        else:
+            pieces += _fill(*lead, T(r) - T(r0), _constant, "start")
         stair_step = 0
         for j, (a, b, nb) in enumerate(zip(h, h[1:] + [None], pl.gaps + [pl.tail])):
             rec = recs[j]
@@ -640,7 +754,13 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
             x, y = focus(a)
             strong = n == key_p and b is None
             multi = a.count >= 2
-            if rec == "instant_replay":
+            voiced = _overlap(peaks, a.t, end) > 0
+            if voiced:
+                # Ibai's peak rules: real speed, no slow motion or rewinding.
+                rec = "hard_cut"
+                pieces += _peak_pieces(a.t, max(end, a.t), d, peaks)
+                events += [Event(t_kill, "flash", 0.45, 0.12), Event(t_kill, "shake", 0.35, 0.2)]
+            elif rec == "instant_replay":
                 # The kill, then rewind REPLAY_BACK s and see it again at 0.4× and zoomed.
                 show = min(REPLAY_SHOW, d * 0.2)
                 replay = min((REPLAY_BACK + 0.3) / REPLAY_SPEED, max(0.1, d - show - 0.1))
@@ -675,7 +795,8 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
                 text_end = T(r + nb) if b else t_kill + max(per * 2, 1.0)
                 texts.append(Text(t_kill, min(text_end, t_kill + 1.6), a.player, "kill", sub=a.champion))
             kills_info.append({"clip": c.id, "t": round(t_kill, 3), "recipe": rec, "count": a.count,
-                               "player": a.player, "champion": a.champion})
+                               "player": a.player, "champion": a.champion,
+                               **({"voice_peak": True} if voiced else {})})
             r += nb
         mk = _multikill(c.multikill)
         if mk and op.text in ("kills", "both"):
@@ -685,6 +806,7 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         segments.append(Segment(c.source, pieces, c.id, c.vf))
         events.append(Event(T(r0), "whip", 0.8, WHIP_DUR) if n > 0 else Event(T(r0), "flash", 1.0, 0.2))
         end_src.append(max(p.end for p in pieces))
+        peak_wins += [(*w[:2], c.source, *w[2:], c.id) for w in _peak_windows(pieces, T(r0), peaks)]
     drop_end = T(drop_beats)
     acts.append({"act": "silence", "start": silence_start, "end": drop_out, "clips": [],
                  "music": 0.0, "game": 0.0})
@@ -721,6 +843,16 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     end = drop_end + od
     acts.append({"act": "outro", "start": drop_end, "end": end, "clips": outro_clips,
                  "music": 1.0, "game": [GAME_DROP, 1.0]})
+    if op.last_fight_look not in LOOKS_PER_ACT:
+        raise ValueError(f"last_fight_look inválido: {op.last_fight_look!r}. Opciones: {', '.join(LOOKS_PER_ACT)}.")
+    if op.last_fight_look != "none":
+        # The last fight of the drop and the whole outro with a look of their own.
+        last_label = plans[-1].clip.id
+        outro_labels = {f"{oc.id}:outro"} | ({f"{clips[shot[0]].id}:ambient"} if shot else set())
+        start_outro = len(segments) - (2 if shot else 1)
+        for k, seg in enumerate(segments):
+            if seg.label == last_label or (k >= start_outro and seg.label in outro_labels):
+                seg.tint = op.last_fight_look
 
     # Volumes per act (short ramps: no clicks).
     pre = MUSIC_BUILD if build else MUSIC_COLD
@@ -729,7 +861,24 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         music_gain += [(build_start, MUSIC_COLD), (build_start + 0.3, MUSIC_BUILD)]
     music_gain += [(silence_start - RAMP_S, pre), (silence_start, 0.0), (drop_out - 0.01, 0.0), (drop_out, 1.0)]
     original_gain = [(0.0, 1.0), (silence_start - RAMP_S, 1.0), (silence_start, 0.0), (drop_out - 0.01, 0.0),
-                     (drop_out, GAME_DROP), (drop_end, GAME_DROP), (end, 1.0)]
+                     (drop_out, GAME_DROP)]
+    # Ibai's peaks on the drop: the music down to PEAK_MUSIC, his voice (the
+    # stream) up to 100 %, with PEAK_RAMP ramps. Close windows go as one.
+    merged: list[list[float]] = []
+    for w in sorted(peak_wins):
+        if merged and w[0] - merged[-1][1] < 2 * PEAK_RAMP:
+            merged[-1][1] = max(merged[-1][1], w[1])
+        else:
+            merged.append([w[0], w[1]])
+    for a, b in merged:
+        a0, b1 = max(drop_out, a - PEAK_RAMP), min(drop_end, b + PEAK_RAMP)
+        music_gain += [(a0, 1.0), (a, PEAK_MUSIC), (b, PEAK_MUSIC), (b1, 1.0)]
+        original_gain += [(a0, GAME_DROP), (a, 1.0), (b, 1.0), (b1, GAME_DROP)]
+    original_gain += [(drop_end, GAME_DROP), (end, 1.0)]
+    for w in peak_wins:
+        voice.append({"source": w[2], "start": round(w[3], 3), "end": round(w[4], 3), "out": round(w[0], 3)})
+    voice_peaks = [{"t": round(w[0], 3), "dur": round(w[1] - w[0], 3), "db": w[5], "clip": w[6]} for w in peak_wins]
+    subtitle_windows = [(0.0, voice_end)] + [(w[0], w[1]) for w in peak_wins]
 
     # Music accents and lyrics: only from the drop on (never over Ibai).
     win = analysis.window(bm, beats[d0], end - drop_out)
@@ -740,7 +889,7 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
             if analysis.section_at(win, x) == "chorus" and all(abs(t_d - k) > per for k in out_kills):
                 events.append(Event(t_d, "zoom", 0.3, 0.2))
     if op.text in ("lyrics", "both"):
-        taken = [(tx.start, tx.end) for tx in texts]
+        taken = [(tx.start, tx.end) for tx in texts] + [(a, b) for a, b in merged]   # never over Ibai
         words = win.get("words") or []
         for w, nxt in zip(words, words[1:] + [None]):
             ws = drop_out + w["start"]
@@ -756,8 +905,10 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     edl = Edl(segments, width=op.width, height=op.height, fps=op.fps, events=events,
               texts=sorted(texts, key=lambda tx: tx.start), music_start=music_start,
               music_gain=music_gain, original_gain=original_gain, fade_out=od,
-              subtitle_until=voice_end)
+              subtitle_until=None if peak_wins else voice_end,
+              subtitle_windows=subtitle_windows if peak_wins else [])
     used = [clips[cold].id] + [clips[i].id for i in build] + [p.clip.id for p in plans]
     acts = [{**a, "start": round(a["start"], 3), "end": round(a["end"], 3)} for a in acts]
     return EditResult(edl, music_start, drop_aligned, list(dict.fromkeys(used)), dropped, warning,
-                      acts=acts, kills=kills_info, voice_spans=voice, subtitle_until=voice_end)
+                      acts=acts, kills=kills_info, voice_spans=voice, subtitle_until=voice_end,
+                      subtitle_windows=subtitle_windows, voice_peaks=voice_peaks)

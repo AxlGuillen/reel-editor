@@ -342,9 +342,9 @@ class EditParams:
     engine: str = "auto"
     lyrics: object | None = None      # LyricsParams (only if text is "lyrics" or "both")
     style: str = "impact"
-    text: str = "kills"
+    text: str = "off"                 # no kill titles by default (Axl, 23/10)
     speed: float = 1.0
-    max_duration_s: float = 60
+    max_duration_s: float = 60        # 0 = no cap (only the song limits it)
     intensity: float = 1.0
     look: str = "vivid"
     lut: str = ""
@@ -375,12 +375,17 @@ class EditParams:
     teaser_s: float = 2.5             # that teaser (2–3 s)
     short: bool = False               # acts: only the key fight and the best other one (~20–25 s)
     ambient: bool = False             # acts: stage/crowd shots in the cold open and the outro
+    kill_before_s: float = 3.0        # acts: game before the first kill of each fight
+    kill_after_s: float = 2.0         # and after the last one
+    team: str = ""                    # every fight and pick where this team killed (code, e.g. T1)
+    voice_peaks: bool = True          # acts: Ibai's peaks in real time over the drop
+    last_fight_look: str = "none"     # acts: none | bw (the last fight and the outro)
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
         from modules.beatmap.analysis import ENGINES
         from modules.beatmap.schema import LyricsParams, music_from_form
-        from modules.competitivo.edit import RECIPES, STRUCTURES, STYLES, TEXT_MODES
+        from modules.competitivo.edit import LOOKS_PER_ACT, RECIPES, STRUCTURES, STYLES, TEXT_MODES
         from modules.subtitles.schema import VALID_LANGUAGES, SubtitlesParams
         from modules.editing import effects
 
@@ -400,7 +405,13 @@ class EditParams:
                 start = engine.parse_vod_time(start)
             except (TypeError, ValueError):
                 raise ValueError("'music_start' va en segundos (12.5), en m:ss o 'auto'.")
-        text = choice("text", TEXT_MODES, "kills")
+        text = choice("text", TEXT_MODES, "off")
+        max_duration = _num(form, "max_duration_s", 60, 0, 600, float)
+        if 0 < max_duration < 10:
+            raise ValueError("'max_duration_s' va de 10 a 600 s, o 0 para no ponerle tope.")
+        team = str(form.get("team") or "").strip().upper()
+        if team and not re.fullmatch(r"[A-Z0-9]{1,6}", team):
+            raise ValueError("'team' es el código del equipo, como en el marcador (p. ej. T1).")
         look = choice("look", list(effects.LOOKS), "vivid")
         lut = os.path.basename(str(form.get("lut") or "").strip())
         if lut and lut not in effects.luts():
@@ -412,7 +423,7 @@ class EditParams:
             lyrics=LyricsParams.from_form(form, lyrics_default=text in ("lyrics", "both")),
             style=choice("style", STYLES, "impact"), text=text,
             speed=_num(form, "speed", 1.0, 0.5, 2.0, float),
-            max_duration_s=_num(form, "max_duration_s", 60, 10, 180, float),
+            max_duration_s=max_duration,
             intensity=_num(form, "intensity", 1.0, 0.0, 1.5, float),
             look=look, lut=lut, glow=_num(form, "glow", 0.25, 0.0, 1.0, float),
             with_camera=_bool(form, "with_camera", True),
@@ -428,7 +439,7 @@ class EditParams:
             structure=choice("structure", STRUCTURES, "acts"),
             recipes=_recipes(form.get("recipes"), RECIPES),
             cold_open_s=_num(form, "cold_open_s", 6.5, 5.0, 8.0, float),
-            build_fights=_num(form, "build_fights", 2, 0, 2),
+            build_fights=_num(form, "build_fights", 2, 0, 6),
             voice_subs=_bool(form, "voice_subs", True),
             voice_language=choice("voice_language", sorted(VALID_LANGUAGES - {"auto"}), "es"),
             subs_style=_subs_style(SubtitlesParams.from_form(form)),
@@ -437,5 +448,10 @@ class EditParams:
             teaser_s=_num(form, "teaser_s", 2.5, 2.0, 3.0, float),
             short=_bool(form, "short", False),
             ambient=_bool(form, "ambient", False),
+            kill_before_s=_num(form, "kill_before_s", 3.0, 0.0, 8.0, float),
+            kill_after_s=_num(form, "kill_after_s", 2.0, 0.0, 6.0, float),
+            team=team,
+            voice_peaks=_bool(form, "voice_peaks", True),
+            last_fight_look=choice("last_fight_look", LOOKS_PER_ACT, "none"),
             **_salida(form, base),
         )

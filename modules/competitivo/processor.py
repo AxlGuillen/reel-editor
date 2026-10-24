@@ -34,7 +34,7 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import fuente, intro, kills, layout, salida, vocab
+from modules.competitivo import fuente, intro, kills, layout, salida, vocab, voice
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -483,8 +483,26 @@ def _offsets(sesion: dict, anchors: dict[str, float]) -> dict[str, float]:
     return out
 
 
-def _chosen_clips(sesion: dict, ids: list[str] | None) -> list[dict]:
+def team_codes(sesion: dict) -> set[str]:
+    return {x.upper() for d in sesion["partidas"] for x in (d["azul"], d["rojo"]) if x}
+
+
+def team_clips(sesion: dict, team: str) -> list[str]:
+    """Every fight and pick of phase 1 where `team` killed (eligible or not):
+    the blue team's kills are on the left of the scoreboard ("izq")."""
+    team = team.upper()
+    side = {d["game_id"]: ("izq" if d["azul"].upper() == team else "der" if d["rojo"].upper() == team else None)
+            for d in sesion["partidas"]}
+    return [c["id"] for c in sesion["clips"] if side.get(c["game_id"])
+            and any(s_ == side[c["game_id"]] for _, s_ in c["eventos"])]
+
+
+def _chosen_clips(sesion: dict, ids: list[str] | None, team: str = "") -> list[dict]:
     by_id = {c["id"]: c for c in sesion["clips"]}
+    if team and not ids:
+        ids = team_clips(sesion, team)
+        if not ids:
+            raise RuntimeError(f"{team} no mató en ninguna pelea de la fase 1.")
     ids = ids or [c["id"] for c in sesion["clips"] if c["seleccionada"]]
     missing = [i for i in ids if i not in by_id]
     if missing:
@@ -564,7 +582,7 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
         params: CompetitivoParams = sesion["params"]
         inicio: datetime = sesion["vod"]["inicio_utc"]
         offsets = _offsets(sesion, ep.anchors)
-        chosen = _chosen_clips(sesion, ep.clips)
+        chosen = _chosen_clips(sesion, ep.clips, ep.team)
         temp = os.path.join(sesion["carpeta"], f"edit_{job_id}")
         os.makedirs(temp, exist_ok=True)
         job_manager.update_job(job_id, status="processing", progress=1, finished=False, stage="Preparando la música…")
@@ -583,6 +601,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
 
         clips: list[edit_plan.EditClip] = []
         skipped: list[str] = []
+        voice_feats: dict[str, tuple[str, dict]] = {}       # clip id → (game_id, voice.features)
+        split_info: dict[str, list] = {}
         with ThreadPoolExecutor(max_workers=3) as ex:
             futures = [ex.submit(fuente.bajar_tramo, params.vod_url, *window(c),
                                  os.path.join(temp, f"tramo_{k:02d}")) for k, c in enumerate(chosen, 1)]
@@ -627,6 +647,22 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                     layout.edit_geometry(box, ep.zoom, ep.with_camera, split),
                     ambient=layout.ambient_ranges(span) if ep.ambient else [],
                     ambient_vf=layout.ambient_geometry(box, ep.with_camera) if ep.ambient else ""))
+                split_info[c["id"]] = [[round(x, 2), round(y, 2)] for x, y in split]
+                if ep.structure == "acts" and ep.voice_peaks:
+                    try:
+                        voice_feats[c["id"]] = (c["game_id"], voice.features(span, an.vivo_desde,
+                                                                             an.vivo_hasta - an.vivo_desde))
+                    except RuntimeError:
+                        pass
+        # Ibai's peaks: against the medians of HIS game (every span of it together).
+        by_game: dict[str, list[dict]] = {}
+        for gid, feat in voice_feats.values():
+            by_game.setdefault(gid, []).append(feat)
+        medians = {gid: voice.medians(feats) for gid, feats in by_game.items()}
+        for cl in clips:
+            if cl.id in voice_feats:
+                gid, feat = voice_feats[cl.id]
+                cl.voice_peaks = voice.peaks(feat, *medians[gid])
 
         if not clips:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
@@ -637,11 +673,15 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                                    structure=ep.structure, recipes=ep.recipes,
                                    cold_open_s=ep.cold_open_s, build_fights=ep.build_fights,
                                    chronological=ep.chronological, teaser_s=ep.teaser_s, short=ep.short,
-                                   ambient=ep.ambient)
+                                   ambient=ep.ambient, kill_before_s=ep.kill_before_s,
+                                   kill_after_s=ep.kill_after_s, voice_peaks=ep.voice_peaks,
+                                   last_fight_look=ep.last_fight_look)
         res = edit_plan.plan(clips, bm, op)
         edl = res.edl
-        plan_info = {"structure": ep.structure, **res.plan_dict()}
-        job_manager.update_job(job_id, plan=plan_info)
+        # split_camera: [[a, b]] seconds of each clip's span (to check the detector).
+        plan_info = {"structure": ep.structure, **res.plan_dict(), "split_camera": split_info,
+                     "detected_voice_peaks": {cl.id: cl.voice_peaks for cl in clips if cl.voice_peaks}}
+        job_manager.update_job(job_id, plan=plan_info, voice_peaks=res.voice_peaks, split_camera=split_info)
         state = {"edl": edl, "res": res, "bm": bm, "ep": ep, "sesion": sesion, "temp": temp,
                  "music_path": music_path, "downloaded": downloaded, "skipped": skipped, "plan": plan_info}
         if ep.structure == "acts" and ep.voice_subs and res.voice_spans:
@@ -651,7 +691,6 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             words = vocab.correct(_voice_words(res.voice_spans, ep.voice_language, temp, terms))
             edl.subtitle_words = words
             edl.subtitle_style = dict(ep.subs_style or {})
-            edl.subtitle_until = res.subtitle_until
             if ep.review:
                 # A pause for a human (or Claude) to fix the names before burning:
                 # the status brings Ibai's segments; /edit/finish resumes.
@@ -661,7 +700,13 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                                        finished=False, segments=review_segments(words, res.voice_spans),
                                        vocabulary=terms)
                 return
-        _render_edit(job_id, state)
+        try:
+            _render_edit(job_id, state)
+        except Exception as exc:  # noqa: BLE001
+            # The plan, the spans and Ibai's words stay: /edit/finish renders again.
+            _EDIT_REVIEW[job_id] = state
+            paused = True
+            job_manager.update_job(job_id, status="error", error=str(exc), retryable=True)
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
     finally:
@@ -728,24 +773,40 @@ def edit_waiting(job_id: str) -> bool:
     return job_id in _EDIT_REVIEW
 
 
-def edit_finish(job_id: str, segments: list[dict]) -> None:
+def edit_finish(job_id: str, segments: list[dict] | None) -> None:
     """Resumes an edit paused for review (review=1) with Ibai's segments as
-    they were fixed: the words get the corrections again and it renders."""
+    they were fixed (None = as they are), or renders again one whose render
+    failed: the words get the corrections again and it renders. If it fails
+    again it can be retried again."""
     state = _EDIT_REVIEW.pop(job_id, None)
+    kept = False
     try:
         if not state:
-            raise RuntimeError("Ese edit no está esperando revisión (¿se reinició el servidor?).")
+            raise RuntimeError("Ese edit no está esperando revisión ni se puede reintentar (¿se reinició el servidor?).")
         job_manager.update_job(job_id, status="processing", progress=33, stage="Renderizando el edit…",
-                               finished=False, error=None)
-        until = state["edl"].subtitle_until
-        words = [w for w in reviewed_words(segments) if until is None or w["start"] < until]
-        state["edl"].subtitle_words = vocab.correct(words)
-        _render_edit(job_id, state)
+                               finished=False, error=None, retryable=False)
+        if segments is not None:
+            edl = state["edl"]
+            words = [w for w in reviewed_words(segments) if _in_windows(w["start"], edl)]
+            edl.subtitle_words = vocab.correct(words)
+        try:
+            _render_edit(job_id, state)
+        except Exception:
+            _EDIT_REVIEW[job_id] = state
+            kept = True
+            raise
     except Exception as exc:  # noqa: BLE001
-        job_manager.update_job(job_id, status="error", error=str(exc))
+        job_manager.update_job(job_id, status="error", error=str(exc), retryable=kept)
     finally:
-        if state:
+        if state and not kept:
             _cleanup_edit(state["temp"], state["downloaded"], state["music_path"])
+
+
+def _in_windows(t: float, edl) -> bool:
+    """Whether a reviewed word falls where Ibai's subtitles may go."""
+    if edl.subtitle_windows:
+        return any(a - 1e-3 <= t < b for a, b in edl.subtitle_windows)
+    return edl.subtitle_until is None or t < edl.subtitle_until
 
 
 def review_segments(words: list[dict], spans: list[dict]) -> list[dict]:

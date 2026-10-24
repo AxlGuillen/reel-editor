@@ -164,13 +164,19 @@ class Validation(unittest.TestCase):
     def test_defaults(self):
         ep = EditParams.from_form({}, self.BASE)
         self.assertEqual((ep.style, ep.text, ep.look, ep.music_start, ep.align_drop),
-                         ("impact", "kills", "vivid", None, True))
+                         ("impact", "off", "vivid", None, True))
         self.assertFalse(ep.lyrics.lyrics)
         self.assertEqual(EditParams.from_form({"text": "both"}, self.BASE).lyrics.lyrics, True)
         self.assertEqual(EditParams.from_form({"music_start": "1:05"}, self.BASE).music_start, 65)
         self.assertEqual((ep.structure, ep.recipes, ep.cold_open_s, ep.build_fights, ep.voice_subs,
                           ep.voice_language), ("acts", (), 6.5, 2, True, "es"))
         self.assertEqual(ep.subs_style["font"], "Poppins-Bold.ttf")
+        self.assertEqual((ep.kill_before_s, ep.kill_after_s, ep.team, ep.voice_peaks, ep.last_fight_look),
+                         (3.0, 2.0, "", True, "none"))
+        ep2 = EditParams.from_form({"max_duration_s": "0", "team": "t1", "build_fights": "5",
+                                    "last_fight_look": "bw", "kill_before_s": "0"}, self.BASE)
+        self.assertEqual((ep2.max_duration_s, ep2.team, ep2.build_fights, ep2.last_fight_look, ep2.kill_before_s),
+                         (0, "T1", 5, "bw", 0.0))
         for raw, want in (("auto", ()), ("ramp, hard_cut", ("ramp", "hard_cut")),
                           ('["stair_zoom","ramp","ramp"]', ("stair_zoom", "ramp"))):
             self.assertEqual(EditParams.from_form({"recipes": raw}, self.BASE).recipes, want)
@@ -181,9 +187,9 @@ class Validation(unittest.TestCase):
 
     def test_errors(self):
         for form in ({"style": "x"}, {"text": "x"}, {"look": "sepia"}, {"lut": "no.cube"},
-                     {"speed": "3"}, {"max_duration_s": "500"}, {"music_url": "nada"},
+                     {"speed": "3"}, {"max_duration_s": "700"}, {"max_duration_s": "5"}, {"kill_before_s": "9"}, {"kill_after_s": "-1"}, {"build_fights": "7"}, {"last_fight_look": "sepia"}, {"team": "T 1!"}, {"music_url": "nada"},
                      {"music_start": "ayer"}, {"anchors": "{\"999\": 1}"}, {"structure": "x"},
-                     {"recipes": "slowmo"}, {"recipes": "[1"}, {"cold_open_s": "9"}, {"build_fights": "3"},
+                     {"recipes": "slowmo"}, {"recipes": "[1"}, {"cold_open_s": "9"},
                      {"voice_language": "auto"}):
             with self.assertRaises(ValueError, msg=form):
                 EditParams.from_form(form, self.BASE)
@@ -599,6 +605,72 @@ class Acts(unittest.TestCase):
         self.assertAlmostEqual(bar % 4, 0, places=2)
         # without ambient=1 they are not used
         self.assertFalse(any(s_.label.endswith(":ambient") for s_ in self._plan(clips, chronological=True).edl.segments))
+
+    def test_more_game_before_and_after_each_kill(self):
+        clips = [_clip(1, [8.0, 9.1], 50), _clip(2, [9.0, 11.5], 90, closes=True)]
+        for before, after in ((3.0, 2.0), (1.0, 0.5)):
+            res = self._plan(clips, build_fights=0, chronological=True, kill_before_s=before,
+                             kill_after_s=after, recipes=("hard_cut",))
+            seg = next(s_ for s_ in res.edl.segments if s_.label == "1-1")
+            # the source starts kill_before_s before the first kill (rounded to whole beats)
+            self.assertAlmostEqual(seg.pieces[0].start, 8.0 - before, delta=0.26)
+            self.assertGreaterEqual(max(p.end for p in seg.pieces), 9.1 + after - 1e-6)
+            # between the two kills: continuous, nothing cut
+            inside = [p for p in seg.pieces if p.start >= 8.0 - 1e-6 and p.end <= 9.1 + 1e-6 and not p.frozen]
+            self.assertAlmostEqual(sum(p.end - p.start for p in inside), 1.1, places=3)
+            for k in res.kills:                                                 # still on the beat
+                self.assertAlmostEqual(((k["t"] + res.music_start) / 0.5) % 1, 0, places=2)
+
+    def test_no_cap_and_a_song_that_runs_out(self):
+        clips = [_clip(i, [6.0, 9.0], 50 + i) for i in range(1, 9)] + [_clip(9, [8.0, 11.0], 99, closes=True)]
+        capped = self._plan(clips, build_fights=0, chronological=True, max_duration_s=40)
+        self.assertTrue(capped.dropped)
+        free = E.plan(clips, _beatmap(dur=240.0), E.EditOptions(structure="acts", build_fights=0, max_duration_s=0))
+        self.assertEqual((free.dropped, free.warning), ([], None))
+        self.assertEqual(len({k["clip"] for k in free.kills}), 9)
+        # a short song: it does not fail, it says how many were left out
+        short_song = _beatmap(dur=60.0, drop=20.0)
+        res = E.plan(clips, short_song, E.EditOptions(structure="acts", build_fights=0, max_duration_s=0))
+        self.assertTrue(res.dropped)
+        self.assertIn(f"quedaron fuera {len(res.dropped)} peleas", res.warning)
+        self.assertIn("1-9", [k["clip"] for k in res.kills])                  # never the key one
+        self.assertLess(res.acts[-1]["end"] + res.music_start, 60.0)
+
+    def test_ibai_peaks_play_at_real_speed_over_the_drop(self):
+        clips = [_clip(1, [8.0, 9.1], 50), _clip(2, [9.0, 11.5], 90, closes=True)]
+        clips[1].voice_peaks = [(9.6, 11.0, 4.2)]                              # between its two kills
+        res = self._plan(clips, build_fights=0, chronological=True)
+        seg = next(s_ for s_ in res.edl.segments if s_.label == "1-2")
+        real = [p for p in seg.pieces if abs(p.speed - 1) < 1e-6 and p.start >= 9.6 - 1e-6 and p.end <= 11.0 + 1e-6]
+        self.assertAlmostEqual(sum(p.end - p.start for p in real), 1.4, places=3)
+        self.assertEqual(len(res.voice_peaks), 1)
+        pk = res.voice_peaks[0]
+        self.assertEqual((pk["clip"], pk["db"]), ("1-2", 4.2))
+        self.assertAlmostEqual(pk["dur"], 1.4, places=3)
+        mid = pk["t"] + pk["dur"] / 2
+        self.assertAlmostEqual(_gain_at(res.edl.music_gain, mid), E.PEAK_MUSIC, places=3)
+        self.assertAlmostEqual(_gain_at(res.edl.original_gain, mid), 1.0, places=3)
+        self.assertAlmostEqual(_gain_at(res.edl.music_gain, pk["t"] - E.PEAK_RAMP - 0.05), 1.0, places=3)
+        # its words: transcribed (a voice span) and allowed on screen only there
+        self.assertIn(round(pk["t"], 3), [v["out"] for v in res.voice_spans])
+        self.assertIn((pk["t"], pk["t"] + pk["dur"]), [(round(a, 3), round(b, 3)) for a, b in res.edl.subtitle_windows])
+        self.assertIsNone(res.edl.subtitle_until)
+        self.assertTrue(any(k.get("voice_peak") for k in res.kills))
+        # voice_peaks=0: the drop as always
+        off = self._plan(clips, build_fights=0, chronological=True, voice_peaks=False)
+        self.assertEqual(off.voice_peaks, [])
+        self.assertEqual(off.edl.subtitle_windows, [])
+
+    def test_last_fight_in_black_and_white(self):
+        clips = self._clips()
+        clips[3].ambient = [(15.0, 19.5)]
+        res = self._plan(clips, chronological=True, ambient=True, last_fight_look="bw")
+        tinted = [s_.label for s_ in res.edl.segments if s_.tint == "bw"]
+        self.assertEqual(tinted, ["1-4", "1-4:outro", "1-4:ambient"])
+        self.assertEqual([s_.tint for s_ in self._plan(clips, chronological=True).edl.segments if s_.tint], [])
+        res.edl.validate()
+        with self.assertRaises(ValueError):
+            self._plan(clips, last_fight_look="sepia")
 
     def test_plan_dict_and_beat_still_works(self):
         res = self._plan()

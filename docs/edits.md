@@ -133,15 +133,29 @@ Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cu
 - **La voz de Ibai con subtítulos invertidos** (`voice_subs`, `voice_language`=es): cada plano en tiempo real se transcribe con faster-whisper y sus palabras se queman con el layout `invert` (los mismos campos `sub_inv_*` y `sub_font` que Subtítulos), solo hasta el silencio: **nunca encima de la letra**, que en este modo sale recién desde el drop.
 - **Nombres bien escritos** (`competitivo/vocab.py`): Whisper recibe como `initial_prompt` y `hotwords` los equipos, los 10 jugadores y los 10 campeones de ESA partida (la fase 1 guarda el plantel del feed en `partidas[].roster`), y después se aplican las correcciones conocidas de `assets/vocab.json` (mal oído → correcto; sin mayúsculas ni tildes, también frases). En el layout invertido cada palabra va **sin la puntuación final**.
 - **Revisión antes de quemar** (`review=1`): el edit se pausa después de transcribir (`status=done`, `finished=false`, `stage="esperando_revision"`) con `segments` (uno por plano en tiempo real, en tiempo de la salida: `{id, start, end, text, words}`) y `vocabulary`. `POST /api/competitivo/edit/finish` con `job_id` y `segments` (JSON, el texto corregido) renderiza: un segmento con el mismo texto conserva sus tiempos; uno cambiado se reparte sobre lo que cubrían sus palabras. Como la sesión vive en memoria, reiniciar el server pierde el edit pausado.
+- **Feedback del 23/10 (los 7 edits de Suiza Día 1):**
+  - **Sin letreros por defecto** (`text=off`): ni NOMBRE · CAMPEÓN ni el sello de multikill; `text=kills` los vuelve a poner.
+  - **Más juego alrededor de cada kill**: `kill_before_s` (3 s, 0–8) antes de la primera kill de cada pelea y `kill_after_s` (2 s, 0–6) después de la última, en el drop (la entrada y la cola de cada pelea) y en el build, redondeados a beats: la kill sigue cayendo en su beat y cada pelea sigue arrancando en un primer tiempo. Entre dos kills de la misma pelea no se corta nada.
+  - **Sin tope** (`max_duration_s=0`): entran todas las peleas elegidas; el límite es la canción desde el drop (o `music_start`). Si no alcanza, salen las de menos puntaje (nunca la clave) y el `warning`/`aviso` dice cuántas quedaron fuera; no falla.
+  - **Un equipo** (`team=T1`): todas las peleas y picks de la fase 1 donde ese equipo mató, elegibles o no, en orden; lo que mató el rival en esas peleas sale igual, como contexto. Un código que no jugó la sesión es un 400.
+  - **La voz de Ibai manda** (`voice_peaks=1`, por defecto; `competitivo/voice.py`): en la banda de la voz (250–3500 Hz) del audio del stream, un pico es ≥ 0.8 s con la energía **+3 dB** sobre su mediana en la partida Y el tono **×1.12** sobre su tono mediano (el stream viene comprimido: su p95 está apenas +3–4 dB sobre la mediana, medido en LOS-T1 y MKOI-BLG; con +6 dB no aparecía ninguno). Las medianas son de la partida (todos los tramos juntos). En el drop, esos tramos van **a velocidad real** (el resto de ese hueco se acelera para que la kill siga en su beat; si no entra, el hueco gana beats), la **música baja al 30 %** con rampas de 0.3 s, el **stream sube al 100 %**, se transcriben y se queman con el subtítulo invertido (`edl.subtitle_windows`: cada palabra solo dentro de su ventana) y nunca llevan letra encima. La kill de ese hueco pierde su receta (sin cámara lenta ni repetición: `voice_peak: true`). Verificado: los picos de LOS-T1 caen en «¡Madre mía, qué…!» y «¡Vamos! ¡Vamos!».
+  - `build_fights` llega a **6** (más peleas en tiempo real con su voz).
+  - **Look por acto** (`last_fight_look=bw`, opciones none|bw): la última pelea del drop y el outro en blanco y negro con un poco de contraste (`Segment.tint`, se aplica en la pasada 1 solo a esos planos).
+  - **Cámara dividida por clip**: el status (`split_camera`) y el `.json` (`plan.split_camera`) guardan los rangos de cada tramo para verificar el detector.
+  - **Render que se puede reintentar**: si el render falla (p. ej. NVENC sin sesión libre), el plan, los tramos y las palabras de Ibai quedan en memoria (`retryable: true`) y `POST /edit/finish` con el `job_id` (sin `segments`) renderiza de nuevo.
 - El status (y `resultado.plan`) trae el **plan por actos** (`acts: [{act, start, end, clips, music, game}]`) y la **receta de cada kill** (`kills: [{clip, t, recipe, count, player, champion}]`), para revisarlo; `resultado.subtitle_words` dice cuántas palabras de Ibai se quemaron.
 
 ```
 POST /api/competitivo/edit   … [structure (acts | beat), recipes (auto | lista), cold_open_s (5–8),
-      build_fights (0–2), chronological, teaser_s (2–3), short, ambient,
+      build_fights (0–6), chronological, teaser_s (2–3), short, ambient,
+      text (off | kills | lyrics | both), kill_before_s (0–8), kill_after_s (0–6),
+      max_duration_s (0 = sin tope, 10–600), team (código), voice_peaks, last_fight_look (none | bw),
       voice_subs, voice_language, review, vignette, with_camera, sub_inv_size,
       sub_inv_y, sub_inv_direction, sub_inv_words, sub_font]
-POST /api/competitivo/edit/finish   job_id + segments (JSON)              → 202 (edit con review=1)
-GET  /api/competitivo/status/<id> → … plan {structure, acts, kills}, [segments, vocabulary]
+POST /api/competitivo/edit/finish   job_id [+ segments (JSON)]           → 202 (review=1, o reintento)
+GET  /api/competitivo/status/<id> → … plan {structure, acts, kills, voice_peaks, split_camera,
+     detected_voice_peaks}, voice_peaks [{t, dur, db, clip}], split_camera {clip: [[a, b]]},
+     retryable, [segments, vocabulary]
 ```
 
 **Como lo opera Claude:** fase 1 (`/process` con `modo=revisar`) → `/edit` con el `job_id` y la canción → poll de `/status/<nuevo>` hasta `finished=true`.

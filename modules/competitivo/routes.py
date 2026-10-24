@@ -75,6 +75,9 @@ def edit():
         ep = EditParams.from_form(request.form, sesion["params"])
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+    if ep.team and ep.team not in processor.team_codes(sesion):
+        return jsonify(error=f"'team': {ep.team} no jugó en esta sesión "
+                             f"({', '.join(sorted(processor.team_codes(sesion)))}).", ), 400
     music_path = None
     if not ep.music:
         music = request.files.get("music")
@@ -93,15 +96,16 @@ def edit():
 @bp.post("/edit/finish")
 def edit_finish():
     """Resumes an edit paused with review=1: `segments` (JSON) are Ibai's
-    segments of its status, with the text fixed."""
+    segments of its status, with the text fixed (without them, as they are).
+    The same call renders again an edit whose render failed (`retryable`)."""
     job_id = (request.form.get("job_id") or "").strip()
     if not job_manager.get_job(job_id):
         return jsonify(error="job_id no encontrado"), 404
     if not processor.edit_waiting(job_id):
-        return jsonify(error="Ese edit no está esperando revisión."), 409
+        return jsonify(error="Ese edit no está esperando revisión ni se puede reintentar."), 409
     try:
         segments = json.loads(request.form.get("segments") or "null")
-        if not isinstance(segments, list) or not all(
+        if segments is not None and not isinstance(segments, list) or segments and not all(
                 isinstance(x, dict) and isinstance(x.get("text", ""), str)
                 and isinstance(x.get("start"), (int, float)) and isinstance(x.get("end"), (int, float))
                 and isinstance(x.get("words") or [], list) for x in segments):
@@ -125,6 +129,8 @@ def status(job_id):
         clips=job.get("clips"), seleccion=job.get("seleccion"), resultado=job.get("resultado"),
         portada=job.get("portada"), intro=job.get("intro"), plan=job.get("plan"),
         segments=job.get("segments"), vocabulary=job.get("vocabulary"),
+        voice_peaks=job.get("voice_peaks"), split_camera=job.get("split_camera"),
+        retryable=bool(job.get("retryable")),
     )
 
 
