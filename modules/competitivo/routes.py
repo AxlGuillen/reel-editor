@@ -44,8 +44,8 @@ def process():
 @bp.post("/finish")
 def finish():
     job_id = (request.form.get("job_id") or "").strip()
+    sesion = processor.get_session(job_id)
     job = job_manager.get_job(job_id)
-    sesion = processor._SESIONES.get(job_id)
     if not job or not sesion:
         return jsonify(error="Sesión no encontrada. Volvé a generar la propuesta."), 404
     if job["status"] == "processing":
@@ -64,7 +64,7 @@ def finish():
 @bp.post("/edit")
 def edit():
     phase1 = (request.form.get("job_id") or "").strip()
-    sesion = processor._SESIONES.get(phase1)
+    sesion = processor.get_session(phase1)
     if not sesion:
         return jsonify(error="Sesión no encontrada. Volvé a generar la propuesta (fase 1)."), 404
     # A /finish of the same session is downloading VOD sections too: both at
@@ -120,6 +120,8 @@ def edit_finish():
 @bp.get("/status/<job_id>")
 def status(job_id):
     job = job_manager.get_job(job_id)
+    if not job and processor.get_session(job_id):       # a phase 1 from before a restart
+        job = job_manager.get_job(job_id)
     if not job:
         return jsonify(error="job_id no encontrado"), 404
     return jsonify(
@@ -172,7 +174,7 @@ def download_clip(job_id, n):
 
 @bp.get("/frame/<job_id>/<int:n>")
 def frame(job_id, n):
-    sesion = processor._SESIONES.get(job_id)
+    sesion = processor.get_session(job_id)
     if not sesion or not 1 <= n <= len(sesion["partidas"]):
         return jsonify(error="No hay frame de control para esa partida."), 404
     nombre = sesion["partidas"][n - 1].get("frame")

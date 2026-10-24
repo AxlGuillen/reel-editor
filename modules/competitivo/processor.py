@@ -54,6 +54,65 @@ TRABAJO = os.path.join(config.OUTPUT_FOLDER, "competitivo")
 # Datos de cada sesión entre la fase 1 y la 2 (los jobs guardan lo que se
 # muestra; acá queda lo que hace falta para renderizar).
 _SESIONES: dict[str, dict] = {}
+# The job fields of a phase 1 that are saved with its session.
+_SAVED_JOB_FIELDS = ("status", "progress", "stage", "finished", "modo", "aviso", "vod", "partidas", "clips",
+                     "seleccion", "resultado", "portada", "intro", "error", "output_path")
+
+
+def _session_path(job_id: str) -> str:
+    return os.path.join(config.SESSIONS_FOLDER, f"{os.path.basename(job_id)}.json")
+
+
+def save_session(job_id: str) -> None:
+    """The phase-1 session (and its job's status) on disk: a restart of the
+    server no longer loses it (yesterday it happened three times)."""
+    sesion = _SESIONES.get(job_id)
+    if not sesion:
+        return
+    voz = sesion.get("voz")
+    data = {
+        "params": asdict(sesion["params"]),
+        "vod": {**sesion["vod"], "inicio_utc": _iso(sesion["vod"]["inicio_utc"])},
+        "partidas": sesion["partidas"], "clips": sesion["clips"], "carpeta": sesion["carpeta"],
+        "voz": [voz[0], asdict(voz[1])] if voz else None,
+        "job": {k: v for k, v in (job_manager.get_job(job_id) or {}).items() if k in _SAVED_JOB_FIELDS},
+    }
+    os.makedirs(config.SESSIONS_FOLDER, exist_ok=True)
+    tmp = _session_path(job_id) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, default=str)
+    os.replace(tmp, _session_path(job_id))
+
+
+def get_session(job_id: str) -> dict | None:
+    """The phase-1 session: from memory, or from disk after a restart (then
+    its job is put back too, so /status, /finish and /edit work as before)."""
+    sesion = _SESIONES.get(job_id)
+    if sesion or not job_id:
+        return sesion
+    path = _session_path(job_id)
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    voz = data.get("voz")
+    if voz and not os.path.isfile(voz[1]["path"]):
+        voz = None
+    sesion = {"params": CompetitivoParams(**data["params"]),
+              "vod": {**data["vod"], "inicio_utc": datetime.fromisoformat(data["vod"]["inicio_utc"])},
+              "partidas": data["partidas"], "clips": data["clips"], "carpeta": data["carpeta"],
+              "voz": (voz[0], intro.Voz(**voz[1])) if voz else None}
+    os.makedirs(sesion["carpeta"], exist_ok=True)
+    _SESIONES[job_id] = sesion
+    job = dict(data.get("job") or {})
+    if job.get("status") == "processing":
+        # It was cut by the restart: what is left is the proposal of phase 1.
+        job.update(status="done", stage="esperando_ancla", finished=False,
+                   aviso="El servidor se reinició a mitad del render: volvé a llamar /finish.")
+    job_manager.restore_job(job_id, job)
+    return sesion
+
+
 # Edits paused for review (review=1): what /edit/finish needs to render.
 _EDIT_REVIEW: dict[str, dict] = {}
 
@@ -221,6 +280,7 @@ def process(job_id: str, params: CompetitivoParams) -> None:
                       "¿el frame de control muestra la partida correcta?" if lejos else "")
                    if dudosas else None),
         )
+        save_session(job_id)
         if params.modo == "auto" and not dudosas:
             finish(job_id, FinishParams.desde(params))
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
@@ -256,7 +316,7 @@ def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
 
 
 def finish(job_id: str, fp: FinishParams) -> None:
-    sesion = _SESIONES.get(job_id)
+    sesion = get_session(job_id)
     temp = dest = None
     try:
         if not sesion:
@@ -461,6 +521,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                        "portada": "portada.jpg", "intro": intro_corto,
                        "clips": hechos, "skipped_clips": skipped, "duracion_total": duracion_total},
         )
+        save_session(job_id)
     except Exception as exc:  # noqa: BLE001
         job_manager.update_job(job_id, status="error", error=str(exc))
         # Lo que quedó a medias se borra (si no, el reintento terminaba en
@@ -573,7 +634,7 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
     adjustment), but instead of the layout with the casters it builds an EDL
     where each kill lands on a beat and the key fight on the drop, and renders
     it with the editing engine."""
-    sesion = _SESIONES.get(phase1_id)
+    sesion = get_session(phase1_id)
     temp = downloaded = None
     paused = False
     try:

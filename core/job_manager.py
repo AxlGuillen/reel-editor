@@ -28,6 +28,15 @@ def create_job(input_path: str, output_path: str) -> str:
     return job_id
 
 
+def restore_job(job_id: str, fields: dict) -> None:
+    """Puts back a job saved before a restart (competitivo's phase 1), with
+    its own id. Does nothing if it is already there."""
+    with _lock:
+        if job_id not in _jobs:
+            _jobs[job_id] = {"job_id": job_id, "status": "done", "progress": 100, "input_path": "",
+                             "output_path": "", "error": None, **fields}
+
+
 def get_job(job_id: str) -> dict | None:
     with _lock:
         job = _jobs.get(job_id)
