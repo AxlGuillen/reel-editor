@@ -34,8 +34,8 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import (camera, clock, fuente, intro, kills, layout, salida, storyboard, transcript,
-                                 vocab, voice)
+from modules.competitivo import (camera, clock, creator, fuente, intro, kills, layout, salida, storyboard,
+                                 transcript, vocab, voice)
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -429,6 +429,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
             return a, b
 
         n = len(elegidos)
+        cam_of = (creator.CreatorCam(fp.creator_vod_url, inicio, fp.creator_cam, fp.creator_delta_s)
+                  if fp.creator_vod_url else None)
         overrides = camera.overrides_from(fp.kill_overrides, {
             f"{c['id']}#{n_k}": (clock.parse(ck) if ck else None)
             for c in elegidos for n_k, ck in enumerate(c.get("kills_reloj") or [""] * len(c["eventos"]), 1)})
@@ -460,6 +462,11 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 dur_tramo = ffmpeg_runner.probe_duration(tramo) or (fin + MARGEN_CLIP_S)
                 ini, fin = max(0.0, ini), min(dur_tramo, fin)
                 an = layout.analizar(tramo, t_kill, ini, fin)
+                if cam_of:
+                    job_manager.update_job(job_id, stage=f"Clip {k}/{n}: la cámara del creador…")
+                    tramo = cam_of.apply(tramo, a, a + dur_tramo, an.camara or (layout.CAMARA_X, an.camara_y,
+                                                                              layout.CAMARA_W, layout.CAMARA_H),
+                                         temp, f"{k:02d}")
                 split = layout.split_ranges(tramo)      # Riot's split camera: the whole view
                 track, shots = None, []
                 if fp.zoom_mode != "zoom" or overrides:
@@ -527,6 +534,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
         aviso = (f"Se saltó {'el clip' if len(skipped) == 1 else 'los clips'} "
                  f"{', '.join(f'«{t}»' for t in skipped)}: el tramo bajó sin video dos veces."
                  if skipped else None)
+        if cam_of and cam_of.notes:
+            aviso = " ".join(([aviso] if aviso else []) + cam_of.notes)
 
         job_manager.update_job(job_id, stage="Uniendo el resumen…", progress=92)
         lista = os.path.join(temp, "lista.txt")
@@ -722,6 +731,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             return a, b
 
         raw: list[dict] = []                    # the analysis of each span (to re-plan the camera)
+        cam_of = (creator.CreatorCam(ep.creator_vod_url, inicio, ep.creator_cam, ep.creator_delta_s)
+                  if ep.creator_vod_url else None)
         skipped: list[str] = []
         split_info: dict[str, list] = {}
         with ThreadPoolExecutor(max_workers=3) as ex:
@@ -747,8 +758,12 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 t_kill = _vod(datetime.fromisoformat(c["primera"]), inicio, off) - a + shift
                 span_dur = ffmpeg_runner.probe_duration(span) or (end + MARGEN_CLIP_S)
                 an = layout.analizar(span, t_kill, max(0.0, start - 4), min(span_dur, end))
-                split = layout.split_ranges(span)
                 box = an.camara or an.camara_y
+                if cam_of:
+                    span = cam_of.apply(span, a, a + span_dur, an.camara or (layout.CAMARA_X, an.camara_y,
+                                                                             layout.CAMARA_W, layout.CAMARA_H),
+                                        temp, c["id"])
+                split = layout.split_ranges(span)
                 authors = c.get("authors") or [None] * len(c["eventos"])
                 counts = c.get("counts") or [1] * len(c["eventos"])
                 clocks = c.get("kills_reloj") or [""] * len(c["eventos"])
@@ -793,8 +808,12 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
         job_manager.update_job(job_id, stage="Armando el edit al ritmo…", progress=30)
         overrides = camera.overrides_from(ep.kill_overrides, _kill_clocks(raw))
+        if cam_of and cam_of.notes:
+            skipped_notes = cam_of.notes
+        else:
+            skipped_notes = []
         state = {"bm": bm, "ep": ep, "sesion": sesion, "temp": temp, "raw": raw, "split_info": split_info,
-                 "music_path": music_path, "downloaded": downloaded, "skipped": skipped}
+                 "music_path": music_path, "downloaded": downloaded, "skipped": skipped, "notes": skipped_notes}
         res, plan_info = _plan_edit(job_id, state, overrides)
         edl = res.edl
         state.update(edl=edl, res=res, plan=plan_info)
@@ -879,7 +898,7 @@ def _render_edit(job_id: str, state: dict) -> None:
                    "params": {k: v for k, v in asdict(ep).items() if k not in ("music", "lyrics")}},
                   fh, ensure_ascii=False, indent=2, default=str)
     # `resultado` and `aviso` are the keys the competitivo status already exposes.
-    notes = [res.warning] if res.warning else []
+    notes = ([res.warning] if res.warning else []) + list(state.get("notes") or [])
     if skipped:
         notes.append(f"Se saltó {'la pelea' if len(skipped) == 1 else 'las peleas'} "
                      f"{', '.join(f'«{t}»' for t in skipped)}: el tramo bajó sin video dos veces.")

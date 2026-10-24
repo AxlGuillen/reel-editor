@@ -137,6 +137,29 @@ def _salida(form, base=None) -> dict:
     return datos
 
 
+def creator_from(form) -> dict:
+    """creator_vod_url, creator_cam ("x,y,w,h" in 1920x1080) and creator_delta_s."""
+    from modules.competitivo.creator import parse_box
+    url = (form.get("creator_vod_url") or "").strip()
+    if url and not re.match(r"^https?://", url):
+        raise ValueError("'creator_vod_url' es el link del VOD del creador (http/https).")
+    cam = None
+    if form.get("creator_cam"):
+        try:
+            cam = parse_box(form["creator_cam"])
+        except ValueError:
+            raise ValueError("'creator_cam' es x,y,w,h de su webcam en 1920x1080 (p. ej. 1480,760,420,300).")
+    delta = None
+    if form.get("creator_delta_s") not in (None, ""):
+        try:
+            delta = float(form["creator_delta_s"])
+        except ValueError:
+            raise ValueError("'creator_delta_s' es un número de segundos.")
+    if (cam or delta is not None) and not url:
+        raise ValueError("Falta 'creator_vod_url'.")
+    return {"creator_vod_url": url, "creator_cam": cam, "creator_delta_s": delta}
+
+
 def moments_from(raw, base: CompetitivoParams) -> list:
     """moments: JSON [{"clock": "1:45", "dur": 6, "label": "robo del red", "game_id": …}]:
     moments without a kill for the edit (the scoreboard's clock; dur 2–20 s)."""
@@ -345,6 +368,9 @@ class FinishParams:
     titulo: str = ""
     zoom_mode: str = "zoom"            # zoom (as always) | auto | full (camera.py)
     kill_overrides: list = field(default_factory=list)
+    creator_vod_url: str = ""          # another creator's VOD: its webcam instead of Ibai's (creator.py)
+    creator_cam: tuple | None = None   # (x, y, w, h) of its webcam; None = found by itself
+    creator_delta_s: float | None = None   # creator_t = ibai_t + this; None = measured
 
     @classmethod
     def desde(cls, base: CompetitivoParams) -> "FinishParams":
@@ -361,7 +387,7 @@ class FinishParams:
             raise ValueError("'zoom_mode' tiene que ser auto, zoom o full.")
         return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base),
                    **_salida(form, base), zoom_mode=mode,
-                   kill_overrides=kill_overrides_from(form.get("kill_overrides")))
+                   kill_overrides=kill_overrides_from(form.get("kill_overrides")), **creator_from(form))
 
 
 def _anclas_y_clips(form, base: CompetitivoParams) -> tuple[dict[str, float], list[str] | None]:
@@ -451,6 +477,9 @@ class EditParams:
     storyboard: bool = False          # pause with a thumbnail per kill before the render
     kill_overrides: list = field(default_factory=list)   # [{kill | clock, mode?, focus?}]
     moments: list = field(default_factory=list)   # [{clock, dur, label, game_id?}]: moments without a kill
+    creator_vod_url: str = ""
+    creator_cam: tuple | None = None
+    creator_delta_s: float | None = None
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
@@ -528,5 +557,6 @@ class EditParams:
             storyboard=_bool(form, "storyboard", False),
             kill_overrides=kill_overrides_from(form.get("kill_overrides")),
             moments=moments_from(form.get("moments"), base),
+            **creator_from(form),
             **_salida(form, base),
         )
