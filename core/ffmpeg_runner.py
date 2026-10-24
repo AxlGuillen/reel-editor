@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 
 import config
 from core import job_manager
@@ -228,6 +229,47 @@ def video_encode_flags(crf: int = 18) -> list[str]:
     return ["-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast"]
 
 
+# NVENC has a limit of encode sessions at once (consumer GeForce cards): with
+# 7 edits at once, 4 failed with "Invalid argument (-22)". At most NVENC_MAX
+# encodes run on the GPU at the same time (the rest wait), and one that
+# fails anyway is run again with libx264.
+NVENC_MAX = 3
+NVENC_SLOTS = threading.BoundedSemaphore(NVENC_MAX)
+_NVENC_ERRORS = ("nvenc", "encodesession", "(-22)", "error while opening encoder")
+
+
+def uses_nvenc(command: list[str]) -> bool:
+    return "h264_nvenc" in command
+
+
+def nvenc_failed(detail: str) -> bool:
+    """Whether an FFmpeg failure is NVENC's (no free session, the driver)."""
+    low = detail.lower()
+    return any(e in low for e in _NVENC_ERRORS)
+
+
+def cpu_fallback(command: list[str]) -> list[str]:
+    """The same command with libx264 instead of h264_nvenc (video_encode_flags'
+    two flag sets: -cq N → -crf N, preset p4 → veryfast, without -rc / -b:v 0)."""
+    out, i, crf = [], 0, "18"
+    while i < len(command):
+        a = command[i]
+        nxt = command[i + 1] if i + 1 < len(command) else None
+        if a == "-c:v" and nxt == "h264_nvenc":
+            out += ["-c:v", "libx264"]
+            i += 2
+        elif a == "-cq" and nxt is not None:
+            crf = nxt
+            i += 2
+        elif a == "-rc" or (a == "-b:v" and nxt == "0") or (a == "-preset" and str(nxt).startswith("p")):
+            i += 2
+        else:
+            out.append(a)
+            i += 1
+    k = out.index("libx264") + 1
+    return out[:k] + ["-crf", crf, "-preset", "veryfast"] + out[k:]
+
+
 def encoder_info() -> str:
     """Descripción legible del encoder activo (la muestra el módulo Info)."""
     return "GPU NVENC (h264_nvenc)" if _nvenc_available() else "CPU (libx264)"
@@ -273,7 +315,21 @@ def capture(command: list[str], timeout: float = 300, cwd: str | None = None,
     """Ejecuta FFmpeg y devuelve su stdout (p. ej. frames en `-f rawvideo -`
     para analizarlos con numpy). Lanza RuntimeError si FFmpeg falla.
     `cwd`: como en run(), para filtros con rutas relativas (drawtext).
-    `stderr`: devuelve el stderr (lo que imprimen loudnorm o silencedetect)."""
+    `stderr`: devuelve el stderr (lo que imprimen loudnorm o silencedetect).
+    An NVENC encode waits for a GPU slot and falls back to libx264 (see NVENC_MAX)."""
+    if uses_nvenc(command):
+        try:
+            with NVENC_SLOTS:
+                return _capture(command, timeout, cwd, stderr)
+        except RuntimeError as exc:
+            if not nvenc_failed(str(exc)):
+                raise
+            print("[ffmpeg] NVENC falló (sin sesión libre?): de nuevo con libx264")
+            command = cpu_fallback(command)
+    return _capture(command, timeout, cwd, stderr)
+
+
+def _capture(command: list[str], timeout: float, cwd: str | None, stderr: bool) -> bytes:
     command, graphs = _spill_long_graphs(command)
     try:
         result = subprocess.run(command, capture_output=True, timeout=timeout, cwd=cwd)
@@ -282,7 +338,7 @@ def capture(command: list[str], timeout: float = 300, cwd: str | None = None,
     finally:
         _remove(graphs)
     if result.returncode != 0:
-        tail = result.stderr.decode("utf-8", "replace").strip().splitlines()[-5:]
+        tail = result.stderr.decode("utf-8", "replace").strip().splitlines()[-12:]
         raise RuntimeError(f"FFmpeg falló (code {result.returncode}):\n" + "\n".join(tail))
     return result.stderr if stderr else result.stdout
 
@@ -317,7 +373,20 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
     """
     lo, hi = progress_range
     job_manager.update_job(job_id, status="processing", progress=lo)
+    if uses_nvenc(command):
+        try:
+            with NVENC_SLOTS:
+                return _run(command, job_id, total_duration, cwd, lo, hi)
+        except RuntimeError as exc:
+            if not nvenc_failed(str(exc)):
+                raise
+            print("[ffmpeg] NVENC falló (sin sesión libre?): de nuevo con libx264")
+            command = cpu_fallback(command)
+    _run(command, job_id, total_duration, cwd, lo, hi)
 
+
+def _run(command: list[str], job_id: str, total_duration: float | None, cwd: str | None,
+         lo: int, hi: int) -> None:
     command, graphs = _spill_long_graphs(command)
     try:
         process = subprocess.Popen(

@@ -69,3 +69,62 @@ class LongGraphs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NvencLimit(unittest.TestCase):
+    """NVENC allows a few sessions at once: 7 edits at the same time got
+    "Invalid argument (-22)". At most NVENC_MAX encodes on the GPU and a
+    failed NVENC encode goes again with libx264."""
+    NV = ["ffmpeg", "-i", "a.mp4", "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "20",
+          "-b:v", "0", "-maxrate", "16M", "-c:a", "aac", "out.mp4"]
+
+    def test_cpu_fallback(self):
+        self.assertEqual(ffmpeg_runner.cpu_fallback(self.NV),
+                         ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
+                          "-maxrate", "16M", "-c:a", "aac", "out.mp4"])
+        self.assertTrue(ffmpeg_runner.nvenc_failed("[h264_nvenc @ 0x1] OpenEncodeSessionEx failed: out of memory"))
+        self.assertTrue(ffmpeg_runner.nvenc_failed("Error while opening encoder - maybe incorrect parameters"))
+        self.assertFalse(ffmpeg_runner.nvenc_failed("No such filter: 'blurr'"))
+
+    def test_a_failed_nvenc_encode_goes_again_on_the_cpu(self):
+        calls = []
+
+        def fake(command, *args):
+            calls.append(command)
+            if "h264_nvenc" in command:
+                raise RuntimeError("FFmpeg falló (code -22):\n[h264_nvenc @ x] InitializeEncoder failed: "
+                                   "invalid param (8)\nError while opening encoder")
+        job = job_manager.create_job("x", "")
+        from unittest import mock
+        with mock.patch.object(ffmpeg_runner, "_run", side_effect=fake):
+            ffmpeg_runner.run(self.NV, job)
+        self.assertEqual([("h264_nvenc" in c, "libx264" in c) for c in calls], [(True, False), (False, True)])
+        with mock.patch.object(ffmpeg_runner, "_run", side_effect=RuntimeError("No such filter: 'blurr'")):
+            with self.assertRaises(RuntimeError):
+                ffmpeg_runner.run(self.NV, job)                                # not NVENC's: no retry
+
+    def test_at_most_nvenc_max_at_once(self):
+        import threading
+        import time
+        from unittest import mock
+        lock, now, peak = threading.Lock(), [0], [0]
+
+        def slow(*args):
+            with lock:
+                now[0] += 1
+                peak[0] = max(peak[0], now[0])
+            time.sleep(0.15)
+            with lock:
+                now[0] -= 1
+        job = job_manager.create_job("x", "")
+        with mock.patch.object(ffmpeg_runner, "_run", side_effect=slow), \
+                mock.patch.object(ffmpeg_runner, "_capture", side_effect=lambda *a: slow() or b""):
+            threads = [threading.Thread(target=ffmpeg_runner.run, args=(self.NV, job)) for _ in range(4)]
+            threads += [threading.Thread(target=ffmpeg_runner.capture, args=(self.NV,)) for _ in range(4)]
+            cpu = [threading.Thread(target=ffmpeg_runner.run, args=(ffmpeg_runner.cpu_fallback(self.NV), job))
+                   for _ in range(4)]
+            for t in threads + cpu:
+                t.start()
+            for t in threads + cpu:
+                t.join()
+        self.assertEqual(peak[0], ffmpeg_runner.NVENC_MAX + 4)               # the CPU ones do not wait
