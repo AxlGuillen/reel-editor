@@ -75,6 +75,7 @@ PEAK_MUSIC = 0.30             # the music while Ibai's voice peaks (drop)
 PEAK_RAMP = 0.3
 LOOKS_PER_ACT = ("none", "bw")
 SHORT_MAX_S = 25.0
+MOMENT_LEAD = 0.6             # a moment shows 60 % of its length before its instant
 AMBIENT_COLD_S = 2.5          # the ambient shot after the teaser
 AMBIENT_MIN_S = 1.5
 
@@ -107,6 +108,10 @@ class EditClip:
     ambient: list = field(default_factory=list)   # [(a, b)] s of the span: stage, players, crowd
     ambient_vf: str = ""              # geometry of those shots (layout.ambient_geometry)
     voice_peaks: list = field(default_factory=list)  # [(a, b, dB)] s of the span: Ibai gets excited
+    # A moment without a kill ("robo del red", 6 s): shown in real time, MOMENT_LEAD of
+    # it before `moment_t` (s of the span); 0 = a fight.
+    moment_dur: float = 0.0
+    moment_t: float = 0.0
 
 
 @dataclass
@@ -568,12 +573,16 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     hits_of = [merge([k for k in c.kills if c.start <= k.t <= c.end]) or [EditKill((c.start + c.end) / 2)]
                for c in clips]
     n_clips = len(clips)
-    key = max(range(n_clips), key=lambda i: (clips[i].closes, clips[i].score, i))
+    moments_idx = [i for i, c in enumerate(clips) if c.moment_dur > 0]
+    fights_idx = [i for i in range(n_clips) if i not in moments_idx]
+    if not fights_idx:
+        raise ValueError("Un edit necesita al menos una pelea además de los momentos.")
+    key = max(fights_idx, key=lambda i: (clips[i].closes, clips[i].score, i))
     chrono = op.chronological or op.short
     max_duration = min(op.max_duration_s, SHORT_MAX_S) if op.short else op.max_duration_s
     if op.short:
         # The key fight and the best other one, both on the drop, in order.
-        others = [i for i in range(n_clips) if i != key]
+        others = [i for i in fights_idx if i != key]
         best_other = max(others, key=lambda i: (clips[i].score, -i)) if others else None
         cold, build = key, []
         drop_idx = sorted([key] + ([best_other] if best_other is not None else []))
@@ -581,13 +590,20 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         # Every fight in order: the first ones (before the key one) in real
         # time with Ibai, the rest on the beat; the cold open only teases the key.
         cold = key
-        build = [i for i in range(n_clips) if i < key][:max(0, op.build_fights)]
+        build = [i for i in fights_idx if i < key][:max(0, op.build_fights)]
         drop_idx = [i for i in range(n_clips) if i not in build]
     else:
-        cold = max(range(n_clips), key=lambda i: (clips[i].score, i == key, i))
-        others = sorted((i for i in range(n_clips) if i not in (cold, key)), key=lambda i: (-clips[i].score, i))
+        cold = max(fights_idx, key=lambda i: (clips[i].score, i == key, i))
+        others = sorted((i for i in fights_idx if i not in (cold, key)), key=lambda i: (-clips[i].score, i))
         build = sorted(others[:max(0, op.build_fights)])
         drop_idx = [i for i in range(n_clips) if i not in build] or [key]
+    if moments_idx:
+        # The moments before the first fight of the drop go with the build (real
+        # time, Ibai narrating); the later ones go on the drop, in order.
+        first_drop = min((i for i in drop_idx if i not in moments_idx), default=n_clips)
+        early = [i for i in moments_idx if i < first_drop or not chrono]
+        build = sorted(set(build) | set(early))
+        drop_idx = [i for i in drop_idx if i not in early]
     # Ambient shots: the outro's first (the reaction right after the last fight
     # is the best one), then the cold open's.
     used_ambient: set = set()
@@ -641,6 +657,16 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     build_start = t
     for i in build:
         hs = hits_of[i]
+        if clips[i].moment_dur > 0:
+            c = clips[i]
+            a = c.moment_t - MOMENT_LEAD * c.moment_dur
+            events.append(Event(t, "whip", 0.8, WHIP_DUR))
+            t_moment = t + MOMENT_LEAD * c.moment_dur
+            t += real_shot(i, a, a + c.moment_dur, "moment", t, EditKill(c.moment_t))
+            kills_info.append({"clip": c.id, "id": c.id, "clock": "", "t": round(t_moment, 3), "recipe": "moment",
+                               "count": 0, "player": "", "champion": "", "mode": "zoom",
+                               "src_t": round(c.moment_t, 3), "label": c.title})
+            continue
         a, b = hs[0].t - op.kill_before_s, hs[-1].t + op.kill_after_s
         if b - a > BUILD_LONGEST:
             a = b - BUILD_LONGEST
@@ -657,8 +683,18 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     outro_est = 4 * per
     dropped: list[str] = []
 
+    def moment_plan(c: EditClip) -> _Plan:
+        unit = per
+        hit = EditKill(c.moment_t, id=c.id)
+        lead = max(1, round(MOMENT_LEAD * c.moment_dur / unit))
+        pl = _Plan(c, [hit], lead, [], MIN_TAIL)
+        pl.lead_in_src = min(c.moment_t - c.start, lead * unit)
+        _close_bar(pl, max(MIN_TAIL, math.ceil((1 - MOMENT_LEAD) * c.moment_dur / unit - 1e-6)))
+        return pl
+
     def build_plans(idx: list[int]):
-        plans = [_structure_acts(clips[i], per, op) for i in idx]
+        plans = [moment_plan(clips[i]) if clips[i].moment_dur > 0 else _structure_acts(clips[i], per, op)
+                 for i in idx]
         key_p = idx.index(key) if key in idx else max(range(len(plans)), key=lambda n: plans[n].clip.score)
         if op.short:
             # ~20–25 s: one bar of lead-in per fight at most (two fit only that way).
@@ -667,6 +703,7 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
                     pl.lead_in = 4
                     pl.lead_in_src = min(pl.lead_in_src, 4 * per * op.speed)
         recipes = assign_recipes(plans, key_p, allowed)
+        recipes = [["moment"] if pl.clip.moment_dur > 0 else recs for pl, recs in zip(plans, recipes)]
         for pl, recs in zip(plans, recipes):
             if recs and all(r == "stair_zoom" for r in recs):
                 pl.gaps = [1] * len(pl.gaps)                       # one kill per beat
@@ -683,8 +720,9 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
         return plans, recipes, key_p
 
     def drop_one(idx: list[int], plans: list[_Plan], key_p: int) -> None:
-        """Out goes the lowest score (never the key fight)."""
-        worst = min((n for n in range(len(plans)) if n != key_p), key=lambda n: (plans[n].clip.score, -n))
+        """Out goes the lowest score (never the key fight; a moment, only after the fights)."""
+        worst = min((n for n in range(len(plans)) if n != key_p),
+                    key=lambda n: (plans[n].clip.moment_dur == 0, plans[n].clip.score, -n))
         dropped.append(plans[worst].clip.id)
         idx.pop(worst)
 
@@ -770,6 +808,14 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
             voiced = _overlap(peaks, a.t, end) > 0
             zoomed = a.mode != "full"            # the full view: no zoom (it would cut the action)
             att = op.zoom_attack_s
+            if rec == "moment":
+                # A moment without a kill: real time, no accents (only the whip into it).
+                pieces += _fill(a.t, end, d, _constant, "end")
+                kills_info.append({"clip": c.id, "id": c.id, "clock": "", "t": round(t_kill, 3), "recipe": "moment",
+                                   "count": 0, "player": "", "champion": "", "mode": "zoom",
+                                   "src_t": round(a.t, 3), "label": c.title})
+                r += nb
+                continue
             if voiced:
                 # Ibai's peak rules: real speed, no slow motion or rewinding.
                 rec = "hard_cut"
@@ -818,7 +864,7 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
                                "src_t": round(a.t, 3), **({"voice_peak": True} if voiced else {})})
             r += nb
         mk = _multikill(c.multikill)
-        if mk and op.text in ("kills", "both"):
+        if mk and op.text in ("kills", "both") and c.moment_dur == 0:
             t_last = kills_info[-1]["t"]
             texts.append(Text(t_last + 0.05, t_last + max(per * 3, 1.4), mk, "multikill"))
         pieces = timing.clamp_speeds(pieces, 0.0, timing.MAX_SPEED)

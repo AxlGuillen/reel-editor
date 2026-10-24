@@ -148,6 +148,7 @@ Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cu
   - **Sigue la acción** y **vista completa** (`zoom_mode=auto|zoom|full`, por defecto `auto`; ver `camera.py`): con la acción clara el recorte se desliza hacia ella y el zoom apunta ahí; si no está clara, ese momento va con la zona limpia entera (sin zoom). Medido en 52 kills reales del 23/10: con "seguro" el punto cae en la pelea; "no seguro" son sobre todo cámaras divididas y peleas desparramadas.
   - **Correcciones por kill** (`kill_overrides`, JSON): `[{"clock": "21:41", "mode": "full"}, {"kill": "1-10#2", "focus": [0.62, 0.40]}]`. `clock` es el reloj del marcador (todas las kills a ±2 s), `kill` el id del storyboard, `focus` el punto como fracción de la miniatura. Valen en `/edit`, en `/edit/finish` y en `/finish` de los resúmenes.
   - **Storyboard** (`storyboard=1`): antes del render largo el edit se pausa (`stage="esperando_revision"`, junto con `review=1` si se pidió) con `storyboard: {sheet, shots:[{n, id, clip, clock, t, recipe, mode, by, sure, focus, thumb}]}`; `GET /api/competitivo/storyboard/<id>` es la hoja de contacto y `…/<id>/<n>` cada miniatura. `/edit/finish` con `kill_overrides` rearma la cámara (mismos tiempos) y renderiza.
+- **Momentos sin kill** (`moments`, JSON): `[{"clock": "1:49", "dur": 6, "label": "robo del red"}]` (reloj del marcador, 2–20 s, hasta 10; `game_id` si la serie tiene varias). Se baja un tramo alrededor de ese reloj (60 % antes, 40 % después) y entra **en orden cronológico**, a velocidad real y con la voz de Ibai: antes de la primera pelea del drop va en el build; después, en el drop ocupando beats enteros, sin acentos. Sale en `plan.kills` con `recipe: "moment"`. Para encontrarlos: el índice de `/transcript`.
 - El status (y `resultado.plan`) trae el **plan por actos** (`acts: [{act, start, end, clips, music, game}]`) y la **receta de cada kill** (`kills: [{clip, t, recipe, count, player, champion}]`), para revisarlo; `resultado.subtitle_words` dice cuántas palabras de Ibai se quemaron.
 
 ```
@@ -155,7 +156,7 @@ POST /api/competitivo/edit   … [structure (acts | beat), recipes (auto | lista
       build_fights (0–6), chronological, teaser_s (2–3), short, ambient,
       text (off | kills | lyrics | both), kill_before_s (0–8), kill_after_s (0–6),
       max_duration_s (0 = sin tope, 10–600), team (código), voice_peaks, last_fight_look (none | bw),
-      zoom_mode (auto | zoom | full), storyboard, kill_overrides (JSON),
+      zoom_mode (auto | zoom | full), storyboard, kill_overrides (JSON), moments (JSON),
       voice_subs, voice_language, review, vignette, with_camera, sub_inv_size,
       sub_inv_y, sub_inv_direction, sub_inv_words, sub_font]
 POST /api/competitivo/edit/finish   job_id [+ segments, kill_overrides]   → 202 (review/storyboard, o reintento)

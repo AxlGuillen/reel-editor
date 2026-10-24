@@ -731,6 +731,8 @@ def action_track(path: str, t: float, lookback: float = LOOKBACK_S) -> dict | No
     edge = np.clip(np.minimum(np.arange(TRACK_W), TRACK_W - 1 - np.arange(TRACK_W)) / (0.12 * TRACK_W), 0.25, 1)
     acc *= edge[None, :]
     motion = float(acc.max())
+    if motion <= 1e-6:
+        return {"u": 0.5, "v": 0.5, "spread": 1.0, "motion": 0.0, "sure": False}   # nothing moves
     hot = acc >= np.percentile(acc, 97)
     ys, xs = np.nonzero(hot)
     w = acc[hot]

@@ -93,6 +93,71 @@ def edit():
     return jsonify(job_id=job_id), 202
 
 
+@bp.post("/daily")
+def daily():
+    """The day's summary by itself: game_ids (every game of the day), vod_url,
+    carpeta_dia, [titulo, montage_name, picks (JSON {gameId: [ids]}), zoom,
+    pre_s, post_s, zoom_mode, watermark] → 202 {job_id}."""
+    import re as _re
+    f = request.form
+    ids = [x for x in _re.split(r"[\s,;]+", f.get("game_ids") or "") if x]
+    vod = (f.get("vod_url") or "").strip()
+    carpeta = (f.get("carpeta_dia") or "").strip()
+    if not ids or not all(_re.fullmatch(r"\d{15,20}", x) for x in ids):
+        return jsonify(error="Faltan los gameId del día (números largos, separados por coma)."), 400
+    if not _re.match(r"^https?://", vod):
+        return jsonify(error="Falta 'vod_url': el VOD del día (YouTube o Twitch)."), 400
+    if not carpeta:
+        return jsonify(error="Falta 'carpeta_dia', p. ej. «Resumen Suiza Día 2 (24-10)»."), 400
+    try:
+        picks = json.loads(f.get("picks") or "{}")
+        render = {k: float(f[k]) for k in ("zoom", "pre_s", "post_s") if f.get(k)}
+        if not isinstance(picks, dict):
+            raise ValueError
+    except ValueError:
+        return jsonify(error="'picks' es un JSON {gameId: [ids]}; zoom, pre_s y post_s son números."), 400
+    if f.get("zoom_mode"):
+        if f["zoom_mode"] not in ("auto", "zoom", "full"):
+            return jsonify(error="'zoom_mode' tiene que ser auto, zoom o full."), 400
+        render["zoom_mode"] = f["zoom_mode"]
+    if f.get("watermark"):
+        render["watermark"] = f["watermark"]
+    job_id = job_manager.create_job(vod, output_path="")
+    job_manager.update_job(job_id, modo="daily")
+    threading.Thread(target=processor.daily, daemon=True,
+                     args=(job_id, ids, vod, carpeta, (f.get("titulo") or "highlights").strip(), picks, render,
+                           (f.get("montage_name") or "").strip())).start()
+    return jsonify(job_id=job_id), 202
+
+
+@bp.post("/transcript")
+def transcript():
+    """The whole game transcribed (draft → nexus) on the scoreboard's clock,
+    with the index of moments: job_id of a phase 1, [game_id, language,
+    draft_lead_s, carpeta_dia, partido, mapa] → 202 {job_id NEW}."""
+    phase1 = (request.form.get("job_id") or "").strip()
+    sesion = processor.get_session(phase1)
+    if not sesion:
+        return jsonify(error="Sesión no encontrada. Volvé a generar la propuesta (fase 1)."), 404
+    game_id = (request.form.get("game_id") or "").strip() or None
+    if game_id and game_id not in [d["game_id"] for d in sesion["partidas"]]:
+        return jsonify(error=f"La partida {game_id} no es de esa sesión."), 400
+    try:
+        lead = float(request.form.get("draft_lead_s") or processor.DRAFT_LEAD_S)
+        mapa = int(request.form.get("mapa") or 0) or None
+    except ValueError:
+        return jsonify(error="'draft_lead_s' y 'mapa' son números."), 400
+    if not 0 <= lead <= 1800:
+        return jsonify(error="'draft_lead_s' va de 0 a 1800 s."), 400
+    language = (request.form.get("language") or "es").strip().lower()
+    job_id = job_manager.create_job(sesion["params"].vod_url, output_path="")
+    job_manager.update_job(job_id, modo="transcript", phase1=phase1)
+    threading.Thread(target=processor.transcript_job, daemon=True,
+                     args=(job_id, phase1, game_id, language, lead, (request.form.get("carpeta_dia") or "").strip(),
+                           (request.form.get("partido") or "").strip(), mapa)).start()
+    return jsonify(job_id=job_id), 202
+
+
 @bp.post("/edit/finish")
 def edit_finish():
     """Resumes an edit paused with review=1 / storyboard=1: `segments` (JSON)

@@ -143,6 +143,34 @@ def _no_stream(message: str) -> bool:
     return "does not contain any stream" in message.lower()
 
 
+# Only the audio (a whole game's narration): Twitch's audio_only, YouTube's HLS audio.
+FORMAT_AUDIO = "audio_only/ba[protocol^=m3u8]/ba/b"
+
+
+def bajar_audio(url: str, inicio: float, fin: float, destino: str) -> str:
+    """Only the audio of [inicio, fin] of the VOD (a game, from the draft to
+    the nexus: ~45 min) to `destino`.<ext>; its path."""
+    for viejo in glob.glob(destino + ".*"):
+        os.remove(viejo)
+    opts = _opts(format=FORMAT_AUDIO, outtmpl=destino + ".%(ext)s",
+                 download_ranges=download_range_func(None, [(max(0.0, inicio), fin)]),
+                 force_keyframes_at_cuts=False)
+    slot = TWITCH_SLOTS if is_twitch(url) else None
+    try:
+        if slot:
+            slot.acquire()
+        downloader._download_with_retry(opts, url)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(downloader._friendly_error(exc))
+    finally:
+        if slot:
+            slot.release()
+    hechos = [p for p in glob.glob(destino + ".*") if not p.endswith(".part")]
+    if not hechos:
+        raise RuntimeError("yt-dlp terminó pero no dejó el audio descargado.")
+    return max(hechos, key=os.path.getmtime)
+
+
 def _download_span(url: str, inicio: float, fin: float, destino: str) -> str | None:
     """One download of the section: its path, or None if it came without streams."""
     for viejo in glob.glob(destino + ".*"):

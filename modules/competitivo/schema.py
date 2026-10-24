@@ -137,6 +137,37 @@ def _salida(form, base=None) -> dict:
     return datos
 
 
+def moments_from(raw, base: CompetitivoParams) -> list:
+    """moments: JSON [{"clock": "1:45", "dur": 6, "label": "robo del red", "game_id": …}]:
+    moments without a kill for the edit (the scoreboard's clock; dur 2–20 s)."""
+    if raw in (None, ""):
+        return []
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        raise ValueError("'moments' va en JSON: [{\"clock\": \"1:45\", \"dur\": 6, \"label\": \"robo del red\"}].")
+    if isinstance(items, dict):
+        items = [items]
+    if not isinstance(items, list) or len(items) > 10:
+        raise ValueError("'moments' es una lista de hasta 10 momentos.")
+    out = []
+    for it in items:
+        if not isinstance(it, dict) or not re.fullmatch(r"\d{1,2}:\d{2}", str(it.get("clock", "")).strip()):
+            raise ValueError("'moments': cada uno lleva 'clock' (el reloj del marcador, mm:ss).")
+        try:
+            dur = float(it.get("dur", 6))
+        except (TypeError, ValueError):
+            raise ValueError("'moments': 'dur' es un número de segundos.")
+        if not 2 <= dur <= 20:
+            raise ValueError("'moments': 'dur' va de 2 a 20 s.")
+        gid = str(it.get("game_id") or base.game_ids[0])
+        if gid not in base.game_ids:
+            raise ValueError(f"'moments': la partida {gid} no es de esta serie.")
+        out.append({"clock": str(it["clock"]).strip(), "dur": dur, "label": str(it.get("label") or "momento")[:40],
+                    "game_id": gid})
+    return out
+
+
 def kill_overrides_from(raw) -> list:
     """kill_overrides: JSON [{"kill": "1-10#2" | "clock": "21:41", "mode": "zoom"|"full",
     "focus": [u, v]}] (the shape; which kills they are is checked against the edit)."""
@@ -419,6 +450,7 @@ class EditParams:
     zoom_mode: str = "auto"           # auto | zoom | full (camera.py)
     storyboard: bool = False          # pause with a thumbnail per kill before the render
     kill_overrides: list = field(default_factory=list)   # [{kill | clock, mode?, focus?}]
+    moments: list = field(default_factory=list)   # [{clock, dur, label, game_id?}]: moments without a kill
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
@@ -495,5 +527,6 @@ class EditParams:
             zoom_mode=choice("zoom_mode", ("auto", "zoom", "full"), "auto"),
             storyboard=_bool(form, "storyboard", False),
             kill_overrides=kill_overrides_from(form.get("kill_overrides")),
+            moments=moments_from(form.get("moments"), base),
             **_salida(form, base),
         )

@@ -34,7 +34,8 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import camera, clock, fuente, intro, kills, layout, salida, storyboard, vocab, voice
+from modules.competitivo import (camera, clock, fuente, intro, kills, layout, salida, storyboard, transcript,
+                                 vocab, voice)
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -295,6 +296,7 @@ def process(job_id: str, params: CompetitivoParams) -> None:
                             "player": vocab.player_name(p.nombres.get(pid, ""), (p.azul, p.rojo)),
                             "champion": p.champions.get(pid, "")} for pid in sorted(p.nombres)],
                 "seleccion_s": round(sum(pe.duracion for pe in pe_lista if id(pe) in seleccion), 1),
+                "ganador": kills.ganador_partida(p),
                 **ancla,
             })
             game_clips = [_pelea_dict(p, pe, i, j, seleccion) for j, pe in enumerate(pe_lista, 1)]
@@ -700,6 +702,9 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
         inicio: datetime = sesion["vod"]["inicio_utc"]
         offsets = _offsets(sesion, ep.anchors)
         chosen = _chosen_clips(sesion, ep.clips, ep.team)
+        if ep.moments:
+            chosen = sorted(chosen + [_moment_clip(sesion, m, n) for n, m in enumerate(ep.moments, 1)],
+                            key=lambda c: (c["partida"], c["clip_inicio"]))
         temp = os.path.join(sesion["carpeta"], f"edit_{job_id}")
         os.makedirs(temp, exist_ok=True)
         job_manager.update_job(job_id, status="processing", progress=1, finished=False, stage="Preparando la música…")
@@ -768,6 +773,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                         feat = voice.features(span, an.vivo_desde, an.vivo_hasta - an.vivo_desde)
                     except RuntimeError:
                         feat = None
+                if c.get("moment"):
+                    c = {**c, "moment": {**c["moment"], "t": t_kill}}       # its instant in the span
                 raw.append({"c": c, "span": span, "an": an, "split": split, "box": box, "kills": ks,
                             "tracks": tracks, "feat": feat,
                             "ambient": layout.ambient_ranges(span) if ep.ambient else []})
@@ -943,6 +950,22 @@ def kill_frames(seen: list, expected: list, shift: float, lead: float) -> list[f
     return out
 
 
+def _moment_clip(sesion: dict, m: dict, n: int) -> dict:
+    """A moment without a kill ({clock, dur, label}) as a fight of the session:
+    its span around the scoreboard's clock (MOMENT_LEAD of it before)."""
+    d = next(x for x in sesion["partidas"] if x["game_id"] == m["game_id"])
+    center = utc_at_clock(d, clock.parse(m["clock"]))
+    if center is None:
+        raise RuntimeError(f"La partida {d['n']} no tiene el reloj del marcador calibrado: no se puede ubicar "
+                           f"el momento del {m['clock']} (repetí la fase 1).")
+    lead = edit_plan.MOMENT_LEAD * m["dur"]
+    return {"id": f"m{n}", "game_id": d["game_id"], "partida": d["n"], "titulo": m["label"], "puntaje": 0,
+            "multikill": None, "cierra": False, "eventos": [], "authors": [], "counts": [], "kills_reloj": [],
+            "clip_inicio": _iso(center - timedelta(seconds=lead)),
+            "clip_fin": _iso(center + timedelta(seconds=m["dur"] - lead)), "primera": _iso(center),
+            "moment": {"dur": m["dur"], "label": m["label"], "clock": m["clock"]}}
+
+
 def _kill_clocks(raw: list[dict]) -> dict[str, float | None]:
     """Each kill's scoreboard clock, in seconds (None if the game's clock was not calibrated)."""
     out = {}
@@ -973,7 +996,8 @@ def _edit_clips(state: dict, overrides: dict) -> tuple[list, dict]:
             c["id"], r["span"], an.vivo_desde, an.vivo_hasta, ks, c["puntaje"], c.get("multikill"),
             c.get("cierra", False), c["titulo"], layout.edit_geometry(box, ep.zoom, ep.with_camera, views, track),
             ambient=r["ambient"], ambient_vf=layout.ambient_geometry(box, ep.with_camera) if ep.ambient else "",
-            voice_peaks=r.get("peaks") or []))
+            voice_peaks=r.get("peaks") or [],
+            moment_dur=(c.get("moment") or {}).get("dur", 0.0), moment_t=(c.get("moment") or {}).get("t", 0.0)))
         shots_info[c["id"]] = {"shots": [sh.as_dict() for sh in shots], "track": track,
                                "full": [[round(x, 2), round(y, 2)] for x, y in full]}
     return clips, shots_info
@@ -1069,6 +1093,201 @@ def _teams(sesion: dict, chosen: list[dict], ep: EditParams) -> list[str]:
     codes = [x for d in sesion["partidas"] if d["game_id"] in {c["game_id"] for c in chosen}
              for x in (d.get("azul"), d.get("rojo"))]
     return [n for n in names + codes if n]
+
+
+# --- The daily summary -------------------------------------------------------------
+DAILY_MIN_SCORE = 90         # the winner's fights that make it (besides the closing one)
+DAILY_MAX_CLIPS = 3
+DAILY_MAX_S = 55.0
+
+
+def daily_pick(clips: list[dict], winner: str | None, max_s: float = DAILY_MAX_S) -> list[str]:
+    """The fights of a game for the day's summary, as Axl picked them by hand
+    on 23/10: the closing one and the WINNER's best (score ≥ DAILY_MIN_SCORE),
+    at most DAILY_MAX_CLIPS and max_s, in order."""
+    closing = [c for c in clips if c.get("cierra")]
+    best = sorted((c for c in clips if c.get("elegible") and c.get("ganador") == winner and not c.get("cierra")
+                   and c["puntaje"] >= DAILY_MIN_SCORE), key=lambda c: (-c["puntaje"], c["clip_inicio"]))
+    if not closing and not best:
+        best = sorted((c for c in clips if c.get("ganador") == winner), key=lambda c: -c["puntaje"])[:1]
+    pick, total = [], 0.0
+    for c in closing[:1] + best:
+        if len(pick) < DAILY_MAX_CLIPS and (not pick or total + c["duracion"] <= max_s):
+            pick.append(c)
+            total += c["duracion"]
+    return [c["id"] for c in sorted(pick, key=lambda c: c["clip_inicio"])]
+
+
+def daily(job_id: str, game_ids: list[str], vod_url: str, carpeta_dia: str, titulo: str = "highlights",
+          picks: dict | None = None, render: dict | None = None, montage_name: str = "") -> None:
+    """The day's summary, by itself: per game a phase 1, the fights picked
+    (daily_pick, or `picks` {gameId: [ids]}) rendered like the summaries of
+    23/10 (pre 7 s, post 4 s, zoom 1.4, no intro) in <carpeta_dia>/<Winner vs
+    Loser>/, and the montage of all of them in the order they were played,
+    with the game's audio. A game whose anchor is doubtful is left out (it
+    says so) instead of putting a wrong video in the montage."""
+    render = {"pre_s": 7.0, "post_s": 4.0, "zoom": 1.4, "color": "vivo", "zoom_mode": "zoom", **(render or {})}
+    games, notes = [], []
+    try:
+        n = len(game_ids)
+        for k, gid in enumerate(game_ids, 1):
+            band = (2 + int(90 * (k - 1) / n), 2 + int(90 * k / n))
+            job_manager.update_job(job_id, status="processing", progress=band[0],
+                                   stage=f"Partida {k}/{n}: fase 1 (feed, ancla y reloj)…")
+            sub = job_manager.create_job(vod_url, output_path="")
+            params = CompetitivoParams.from_form({
+                "game_ids": gid, "vod_url": vod_url, "modo": "revisar", "pre_s": str(render["pre_s"]),
+                "post_s": str(render["post_s"]), "zoom": str(render["zoom"]), "color": render["color"],
+                "intro_modo": "off", "max_por_partida": "12", "carpeta_dia": carpeta_dia,
+                "partido": "x", "titulo": titulo, "watermark": render.get("watermark", "")})
+            process(sub, params)
+            j = job_manager.get_job(sub)
+            if j["status"] != "done":
+                notes.append(f"{gid}: la fase 1 falló ({j['error']}).")
+                games.append({"game_id": gid, "phase1": sub, "status": "error", "error": j["error"]})
+                continue
+            d = j["partidas"][0]
+            if d["confianza"] != "alta":
+                notes.append(f"{d['azul']} vs {d['rojo']}: ancla dudosa ({d['confianza']}), quedó fuera; "
+                             f"revisala con la fase 1 {sub}.")
+                games.append({"game_id": gid, "phase1": sub, "status": "ancla_dudosa", "match": f"{d['azul']} vs {d['rojo']}"})
+                continue
+            winner = d.get("ganador") or d["azul"]
+            loser = d["rojo"] if winner == d["azul"] else d["azul"]
+            ids = (picks or {}).get(gid) or daily_pick(j["clips"], winner)
+            job_manager.update_job(job_id, progress=(band[0] + band[1]) // 2,
+                                   stage=f"Partida {k}/{n}: {winner} vs {loser}, {len(ids)} pelea(s)…")
+            fp = FinishParams.from_form({"clips": json.dumps(ids), "carpeta_dia": carpeta_dia,
+                                         "partido": f"{winner} vs {loser}", "titulo": titulo, "intro_modo": "off",
+                                         "zoom_mode": render["zoom_mode"]}, params)
+            finish(sub, fp)
+            j = job_manager.get_job(sub)
+            if j["status"] != "done":
+                notes.append(f"{winner} vs {loser}: el render falló ({j['error']}).")
+                games.append({"game_id": gid, "phase1": sub, "status": "error", "error": j["error"]})
+                continue
+            res = j["resultado"]
+            games.append({"game_id": gid, "phase1": sub, "status": "ok", "match": f"{winner} vs {loser}",
+                          "video": res["video"], "clips": ids, "duration": res["duracion_total"],
+                          "start_utc": d["inicio_utc"]})
+        ok = sorted((g for g in games if g["status"] == "ok"), key=lambda g: g["start_utc"])
+        if not ok:
+            raise RuntimeError("Ninguna partida salió: " + " ".join(notes))
+        job_manager.update_job(job_id, progress=93, stage="Montando el resumen del día…")
+        folder = os.path.join(config.COMPETITIVO_FOLDER, salida.limpiar(carpeta_dia))
+        name = salida.limpiar(montage_name or f"Highlights {carpeta_dia}") + ".mp4"
+        os.makedirs(folder, exist_ok=True)
+        out = salida._unico(folder, name)
+        lista = os.path.join(TRABAJO, f"daily_{job_id}.txt")
+        os.makedirs(TRABAJO, exist_ok=True)
+        with open(lista, "w", encoding="utf-8") as fh:
+            for g in ok:
+                fh.write("file '{}'\n".format(g["video"].replace("\\", "/").replace("'", "'\\''")))
+        total = sum(g["duration"] for g in ok)
+        try:
+            ffmpeg_runner.run(layout.build_concat(lista, out), job_id, total_duration=total, progress_range=(93, 99))
+        finally:
+            file_utils.cleanup_paths(lista)
+        job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True, output_path=out,
+                               aviso=" ".join(notes) or None,
+                               resultado={"video": out, "duration": round(total, 2), "games": games,
+                                          "order": [g["match"] for g in ok]})
+    except Exception as exc:  # noqa: BLE001
+        job_manager.update_job(job_id, status="error", error=str(exc), resultado={"games": games})
+
+
+# --- The whole game transcribed --------------------------------------------------
+DRAFT_LEAD_S = 600           # the transcription starts this long before 0:00 (the draft)
+NEXUS_TAIL_S = 30
+
+
+def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: str = "es",
+                   draft_lead_s: float = DRAFT_LEAD_S, carpeta_dia: str = "", partido: str = "",
+                   mapa: int | None = None) -> None:
+    """The narration of a whole game (draft → nexus) on the scoreboard's clock,
+    with the index of moments (transcript.py). Files: transcripcion.txt,
+    transcripcion.json and momentos.json."""
+    from modules.subtitles import processor as subtitles
+    from modules.subtitles.schema import SubtitlesParams
+    sesion = get_session(phase1_id)
+    work = None
+    try:
+        if not sesion:
+            raise RuntimeError("La sesión ya no existe. Volvé a generar la propuesta (fase 1).")
+        params: CompetitivoParams = sesion["params"]
+        d = next((x for x in sesion["partidas"] if not game_id or x["game_id"] == game_id), None)
+        if d is None:
+            raise RuntimeError(f"La partida {game_id} no es de esa sesión.")
+        if not d.get("clock0_utc"):
+            raise RuntimeError("Esa partida no tiene el reloj del marcador calibrado (repetí la fase 1).")
+        job_manager.update_job(job_id, status="processing", progress=2, stage="Bajando el feed de la partida…")
+        p = kills.fetch_partida(d["game_id"], workers=6)
+        inicio: datetime = sesion["vod"]["inicio_utc"]
+        offset = _offsets(sesion, {})[d["game_id"]]
+        clock0 = datetime.fromisoformat(d["clock0_utc"])
+        pauses = [(datetime.fromisoformat(x), datetime.fromisoformat(y)) for x, y in d.get("pauses") or []]
+
+        def to_clock(utc):
+            return clock.to_clock(utc, clock0, pauses)
+
+        a = _vod(clock0, inicio, offset) - draft_lead_s
+        b = _vod(p.frames[-1].ts, inicio, offset) + NEXUS_TAIL_S
+        work = os.path.join(sesion["carpeta"], f"transcript_{job_id}")
+        os.makedirs(work, exist_ok=True)
+        job_manager.update_job(job_id, progress=5, stage=f"Bajando el audio de la partida ({(b - a) / 60:.0f} min)…")
+        audio = fuente.bajar_audio(params.vod_url, a, b, os.path.join(work, "audio"))
+        job_manager.update_job(job_id, progress=25, stage="Transcribiendo la partida…")
+        terms = vocab.game_terms(d.get("roster") or [], [x for x in (params.equipo_azul, params.equipo_rojo,
+                                                                     d["azul"], d["rojo"]) if x])
+        initial_prompt, hotwords = vocab.prompt(terms)
+        segs = subtitles.transcribe(audio, SubtitlesParams(language=language), job_id=job_id,
+                                    initial_prompt=initial_prompt, hotwords=hotwords)
+        fixes = vocab.load()
+        segments = []
+        for seg in segs:
+            words = vocab.correct(seg["words"], fixes)
+            vod_s, clock_s = transcript.to_game_clock(seg["start"], a, inicio, offset, to_clock)
+            segments.append({"clock": transcript.fmt_clock(clock_s), "clock_s": round(clock_s, 2),
+                             "vod_s": round(vod_s, 2), "text": " ".join(w["word"] for w in words),
+                             "words": [{"word": w["word"],
+                                        "clock_s": round(transcript.to_game_clock(w["start"], a, inicio, offset,
+                                                                                   to_clock)[1], 2)}
+                                       for w in words]})
+        events = [{"clock_s": to_clock(e.ts), "tipo": e.tipo, "equipo": e.equipo, "detalle": e.detalle,
+                   "cantidad": e.cantidad} for e in p.eventos]
+        players = [r.get("player", "") for r in d.get("roster") or []]
+        champions = [vocab.champion_name(r.get("champion", "")) for r in d.get("roster") or []]
+        index = transcript.moments(segments, events, players, champions)
+
+        mapa = mapa or params.mapa
+        if carpeta_dia and partido:
+            folder = os.path.join(config.COMPETITIVO_FOLDER, salida.limpiar(carpeta_dia), salida.limpiar(partido),
+                                  "_extras", f"Mapa {mapa}")
+        else:
+            date = clock0.astimezone().strftime("%Y-%m-%d")
+            folder = os.path.join(config.COMPETITIVO_FOLDER, "_transcripciones",
+                                  salida.limpiar(f"{date} {d['azul']} vs {d['rojo']} · Mapa {mapa}"))
+        os.makedirs(folder, exist_ok=True)
+        title = f"{d['azul']} vs {d['rojo']} · Mapa {mapa} · reloj del marcador (antes de 0:00: draft y carga)"
+        files = {"txt": os.path.join(folder, "transcripcion.txt"), "json": os.path.join(folder, "transcripcion.json"),
+                 "moments": os.path.join(folder, "momentos.json")}
+        with open(files["txt"], "w", encoding="utf-8") as fh:
+            fh.write(transcript.text_file(segments, title))
+        with open(files["json"], "w", encoding="utf-8") as fh:
+            json.dump({"game_id": d["game_id"], "azul": d["azul"], "rojo": d["rojo"], "clock0_utc": d["clock0_utc"],
+                       "vod": {"url": params.vod_url, "from_s": round(a, 2), "to_s": round(b, 2)},
+                       "vocabulary": terms, "segments": segments}, fh, ensure_ascii=False, indent=1)
+        with open(files["moments"], "w", encoding="utf-8") as fh:
+            json.dump(index, fh, ensure_ascii=False, indent=1)
+        job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
+                               output_path=files["txt"],
+                               resultado={**files, "segments": len(segments), "moments": index,
+                                          "game_id": d["game_id"], "minutes": round((b - a) / 60, 1)})
+    except Exception as exc:  # noqa: BLE001
+        job_manager.update_job(job_id, status="error", error=str(exc))
+    finally:
+        if work:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 # --- Resúmenes guardados ----------------------------------------------------------

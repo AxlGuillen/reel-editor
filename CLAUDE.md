@@ -334,6 +334,7 @@ VOD de Ibai ─fuente.py─→ tramos HLS ─layout.py─→ ancla por partida +
 | `intro.py` | Portada (vertical, `portada.jpg`) y placa (horizontal) con plantilla fija; voz de la intro por URL; segmento "aparte" |
 | `clock.py` | El **reloj del marcador** ("10:18") leído del video con plantillas de la tipografía de la transmisión (`assets/competitivo/clock_digits.json`, hechas de cuadros reales con `build_templates`): celdas fijas (los dígitos son monoespaciados y se tocan), cada dígito recortado a su tinta y escalado por área. La fase 1 lo **calibra** en el tramo del ancla (mediana de ~20 lecturas) → `clock0_utc` por partida; con las pausas del feed (`gameState` "paused") cualquier hora del feed pasa a reloj del marcador. Los títulos, las kills (`kills_reloj`) y lo que Axl nombra ("la del 21:41") usan ESE reloj; el del feed (arrancaba ~5 min antes del 0:00) queda en `reloj_feed` |
 | `camera.py` | Dónde va la cámara en cada kill: el recorte del gameplay **sigue la acción** (`layout.action_track`: el movimiento del segundo y medio antes de la kill en toda la zona limpia, con el paneo del observador compensado por correlación de fase y los bordes —donde Riot anima DRAGON SOUL y los patrocinios— con menos peso) y se desliza suave (0.9 s, llega 0.6 s antes); o la **vista completa** (la zona limpia entera a lo ancho, como la cámara dividida). `zoom_mode`: `zoom`, `full` o `auto` (zoom donde la acción es clara, completa donde no). Correcciones por kill (`kill_overrides`) |
+| `transcript.py` | La **partida completa transcripta**, del draft (10 min antes del 0:00) al nexo, en el reloj del marcador (antes de 0:00 va negativo), con el vocabulario de la partida; y el **índice de momentos**: frases con palabras clave (robo/quitar, steal, barón, dragón, heraldo, golem/bufo/red/azul, multikill, torre, nexo; el robo y el buff se buscan en ±12 s de contexto) cruzadas con los eventos del feed (±25 s) y los jugadores nombrados, más los eventos del feed. En TL-CFO encontró "1:49 robo de buff — Josedeodo, Shad0w" sin ninguna kill |
 | `storyboard.py` | Una miniatura por kill (la zona limpia en su cuadro con la ventana de recorte o FULL y el punto del enfoque) y una hoja de contacto, antes del render largo |
 | `vocab.py` | Nombres bien escritos en los subtítulos de Ibai (modo edit): vocabulario de la partida para Whisper (equipos, 10 jugadores, 10 campeones) y las correcciones de `assets/vocab.json` |
 | `salida.py` | Dónde queda cada resumen: estructura por día/partido o por serie, nombres limpios para Windows, publicación sin pisar (lo anterior a `_descartados`), listado y rutas seguras para `/resumenes` |
@@ -396,7 +397,15 @@ GET  /api/competitivo/portada/<id>       → portada.jpg (después de finish)
 GET  /api/competitivo/resumenes          → resúmenes guardados: [{estructura, nombre, dia, partido, mapa,
         titulo, ruta, portada, clips:[{archivo, titulo, duracion, ruta}], creado, duracion_total, intro}]
 GET  /api/competitivo/resumenes/<ruta>   → cualquier archivo de ahí (ruta relativa, con subcarpetas)
+POST /api/competitivo/transcript   job_id (fase 1), [game_id, language, draft_lead_s, carpeta_dia, partido, mapa]
+        → 202 {job_id NUEVO}; resultado {txt, json, moments (lista), segments, minutes}
+POST /api/competitivo/daily        game_ids (todas las del día), vod_url, carpeta_dia, [titulo, montage_name,
+        picks {gameId: [ids]}, zoom, pre_s, post_s, zoom_mode, watermark] → 202 {job_id}
 ```
+
+**Transcripción** (`/transcript`): baja solo el audio de la partida (~48 min en Twitch, `fuente.bajar_audio`), la transcribe con faster-whisper y el prompt de la partida, y deja `transcripcion.txt` (`[1:49] …` por frase), `transcripcion.json` (con cada palabra en el reloj) y `momentos.json` en `<carpeta_dia>/<partido>/_extras/Mapa N/` o, sin ellos, en `COMPETITIVO_FOLDER/_transcripciones/<fecha> A vs B · Mapa N/`. Necesita el reloj calibrado (fase 1 de esta versión).
+
+**Resumen diario** (`/daily`), como el que Axl armó a mano el 23/10: por partida, una fase 1 (en `revisar`; si el ancla no es `alta` la partida queda fuera y el `aviso` lo dice) y un `/finish` con `pre_s` 7, `post_s` 4, zoom 1.4, sin intro, en `<carpeta_dia>/<Ganador vs Perdedor>/Mapa 1 - <titulo>.mp4`; las peleas: la de cierre y las del **ganador** con puntaje ≥ 90, hasta 3 y 55 s (`daily_pick`; con LOS-T1 da las mismas tres que eligió Axl) o las de `picks`. Después el montaje de todos en el orden en que se jugaron, **con el audio del juego**, en `<carpeta_dia>/Highlights <carpeta_dia>.mp4`. La fase 1 guarda el ganador de cada partida (`partidas[].ganador`).
 
 **Salida (`salida.py`).** Con `carpeta_dia` y `partido`:
 
