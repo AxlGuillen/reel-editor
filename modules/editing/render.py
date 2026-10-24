@@ -76,7 +76,8 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
     # goes as-is; otherwise the input is prepended. Its last chain must stay
     # open: the retime is appended here.
     head = geo if geo.startswith("[") else f"[0:v]{geo}"
-    parts = [f"{head},setsar=1,format=yuv420p,split={k}" + "".join(f"[p{i}]" for i in range(k))]
+    tint = f",{effects.TINTS[seg.tint]}" if seg.tint else ""
+    parts = [f"{head}{tint},setsar=1,format=yuv420p,split={k}" + "".join(f"[p{i}]" for i in range(k))]
     for i, p in enumerate(seg.pieces):
         rel = p.start - ss
         n = _n(p.dur, fps)
@@ -199,7 +200,8 @@ def _subtitles(edl: Edl) -> str | None:
              for w in edl.subtitle_words if str(w.get("word") or "").strip()]
     if not words:
         return None
-    return subtitles._write_ass(subtitles._build_invert_ass([words], params, until=edl.subtitle_until))
+    return subtitles._write_ass(subtitles._build_invert_ass([words], params, until=edl.subtitle_until,
+                                                            windows=edl.subtitle_windows or None))
 
 
 def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> Segment:
@@ -222,7 +224,7 @@ def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> 
         factor = 4 if slowest < 0.3 else 2
         source, _ = external.interpolate(source, start, end, factor, work)
     pieces = [Piece(p.start - a, p.end - a, p.dur) for p in seg.pieces]
-    return Segment(source, pieces, seg.label, seg.vf, False)
+    return Segment(source, pieces, seg.label, seg.vf, False, seg.tint)
 
 
 def render(edl: Edl, out: str, job_id: str | None, work: str, *,

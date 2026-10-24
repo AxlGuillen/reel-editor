@@ -36,6 +36,10 @@ VIVID_CURVE = "curves=all='0/0 0.1/0.085 0.24/0.24 0.45/0.49 0.75/0.80 1/1'"
 # 48 %, darkening the stats table of a vertical frame).
 VIGNETTE = "vignette=angle=PI/9"
 
+# Per-shot tints (Segment.tint), applied in pass 1 over that shot only: "bw"
+# is full black and white with a little contrast (the sad aura of the last fight).
+TINTS = {"bw": "hue=s=0,eq=contrast=1.12"}
+
 # Looks: FFmpeg chains. "golden" is the one from the reference edit (Levi):
 # shadows toward teal, highlights toward amber and high saturation.
 LOOKS = {

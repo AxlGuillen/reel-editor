@@ -644,9 +644,10 @@ def _inv_clean(word: str) -> str:
 
 
 def _build_invert_ass(segments: list[list[dict]], params: SubtitlesParams,
-                      until: float | None = None) -> str:
+                      until: float | None = None, windows: list | None = None) -> str:
     """`until`: nothing stays on screen after this (the edit's acts: Ibai's
-    words never spill into the drop)."""
+    words never spill into the drop). `windows`: [(a, b)] where words may be;
+    a word outside them is left out and one inside lasts until its end."""
     font = fonts.font_info(params.font)
     em = params.inv_size
     fs = fonts.ass_font_size(font, em)
@@ -689,6 +690,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             end = min(end, nxt)
         if until is not None:
             end = min(end, until)
+        if windows:
+            win = next((w for w in windows if w[0] - 1e-3 <= words[0]["start"] < w[1]), None)
+            if win is None:
+                continue
+            end = min(end, win[1])
         # Stacked, one word per line, the block centered on inv_y; too long a
         # word shrinks the whole group (the vertical one has the frame's height).
         widths = [fonts.text_width(font, w, em) for w in shown]

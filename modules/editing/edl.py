@@ -20,6 +20,7 @@ FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen f
 # silence before the drop).
 EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black")
 TEXT_STYLES = ("word", "kill", "multikill", "title", "sub")
+TINT_KINDS = ("", "bw")           # Segment.tint (the filters are in effects.TINTS)
 
 
 @dataclass
@@ -49,6 +50,8 @@ class Segment:
     vf: str = ""
     # Needs interpolation (RIFE) because some piece is very slow.
     interpolate: bool = False
+    # A look of its own on top of the edit's (effects.TINTS): "" or "bw".
+    tint: str = ""
 
     @property
     def dur(self) -> float:
@@ -102,6 +105,9 @@ class Edl:
     subtitle_words: list = field(default_factory=list)
     subtitle_style: dict = field(default_factory=dict)
     subtitle_until: float | None = None   # nothing of them on screen after this
+    # [(a, b)] output windows where they may be (Ibai's real-time stretches);
+    # empty = anywhere. A word stays at most until the end of its window.
+    subtitle_windows: list = field(default_factory=list)
     look: str = "neutral"
     lut: str = ""                 # file in assets/luts ("" = no LUT)
     glow: float = 0.0             # 0–1
@@ -128,6 +134,8 @@ class Edl:
         for i, s in enumerate(self.segments, 1):
             if not s.pieces:
                 raise ValueError(f"El plano {i} no tiene piezas.")
+            if s.tint not in TINT_KINDS:
+                raise ValueError(f"Tono desconocido en el plano {i}: {s.tint!r}.")
             for p in s.pieces:
                 if p.dur <= 0:
                     raise ValueError(f"El plano {i} tiene una pieza sin duración.")
@@ -162,7 +170,7 @@ class Edl:
             "subtitle_words": len(self.subtitle_words),
             "texts": [{"start": round(t.start, 3), "end": round(t.end, 3), "text": t.text,
                        "style": t.style, "sub": t.sub} for t in self.texts],
-            "segments": [{"label": s.label, "dur": round(s.dur, 3),
+            "segments": [{"label": s.label, "dur": round(s.dur, 3), **({"tint": s.tint} if s.tint else {}),
                           "pieces": [[round(p.start, 3), round(p.end, 3), round(p.dur, 3)]
                                      for p in s.pieces]} for s in self.segments],
         }

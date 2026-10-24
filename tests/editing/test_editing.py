@@ -353,3 +353,22 @@ class LookAndVignette(unittest.TestCase):
         f = self._gray(effects.VIGNETTE, "color=c=0x808080:s=1080x1920:d=1").reshape(1920, 1080)
         self.assertGreater(f[20, 540] / f[960, 540], 0.75)                # the top edge (the stats table)
         self.assertGreater(f[20, 20] / f[960, 540], 0.7)                  # the corners
+
+
+class Tint(unittest.TestCase):
+    def test_bw_shot_only(self):
+        tmp = S.tmpdir("tint")
+        try:
+            src = S.shots_video(os.path.join(tmp, "s.mp4"), [2.0], w=320, h=180)
+            edl = Edl([Segment(src, [Piece(0.0, 1.0, 1.0)], "color"),
+                       Segment(src, [Piece(0.0, 1.0, 1.0)], "last", tint="bw")], width=320, height=568, fps=30)
+            out = os.path.join(tmp, "o.mp4")
+            R.render(edl, out, R.job_manager.create_job("x", ""), os.path.join(tmp, "w"))
+            color, gray = _rgb(out, 0.5, 320, 568), _rgb(out, 1.5, 320, 568)
+            self.assertGreater(np.abs(color[..., 0] - color[..., 2]).mean(), 20)     # the red shot
+            self.assertLess(np.abs(gray[..., 0] - gray[..., 2]).mean(), 3)           # black and white
+            bad = Edl([Segment(src, [Piece(0.0, 1.0, 1.0)], "x", tint="sepia")])
+            with self.assertRaises(ValueError):
+                bad.validate()
+        finally:
+            S.remove(tmp)
