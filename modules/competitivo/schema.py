@@ -5,7 +5,7 @@ import json
 import os
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import config
 from modules.competitivo import engine, intro, kills, layout, salida
@@ -135,6 +135,36 @@ def _salida(form, base=None) -> dict:
     if bool(datos["carpeta_dia"]) != bool(datos["partido"]):
         raise ValueError("'carpeta_dia' y 'partido' van juntos: mandá los dos (o ninguno).")
     return datos
+
+
+def kill_overrides_from(raw) -> list:
+    """kill_overrides: JSON [{"kill": "1-10#2" | "clock": "21:41", "mode": "zoom"|"full",
+    "focus": [u, v]}] (the shape; which kills they are is checked against the edit)."""
+    if raw in (None, ""):
+        return []
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        raise ValueError("'kill_overrides' va en JSON: [{\"kill\": \"1-10#2\", \"mode\": \"full\"}].")
+    if isinstance(items, dict):
+        items = [items]
+    out = []
+    for it in items if isinstance(items, list) else [None]:
+        if not isinstance(it, dict) or not (it.get("kill") or it.get("clock")):
+            raise ValueError("'kill_overrides': cada corrección lleva 'kill' (\"1-10#2\") o 'clock' (\"21:41\").")
+        if it.get("clock") and not re.fullmatch(r"\d{1,2}:\d{2}", str(it["clock"]).strip()):
+            raise ValueError(f"'kill_overrides': reloj inválido {it['clock']!r} (mm:ss).")
+        if it.get("mode") not in (None, "zoom", "full"):
+            raise ValueError("'kill_overrides': 'mode' es zoom o full.")
+        f = it.get("focus")
+        if f is not None and not (isinstance(f, list) and len(f) == 2
+                                  and all(isinstance(x, (int, float)) and 0 <= x <= 1 for x in f)):
+            raise ValueError("'kill_overrides': 'focus' es [u, v] entre 0 y 1 (sobre la miniatura).")
+        if f is None and it.get("mode") is None:
+            raise ValueError("'kill_overrides': falta 'mode' o 'focus'.")
+        out.append({k: (str(v).strip() if k in ("kill", "clock") else v) for k, v in it.items()
+                    if k in ("kill", "clock", "mode", "focus")})
+    return out
 
 
 def _recipes(raw, valid) -> tuple:
@@ -282,6 +312,8 @@ class FinishParams:
     carpeta_dia: str = ""
     partido: str = ""
     titulo: str = ""
+    zoom_mode: str = "zoom"            # zoom (as always) | auto | full (camera.py)
+    kill_overrides: list = field(default_factory=list)
 
     @classmethod
     def desde(cls, base: CompetitivoParams) -> "FinishParams":
@@ -293,8 +325,12 @@ class FinishParams:
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "FinishParams":
         anclas, clips = _anclas_y_clips(form, base)
+        mode = str(form.get("zoom_mode") or "zoom").strip().lower()
+        if mode not in ("auto", "zoom", "full"):
+            raise ValueError("'zoom_mode' tiene que ser auto, zoom o full.")
         return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base),
-                   **_salida(form, base))
+                   **_salida(form, base), zoom_mode=mode,
+                   kill_overrides=kill_overrides_from(form.get("kill_overrides")))
 
 
 def _anclas_y_clips(form, base: CompetitivoParams) -> tuple[dict[str, float], list[str] | None]:
@@ -380,6 +416,9 @@ class EditParams:
     team: str = ""                    # every fight and pick where this team killed (code, e.g. T1)
     voice_peaks: bool = True          # acts: Ibai's peaks in real time over the drop
     last_fight_look: str = "none"     # acts: none | bw (the last fight and the outro)
+    zoom_mode: str = "auto"           # auto | zoom | full (camera.py)
+    storyboard: bool = False          # pause with a thumbnail per kill before the render
+    kill_overrides: list = field(default_factory=list)   # [{kill | clock, mode?, focus?}]
 
     @classmethod
     def from_form(cls, form, base: CompetitivoParams) -> "EditParams":
@@ -453,5 +492,8 @@ class EditParams:
             team=team,
             voice_peaks=_bool(form, "voice_peaks", True),
             last_fight_look=choice("last_fight_look", LOOKS_PER_ACT, "none"),
+            zoom_mode=choice("zoom_mode", ("auto", "zoom", "full"), "auto"),
+            storyboard=_bool(form, "storyboard", False),
+            kill_overrides=kill_overrides_from(form.get("kill_overrides")),
             **_salida(form, base),
         )

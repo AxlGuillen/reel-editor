@@ -536,6 +536,18 @@ def recorte_marca(png: str) -> tuple[int, int, int, int] | None:
 
 
 # --- Filtro -----------------------------------------------------------------------
+def _track_expr(track: list[tuple[float, float]], t0: str | float) -> str:
+    """x(t) of the gameplay crop from keyframes [(t, x)] (s of the source
+    file): linear between them, held before the first and after the last."""
+    t = f"(t+{t0})" if t0 else "t"
+    pts = sorted(track)
+    terms = [f"{pts[0][1]:.1f}*lt({t},{pts[0][0]:.3f})", f"{pts[-1][1]:.1f}*gte({t},{pts[-1][0]:.3f})"]
+    for (a, xa), (b, xb) in zip(pts, pts[1:]):
+        if b - a > 1e-3:
+            terms.append(f"if(gte({t},{a:.3f})*lt({t},{b:.3f}),{xa:.1f}+{xb - xa:.1f}*({t}-{a:.3f})/{b - a:.3f},0)")
+    return ffmpeg_runner.expr_sum(terms)
+
+
 def _ranges_expr(ranges: list[tuple[float, float]], t0: str | float) -> str:
     """enable= expression that is 1 inside `ranges` (s of the source file).
     The filter's t starts at the input's -ss: `t0` is that offset (a number,
@@ -555,14 +567,16 @@ def build_filter_complex(camara_y: int | tuple, zoom: float = 1.3, color: str = 
                          marca_alto: int = MARCA_ALTO_DEFECTO,
                          placa_idx: int | None = None, D: float | None = None,
                          camera: bool = True, split: list[tuple[float, float]] | None = None,
-                         t0: str | float = 0) -> str:
+                         t0: str | float = 0, crop_track: list[tuple[float, float]] | None = None) -> str:
     """filter_complex del layout: entra [0:v] (1920x1080) y, si hay watermark,
     [1:v] (el PNG); sale [vout] 1080x1920 yuv420p.
 
     `camara_y`: the camera box (x, y, w, h) or, the old way, its y.
     `camera=False`: no set camera (the background shows there).
-    `split`: [(a, b)] seconds of the SOURCE FILE with Riot's split camera;
-    `t0` is where the input starts in that file (see _ranges_expr).
+    `split`: [(a, b)] seconds of the SOURCE FILE with Riot's split camera (or
+    "full" view: the whole zone); `t0` is where the input starts in that file
+    (see _ranges_expr). `crop_track`: [(t, x)] the gameplay crop's x over time
+    (following the action, camera.py); None = still, centered.
 
     `placa_idx`/`D`: intro "encima": la placa (entrada `placa_idx`, imagen en
     loop de largo D) va centrada sobre el gameplay durante [0, D], entra con
@@ -586,7 +600,8 @@ def build_filter_complex(camara_y: int | tuple, zoom: float = 1.3, color: str = 
         *_rounded(f"[s_marcador]crop={mw}:{mh}:{mx}:{my},scale={MARCADOR_W}:{MARCADOR_H}:flags=lanczos,",
                   MARCADOR_W, MARCADOR_H, RADIO_MARCADOR, "marcador"),
     ]
-    zoomed = f"crop={cw}:{ch}:{cx}:{cy},scale={W}:{JUEGO_H}:flags=lanczos,setsar=1"
+    crop_x = f"'{_track_expr(crop_track, t0)}'" if crop_track else str(cx)
+    zoomed = f"crop={cw}:{ch}:{crop_x}:{cy},scale={W}:{JUEGO_H}:flags=lanczos,setsar=1"
     if split:
         partes += [
             "[s_juego]split=3[j_zoom][j_full][j_bg]",
@@ -671,14 +686,79 @@ def action_focus(path: str, t: float, zoom: float = 1.3, span: float = 0.6,
     return round(u, 3), round((ARRIBA_H + v * g.juego_h) / H, 3)
 
 
+# --- Following the action ---------------------------------------------------------
+TRACK_W = 240                 # the clean zone analyzed at this width
+TRACK_FPS = 10
+LOOKBACK_S = 1.5              # the action is looked for in this long before the kill
+TRACK_SURE_SPREAD = 0.16      # more spread than this (fraction of the zone): not sure where it is
+TRACK_MIN_MOTION = 6.0        # less residual motion than this (0–255): nothing to follow
+
+
+def action_track(path: str, t: float, lookback: float = LOOKBACK_S) -> dict | None:
+    """Where the action is in the `lookback` s before second t of the span,
+    over the WHOLE clean zone: {u, v} (fractions of it), spread and motion,
+    and sure. The observer's camera pans with the fight, so first each frame
+    is aligned with the previous one (phase correlation) and only what moves
+    after that counts: the champions, the spells. None without frames."""
+    import cv2
+    jx, jy, jw, jh = JUEGO
+    h = _even(jh * TRACK_W / jw)
+    raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{max(0.0, t - lookback):.3f}",
+                                 "-t", f"{lookback + 0.1:.3f}", "-i", path, "-an", "-vf",
+                                 f"fps={TRACK_FPS},crop={jw}:{jh}:{jx}:{jy},scale={TRACK_W}:{h},format=gray",
+                                 "-f", "rawvideo", "-"])
+    fr = np.frombuffer(raw, np.uint8)
+    n = fr.size // (TRACK_W * h)
+    if n < 3:
+        return None
+    fr = fr[: n * TRACK_W * h].reshape(n, h, TRACK_W).astype(np.float32)
+    window = cv2.createHanningWindow((TRACK_W, h), cv2.CV_32F)
+    acc = np.zeros((h, TRACK_W), np.float32)
+    for a, b in zip(fr, fr[1:]):
+        (dx, dy), _ = cv2.phaseCorrelate(a, b, window)
+        m = np.float32([[1, 0, -dx], [0, 1, -dy]])
+        aligned = cv2.warpAffine(b, m, (TRACK_W, h), borderMode=cv2.BORDER_REPLICATE)
+        d = np.abs(aligned - a)
+        # The borders the shift uncovered are not motion.
+        mx, my = int(abs(dx)) + 2, int(abs(dy)) + 2
+        d[:my, :] = d[-my:, :] = 0
+        d[:, :mx] = d[:, -mx:] = 0
+        acc += d
+    acc /= n - 1
+    acc = cv2.GaussianBlur(acc, (0, 0), 3)
+    # Riot's popups (DRAGON SOUL, the sponsor's "moment of the game") animate
+    # at the left and right edges: they weigh less than the middle.
+    edge = np.clip(np.minimum(np.arange(TRACK_W), TRACK_W - 1 - np.arange(TRACK_W)) / (0.12 * TRACK_W), 0.25, 1)
+    acc *= edge[None, :]
+    motion = float(acc.max())
+    hot = acc >= np.percentile(acc, 97)
+    ys, xs = np.nonzero(hot)
+    w = acc[hot]
+    u = float((xs * w).sum() / w.sum()) / TRACK_W
+    v = float((ys * w).sum() / w.sum()) / h
+    spread = float(np.sqrt((((xs / TRACK_W - u) ** 2 + (ys / h - v) ** 2) * w).sum() / w.sum()))
+    sure = motion >= TRACK_MIN_MOTION and spread <= TRACK_SURE_SPREAD
+    return {"u": round(u, 3), "v": round(v, 3), "spread": round(spread, 3), "motion": round(motion, 1),
+            "sure": bool(sure)}
+
+
+def crop_x_for(u: float, zoom: float) -> int:
+    """x of the gameplay crop (source px) that centers the point u of the zone."""
+    cw = geometria(zoom).recorte[0]
+    jx, _, jw, _ = JUEGO
+    return int(min(max(jx + u * jw - cw / 2, jx), jx + jw - cw))
+
+
 def edit_geometry(camara_y: int | tuple, zoom: float = 1.3, camera: bool = True,
-                  split: list[tuple[float, float]] | None = None) -> str:
+                  split: list[tuple[float, float]] | None = None,
+                  crop_track: list[tuple[float, float]] | None = None) -> str:
     """The layout as the geometry of an edit-mode shot (editing/render.py):
     no color (the edit's look sets it), no watermark (it goes at the end,
     static) and with the last chain open so the render can append the retime.
     `split`: seconds of the span file (the render puts in each shot's -ss)."""
     from modules.editing.render import SOURCE_T0
-    fc = build_filter_complex(camara_y, zoom, "off", None, camera=camera, split=split, t0=SOURCE_T0)
+    fc = build_filter_complex(camara_y, zoom, "off", None, camera=camera, split=split, t0=SOURCE_T0,
+                              crop_track=crop_track)
     return fc[: -len("[vout]")] if fc.endswith("[vout]") else fc
 
 
@@ -699,7 +779,8 @@ def build_concat(lista: str, out: str) -> list[str]:
 def build_command(src: str, out: str, desde: float, duracion: float, camara_y: int | tuple,
                   zoom: float = 1.3, color: str = "vivo", marca_path: str | None = None,
                   marca_alto: int = MARCA_ALTO_DEFECTO, intro: IntroEncima | None = None,
-                  con_audio: bool = True, split: list[tuple[float, float]] | None = None) -> list[str]:
+                  con_audio: bool = True, split: list[tuple[float, float]] | None = None,
+                  crop_track: list[tuple[float, float]] | None = None) -> list[str]:
     """Un solo encode por clip: recorte exacto del tramo + layout + watermark.
 
     `intro`: la intro "encima" del clip 1 (placa + voz + ducking del juego).
@@ -736,11 +817,11 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
                      f"{LIMITADOR},apad,atrim=0:{duracion:.3f}[aout]")
         filtros = build_filter_complex(camara_y, zoom, color, marca, marca_alto,
                                        placa_idx=placa_idx, D=placa_s, split=split,
-                                       t0=desde) + ";" + ";".join(audio)
+                                       t0=desde, crop_track=crop_track) + ";" + ";".join(audio)
         amap = "[aout]"
     cmd += [
         "-filter_complex", filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto,
-                                                           split=split, t0=desde),
+                                                           split=split, t0=desde, crop_track=crop_track),
         "-map", "[vout]", "-map", amap,
         "-r", "60",
         *ffmpeg_runner.video_encode_flags(),

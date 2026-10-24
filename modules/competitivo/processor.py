@@ -34,7 +34,7 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import fuente, intro, kills, layout, salida, vocab, voice
+from modules.competitivo import camera, clock, fuente, intro, kills, layout, salida, storyboard, vocab, voice
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -182,7 +182,7 @@ def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pele
     a = _vod(ref.antes, inicio, offset) - VENTANA_ANCLA_S
     b = _vod(ref.ultima, inicio, offset) + VENTANA_ANCLA_S
     desfase, n, esperadas = 0.0, 0, 0
-    frame = None
+    frame = clock0_utc = None
     try:
         tramo = fuente.bajar_tramo(url, a, b, os.path.join(carpeta, f"ancla_{n_partida}"))
         vistos = layout.cambios_kills(tramo)
@@ -196,6 +196,11 @@ def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pele
         frame = f"ancla_{n_partida}.jpg"
         _captura(tramo, _vod(ref.primera, inicio, offset + desfase) - a + 0.5,
                  os.path.join(carpeta, frame))
+        # The scoreboard's clock: when it said 0:00 (UTC). From there every
+        # time of the feed becomes the clock everyone talks about.
+        zero = clock.calibrate(tramo, [3.0 * k for k in range(1, int((b - a) / 3))][:24])
+        if zero is not None:
+            clock0_utc = inicio + timedelta(seconds=a + zero - offset - desfase)
         os.remove(tramo)
     except RuntimeError as exc:
         print(f"[competitivo] ancla de {p.game_id}: {exc}".encode("ascii", "replace").decode())
@@ -210,7 +215,38 @@ def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pele
         "referencia_vod_s": round(_vod(ref.primera, inicio, offset + desfase), 2),
         "frame": frame,
         "primera_kill_utc": _iso(fb_utc),
+        "clock0_utc": _iso(clock0_utc) if clock0_utc else None,
     }
+
+
+def _clock_titles(clips: list[dict], clock0_utc: datetime, pauses: list) -> None:
+    """The fights' clocks as the scoreboard showed them (they counted from the
+    start of the feed, ~5 min before 0:00): the title, its kills and the
+    feed's, kept as reloj_feed."""
+    for c in clips:
+        new = clock.fmt(clock.to_clock(datetime.fromisoformat(c["ultima"]), clock0_utc, pauses))
+        c["reloj_feed"] = c["reloj"]
+        if c["titulo"].endswith(c["reloj"]):
+            c["titulo"] = c["titulo"][: -len(c["reloj"])] + new
+        c["reloj"] = new
+        c["kills_reloj"] = [clock.fmt(clock.to_clock(datetime.fromisoformat(ts), clock0_utc, pauses))
+                            for ts, _ in c["eventos"]]
+
+
+def game_clock(partida: dict, utc: datetime) -> float | None:
+    """Seconds of the scoreboard clock at a UTC time of that game (None if its
+    clock was not calibrated)."""
+    if not partida.get("clock0_utc"):
+        return None
+    pauses = [(datetime.fromisoformat(x), datetime.fromisoformat(y)) for x, y in partida.get("pauses") or []]
+    return clock.to_clock(utc, datetime.fromisoformat(partida["clock0_utc"]), pauses)
+
+
+def utc_at_clock(partida: dict, clock_s: float) -> datetime | None:
+    if not partida.get("clock0_utc"):
+        return None
+    pauses = [(datetime.fromisoformat(x), datetime.fromisoformat(y)) for x, y in partida.get("pauses") or []]
+    return clock.from_clock(clock_s, datetime.fromisoformat(partida["clock0_utc"]), pauses)
 
 
 # --- Fase 1 ---------------------------------------------------------------------
@@ -261,7 +297,12 @@ def process(job_id: str, params: CompetitivoParams) -> None:
                 "seleccion_s": round(sum(pe.duracion for pe in pe_lista if id(pe) in seleccion), 1),
                 **ancla,
             })
-            clips += [_pelea_dict(p, pe, i, j, seleccion) for j, pe in enumerate(pe_lista, 1)]
+            game_clips = [_pelea_dict(p, pe, i, j, seleccion) for j, pe in enumerate(pe_lista, 1)]
+            pauses = clock.pauses(p.frames)
+            datos_partidas[-1]["pauses"] = [[_iso(x), _iso(y)] for x, y in pauses]
+            if ancla.get("clock0_utc"):
+                _clock_titles(game_clips, datetime.fromisoformat(ancla["clock0_utc"]), pauses)
+            clips += game_clips
         ids_sel = [c["id"] for c in sorted(clips, key=lambda c: (c["partida"], c["clip_inicio"]))
                    if c["seleccionada"]]
         # Con UNA sola coincidencia siempre se puede alinear algo por casualidad:
@@ -386,6 +427,9 @@ def finish(job_id: str, fp: FinishParams) -> None:
             return a, b
 
         n = len(elegidos)
+        overrides = camera.overrides_from(fp.kill_overrides, {
+            f"{c['id']}#{n_k}": (clock.parse(ck) if ck else None)
+            for c in elegidos for n_k, ck in enumerate(c.get("kills_reloj") or [""] * len(c["eventos"]), 1)})
         hechos = []
         skipped: list[str] = []        # clips whose section came without video (twice)
         en_resumen: list[str] = []     # lo que entra al resumen (el clip 1 puede llevar la intro)
@@ -415,6 +459,16 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 ini, fin = max(0.0, ini), min(dur_tramo, fin)
                 an = layout.analizar(tramo, t_kill, ini, fin)
                 split = layout.split_ranges(tramo)      # Riot's split camera: the whole view
+                track, shots = None, []
+                if fp.zoom_mode != "zoom" or overrides:
+                    # Following the action (or the full view where it is not clear).
+                    frames = kill_frames(vistos, esp, ajuste, KILL_LEAD_S)
+                    ids = [f"{c['id']}#{n_k}" for n_k in range(1, len(frames) + 1)]
+                    tracks = {kid: (None if any(x <= t <= y for x, y in split) else layout.action_track(tramo, t))
+                              for kid, t in zip(ids, frames)}
+                    track, full, shots = camera.plan(list(zip(ids, frames)), tracks, fp.zoom, fp.zoom_mode,
+                                                     overrides, span=(0.0, dur_tramo))
+                    split = sorted(list(split) + full)
                 dur = an.vivo_hasta - an.vivo_desde
                 if dur < 3:
                     raise RuntimeError(f"El clip «{c['titulo']}» cae casi entero fuera del vivo "
@@ -431,7 +485,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
                 render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
                 cmd = layout.build_command(tramo, os.path.join(carpeta, archivo), an.vivo_desde, dur,
-                                           an.camara or an.camara_y, split=split, **render)
+                                           an.camara or an.camara_y, split=split, crop_track=track, **render)
                 lo, hi = 5 + int(85 * (k - 1) / n), 5 + int(85 * k / n)
                 con_intro = first and modo_intro == "encima"
                 ffmpeg_runner.run(cmd, job_id, total_duration=dur,
@@ -444,7 +498,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
                                            stage="Clip 1: renderizando con la intro encima…")
                     con = os.path.join(temp, "clip_01_intro.mp4")
                     cmd = layout.build_command(
-                        tramo, con, an.vivo_desde, dur, an.camara or an.camara_y, split=split, **render,
+                        tramo, con, an.vivo_desde, dur, an.camara or an.camara_y, split=split, crop_track=track,
+                        **render,
                         intro=layout.IntroEncima(placa=placa, voz=voz.path, D=voz.D, sting=intro.sting(),
                                                  sting_vol=intro.STING_VOL, voz_filtro=intro.cadena_voz(voz),
                                                  sting_filtro=intro.cadena_sting(voz.D),
@@ -460,6 +515,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     "vod_inicio": round(a + an.vivo_desde, 2), "vod_fin": round(a + an.vivo_hasta, 2),
                     "ajuste_s": ajuste, "kills_vistas": coinc, "kills_esperadas": len(c["eventos"]),
                     "fuera_del_vivo_s": an.no_vivo_s, "camara_y": an.camara_y,
+                    "camera": [sh.as_dict() for sh in shots],
                     "split_camera": [[round(a - an.vivo_desde, 2), round(b - an.vivo_desde, 2)] for a, b in split
                                      if b > an.vivo_desde and a < an.vivo_hasta],
                 })
@@ -660,9 +716,8 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             b = _vod(datetime.fromisoformat(c["clip_fin"]), inicio, off) + MARGEN_CLIP_S
             return a, b
 
-        clips: list[edit_plan.EditClip] = []
+        raw: list[dict] = []                    # the analysis of each span (to re-plan the camera)
         skipped: list[str] = []
-        voice_feats: dict[str, tuple[str, dict]] = {}       # clip id → (game_id, voice.features)
         split_info: dict[str, list] = {}
         with ThreadPoolExecutor(max_workers=3) as ex:
             futures = [ex.submit(fuente.bajar_tramo, params.vod_url, *window(c),
@@ -691,60 +746,51 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 box = an.camara or an.camara_y
                 authors = c.get("authors") or [None] * len(c["eventos"])
                 counts = c.get("counts") or [1] * len(c["eventos"])
-                ks = [edit_plan.EditKill(t - ep.kill_lead_s + shift, side, (au or {}).get("player", ""),
-                                         (au or {}).get("champion", ""), n)
-                      for (t, side), au, n in zip(expected, authors, counts)]
-                # Where the action is at each kill: the zooms aim there (None = center;
-                # also during the split camera, where the view is not the zoomed crop).
+                clocks = c.get("kills_reloj") or [""] * len(c["eventos"])
+                # The kill's frame: when the scoreboard's counter goes up (not the feed's time).
+                frames = kill_frames(seen, expected, shift, ep.kill_lead_s)
+                ks = [edit_plan.EditKill(t_kill, side, (au or {}).get("player", ""), (au or {}).get("champion", ""),
+                                         n, id=f"{c['id']}#{n_k}", clock=ck)
+                      for n_k, (t_kill, (_, side), au, n, ck) in enumerate(zip(frames, expected, authors, counts,
+                                                                                clocks), 1)]
+                # Where the action is in the 1.5 s before each kill (none inside the
+                # split camera: that is already the full view).
+                tracks = {}
                 for k in ks:
-                    try:
-                        in_split = any(a <= k.t <= b for a, b in split)
-                        k.focus = None if in_split else layout.action_focus(span, k.t, ep.zoom)
-                    except RuntimeError:
-                        k.focus = None
-                clips.append(edit_plan.EditClip(
-                    c["id"], span, an.vivo_desde, an.vivo_hasta, ks, c["puntaje"], c.get("multikill"),
-                    c.get("cierra", False), c["titulo"],
-                    layout.edit_geometry(box, ep.zoom, ep.with_camera, split),
-                    ambient=layout.ambient_ranges(span) if ep.ambient else [],
-                    ambient_vf=layout.ambient_geometry(box, ep.with_camera) if ep.ambient else ""))
-                split_info[c["id"]] = [[round(x, 2), round(y, 2)] for x, y in split]
+                    if not any(x <= k.t <= y for x, y in split):
+                        try:
+                            tracks[k.id] = layout.action_track(span, k.t)
+                        except RuntimeError:
+                            tracks[k.id] = None
+                feat = None
                 if ep.structure == "acts" and ep.voice_peaks:
                     try:
-                        voice_feats[c["id"]] = (c["game_id"], voice.features(span, an.vivo_desde,
-                                                                             an.vivo_hasta - an.vivo_desde))
+                        feat = voice.features(span, an.vivo_desde, an.vivo_hasta - an.vivo_desde)
                     except RuntimeError:
-                        pass
+                        feat = None
+                raw.append({"c": c, "span": span, "an": an, "split": split, "box": box, "kills": ks,
+                            "tracks": tracks, "feat": feat,
+                            "ambient": layout.ambient_ranges(span) if ep.ambient else []})
+                split_info[c["id"]] = [[round(x, 2), round(y, 2)] for x, y in split]
         # Ibai's peaks: against the medians of HIS game (every span of it together).
         by_game: dict[str, list[dict]] = {}
-        for gid, feat in voice_feats.values():
-            by_game.setdefault(gid, []).append(feat)
+        for r in raw:
+            if r["feat"] is not None:
+                by_game.setdefault(r["c"]["game_id"], []).append(r["feat"])
         medians = {gid: voice.medians(feats) for gid, feats in by_game.items()}
-        for cl in clips:
-            if cl.id in voice_feats:
-                gid, feat = voice_feats[cl.id]
-                cl.voice_peaks = voice.peaks(feat, *medians[gid])
+        for r in raw:
+            r["peaks"] = voice.peaks(r["feat"], *medians[r["c"]["game_id"]]) if r["feat"] is not None else []
+            r["feat"] = None
 
-        if not clips:
+        if not raw:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
         job_manager.update_job(job_id, stage="Armando el edit al ritmo…", progress=30)
-        op = edit_plan.EditOptions(style=ep.style, speed=ep.speed, max_duration_s=ep.max_duration_s,
-                                   align_drop=ep.align_drop, music_start=ep.music_start, text=ep.text,
-                                   music_accents=ep.music_accents, title=ep.edit_title,
-                                   structure=ep.structure, recipes=ep.recipes,
-                                   cold_open_s=ep.cold_open_s, build_fights=ep.build_fights,
-                                   chronological=ep.chronological, teaser_s=ep.teaser_s, short=ep.short,
-                                   ambient=ep.ambient, kill_before_s=ep.kill_before_s,
-                                   kill_after_s=ep.kill_after_s, voice_peaks=ep.voice_peaks,
-                                   last_fight_look=ep.last_fight_look)
-        res = edit_plan.plan(clips, bm, op)
+        overrides = camera.overrides_from(ep.kill_overrides, _kill_clocks(raw))
+        state = {"bm": bm, "ep": ep, "sesion": sesion, "temp": temp, "raw": raw, "split_info": split_info,
+                 "music_path": music_path, "downloaded": downloaded, "skipped": skipped}
+        res, plan_info = _plan_edit(job_id, state, overrides)
         edl = res.edl
-        # split_camera: [[a, b]] seconds of each clip's span (to check the detector).
-        plan_info = {"structure": ep.structure, **res.plan_dict(), "split_camera": split_info,
-                     "detected_voice_peaks": {cl.id: cl.voice_peaks for cl in clips if cl.voice_peaks}}
-        job_manager.update_job(job_id, plan=plan_info, voice_peaks=res.voice_peaks, split_camera=split_info)
-        state = {"edl": edl, "res": res, "bm": bm, "ep": ep, "sesion": sesion, "temp": temp,
-                 "music_path": music_path, "downloaded": downloaded, "skipped": skipped, "plan": plan_info}
+        state.update(edl=edl, res=res, plan=plan_info)
         if ep.structure == "acts" and ep.voice_subs and res.voice_spans:
             job_manager.update_job(job_id, stage="Transcribiendo a Ibai…", progress=31)
             terms = vocab.game_terms([r for c in chosen for r in _roster(sesion, c["game_id"])],
@@ -753,14 +799,18 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
             edl.subtitle_words = words
             edl.subtitle_style = dict(ep.subs_style or {})
             if ep.review:
-                # A pause for a human (or Claude) to fix the names before burning:
-                # the status brings Ibai's segments; /edit/finish resumes.
-                _EDIT_REVIEW[job_id] = state
-                paused = True
-                job_manager.update_job(job_id, status="done", progress=32, stage="esperando_revision",
-                                       finished=False, segments=review_segments(words, res.voice_spans),
-                                       vocabulary=terms)
-                return
+                job_manager.update_job(job_id, segments=review_segments(words, res.voice_spans), vocabulary=terms)
+        if ep.review or ep.storyboard:
+            # A pause before the long render: Ibai's segments to fix the names
+            # (review) and/or a storyboard with a thumbnail per kill to correct
+            # the camera (storyboard); /edit/finish resumes with the fixes.
+            if ep.storyboard:
+                job_manager.update_job(job_id, stage="Armando el storyboard…", progress=32)
+                job_manager.update_job(job_id, storyboard=_storyboard(job_id, state))
+            _EDIT_REVIEW[job_id] = state
+            paused = True
+            job_manager.update_job(job_id, status="done", progress=33, stage="esperando_revision", finished=False)
+            return
         try:
             _render_edit(job_id, state)
         except Exception as exc:  # noqa: BLE001
@@ -830,11 +880,18 @@ def _render_edit(job_id: str, state: dict) -> None:
                            output_path=destination, resultado=result, aviso=" ".join(notes) or None)
 
 
+def check_overrides(job_id: str, overrides: list) -> None:
+    """ValueError if the corrections do not match the kills of that edit."""
+    state = _EDIT_REVIEW.get(job_id)
+    if state and overrides:
+        camera.overrides_from(overrides, _kill_clocks(state["raw"]))
+
+
 def edit_waiting(job_id: str) -> bool:
     return job_id in _EDIT_REVIEW
 
 
-def edit_finish(job_id: str, segments: list[dict] | None) -> None:
+def edit_finish(job_id: str, segments: list[dict] | None, kill_overrides: list | None = None) -> None:
     """Resumes an edit paused for review (review=1) with Ibai's segments as
     they were fixed (None = as they are), or renders again one whose render
     failed: the words get the corrections again and it renders. If it fails
@@ -846,6 +903,13 @@ def edit_finish(job_id: str, segments: list[dict] | None) -> None:
             raise RuntimeError("Ese edit no está esperando revisión ni se puede reintentar (¿se reinició el servidor?).")
         job_manager.update_job(job_id, status="processing", progress=33, stage="Renderizando el edit…",
                                finished=False, error=None, retryable=False)
+        if kill_overrides:
+            # The camera corrected by hand: same timing, other zooms and views.
+            old = state["edl"]
+            overrides = camera.overrides_from(kill_overrides, _kill_clocks(state["raw"]))
+            res, plan_info = _plan_edit(job_id, state, overrides)
+            res.edl.subtitle_words, res.edl.subtitle_style = old.subtitle_words, old.subtitle_style
+            state.update(edl=res.edl, res=res, plan=plan_info)
         if segments is not None:
             edl = state["edl"]
             words = [w for w in reviewed_words(segments) if _in_windows(w["start"], edl)]
@@ -861,6 +925,96 @@ def edit_finish(job_id: str, segments: list[dict] | None) -> None:
     finally:
         if state and not kept:
             _cleanup_edit(state["temp"], state["downloaded"], state["music_path"])
+
+
+KILL_MATCH_S = 1.0           # a scoreboard change this close to the feed's kill is that kill
+KILL_LEAD_S = 0.25           # without a change seen: the feed's time, this much earlier
+
+
+def kill_frames(seen: list, expected: list, shift: float, lead: float) -> list[float]:
+    """Each expected kill on the frame where the scoreboard's counter goes up
+    (same side, within KILL_MATCH_S of the feed's time + shift); if no change
+    is seen there, the feed's time + shift − lead."""
+    out = []
+    for t, side in expected:
+        t_feed = t + shift
+        near = [tv for tv, sv in seen if sv == side and abs(tv - t_feed) <= KILL_MATCH_S]
+        out.append(min(near, key=lambda tv: abs(tv - t_feed)) if near else t_feed - lead)
+    return out
+
+
+def _kill_clocks(raw: list[dict]) -> dict[str, float | None]:
+    """Each kill's scoreboard clock, in seconds (None if the game's clock was not calibrated)."""
+    out = {}
+    for r in raw:
+        for k in r["kills"]:
+            try:
+                out[k.id] = clock.parse(k.clock) if k.clock else None
+            except ValueError:
+                out[k.id] = None
+    return out
+
+
+def _edit_clips(state: dict, overrides: dict) -> tuple[list, dict]:
+    """The EditClips of the edit from the analysis of each span, with its
+    camera (camera.plan): the crop following the action, the full view where
+    it is not clear (and the split camera), and where each zoom aims."""
+    ep = state["ep"]
+    clips, shots_info = [], {}
+    for r in state["raw"]:
+        c, an, box = r["c"], r["an"], r["box"]
+        track, full, shots = camera.plan([(k.id, k.t) for k in r["kills"]], r["tracks"], ep.zoom, ep.zoom_mode,
+                                         overrides, span=(0.0, an.vivo_hasta + 60))
+        by_id = {sh.id: sh for sh in shots}
+        ks = [edit_plan.EditKill(k.t, k.side, k.player, k.champion, k.count, by_id[k.id].aim, k.id, k.clock,
+                                 by_id[k.id].mode) for k in r["kills"]]
+        views = sorted(list(r["split"]) + full)
+        clips.append(edit_plan.EditClip(
+            c["id"], r["span"], an.vivo_desde, an.vivo_hasta, ks, c["puntaje"], c.get("multikill"),
+            c.get("cierra", False), c["titulo"], layout.edit_geometry(box, ep.zoom, ep.with_camera, views, track),
+            ambient=r["ambient"], ambient_vf=layout.ambient_geometry(box, ep.with_camera) if ep.ambient else "",
+            voice_peaks=r.get("peaks") or []))
+        shots_info[c["id"]] = {"shots": [sh.as_dict() for sh in shots], "track": track,
+                               "full": [[round(x, 2), round(y, 2)] for x, y in full]}
+    return clips, shots_info
+
+
+def _plan_edit(job_id: str, state: dict, overrides: dict):
+    """(EditResult, plan_info) of the edit, and the status updated with it."""
+    ep, bm = state["ep"], state["bm"]
+    clips, shots_info = _edit_clips(state, overrides)
+    op = edit_plan.EditOptions(style=ep.style, speed=ep.speed, max_duration_s=ep.max_duration_s,
+                               align_drop=ep.align_drop, music_start=ep.music_start, text=ep.text,
+                               music_accents=ep.music_accents, title=ep.edit_title,
+                               structure=ep.structure, recipes=ep.recipes,
+                               cold_open_s=ep.cold_open_s, build_fights=ep.build_fights,
+                               chronological=ep.chronological, teaser_s=ep.teaser_s, short=ep.short,
+                               ambient=ep.ambient, kill_before_s=ep.kill_before_s,
+                               kill_after_s=ep.kill_after_s, voice_peaks=ep.voice_peaks,
+                               last_fight_look=ep.last_fight_look)
+    res = edit_plan.plan(clips, bm, op)
+    # split_camera: [[a, b]] seconds of each clip's span (to check the detector);
+    # camera: per clip, each kill's shot (zoom / full, where) and the crop's track.
+    plan_info = {"structure": ep.structure, **res.plan_dict(), "split_camera": state["split_info"],
+                 "camera": shots_info, "overrides": overrides,
+                 "detected_voice_peaks": {cl.id: cl.voice_peaks for cl in clips if cl.voice_peaks}}
+    job_manager.update_job(job_id, plan=plan_info, voice_peaks=res.voice_peaks, split_camera=state["split_info"])
+    return res, plan_info
+
+
+def _storyboard(job_id: str, state: dict) -> dict:
+    """The plan with a thumbnail per kill, to correct it before the render."""
+    folder = os.path.join(state["temp"], "storyboard")
+    spans = {r["c"]["id"]: r for r in state["raw"]}
+    camera_info = state["plan"]["camera"]
+    shots = []
+    for n, k in enumerate(state["res"].kills, 1):
+        r = spans.get(k.get("clip"))
+        if not r:
+            continue
+        sh = next((x for x in camera_info[k["clip"]]["shots"] if x["id"] == k.get("id")), None)
+        shots.append({"n": n, **k, "shot": sh, "span": r["span"], "track": camera_info[k["clip"]]["track"]})
+    return storyboard.build(job_id, shots, folder, state["ep"].zoom)
 
 
 def _in_windows(t: float, edl) -> bool:

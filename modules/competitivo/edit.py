@@ -87,6 +87,9 @@ class EditKill:
     champion: str = ""
     count: int = 1
     focus: tuple | None = None        # (x, y) of the action in the OUTPUT frame, 0–1; None = center
+    id: str = ""                      # "1-10#2" (clip and kill number): storyboard and corrections
+    clock: str = ""                   # the scoreboard's clock ("21:41")
+    mode: str = "zoom"                # zoom | full (camera.py: no zoom where the action is unclear)
 
 
 @dataclass
@@ -131,6 +134,7 @@ class EditOptions:
     kill_after_s: float = 2.0         # and after the last one (both rounded to beats)
     voice_peaks: bool = True          # acts: Ibai's peaks play in real time over the drop
     last_fight_look: str = "none"     # acts: none | bw (the last fight and the outro)
+    zoom_attack_s: float = 0.5        # the zoom starts this long before the kill's frame
 
 
 @dataclass
@@ -180,10 +184,12 @@ def merge(kills: list[EditKill]) -> list[EditKill]:
     out: list[EditKill] = []
     for k in sorted(kills, key=lambda k: k.t):
         if out and k.t - out[-1].t < MERGE_S:
-            out[-1] = EditKill(out[-1].t, out[-1].side, out[-1].player, out[-1].champion,
-                               out[-1].count + k.count, out[-1].focus or k.focus)
+            prev = out[-1]
+            out[-1] = EditKill(prev.t, prev.side, prev.player, prev.champion, prev.count + k.count,
+                               prev.focus or k.focus, prev.id, prev.clock,
+                               "full" if "full" in (prev.mode, k.mode) else prev.mode)
         else:
-            out.append(EditKill(k.t, k.side, k.player, k.champion, k.count, k.focus))
+            out.append(EditKill(k.t, k.side, k.player, k.champion, k.count, k.focus, k.id, k.clock, k.mode))
     return out
 
 
@@ -349,8 +355,11 @@ def plan(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
             output_kills.append(t_kill)
             multi = a.count >= 2
             events += [Event(t_kill, "flash", 1.0 if strong else 0.75 if multi else 0.55, 0.16),
-                       Event(t_kill, "zoom", 1.0 if strong else 0.6, 0.3 if strong else 0.22),
                        Event(t_kill, "shake", 1.0 if strong else 0.5, 0.4 if strong else 0.25)]
+            if a.mode != "full":
+                ax, ay = a.focus or (0.5, 0.5)
+                events.append(Event(t_kill, "zoom", 1.0 if strong else 0.6, 0.3 if strong else 0.22,
+                                    x=ax, y=ay, attack=op.zoom_attack_s))
             if strong or multi:
                 events.append(Event(t_kill, "rgb", 1.0, 0.3))
             if op.text in ("kills", "both") and a.player:
@@ -393,6 +402,10 @@ def plan(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
     acts = [{"act": "beat", "start": 0.0, "end": round(total, 3), "clips": [p.clip.id for p in plans],
              "music": 1.0, "game": None}]
     kills = [{"t": round(t, 3), "recipe": op.style} for t in output_kills]
+    hits = [h for p in plans for h in p.hits]
+    for k, h in zip(kills, hits):
+        k.update(clip=next(p.clip.id for p in plans if h in p.hits), id=h.id, clock=h.clock, mode=h.mode,
+                 src_t=round(h.t, 3))
     return EditResult(edl, beats[m0], drop_aligned, [p.clip.id for p in plans], dropped, warning,
                       acts=acts, kills=kills)
 
@@ -755,6 +768,8 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
             strong = n == key_p and b is None
             multi = a.count >= 2
             voiced = _overlap(peaks, a.t, end) > 0
+            zoomed = a.mode != "full"            # the full view: no zoom (it would cut the action)
+            att = op.zoom_attack_s
             if voiced:
                 # Ibai's peak rules: real speed, no slow motion or rewinding.
                 rec = "hard_cut"
@@ -770,21 +785,25 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
                 if rest > 1e-3:
                     pieces += _fill(a.t + show, max(end, a.t + show), rest, _constant, "end")
                 events += [Event(t_kill, "flash", 1.0, 0.16), Event(t_kill, "shake", 1.0, 0.4),
-                           Event(t_kill, "rgb", 1.0, 0.3),
-                           Event(t_kill + show, "hold", dur=replay, level=REPLAY_ZOOM, x=x, y=y)]
+                           Event(t_kill, "rgb", 1.0, 0.3)]
+                if zoomed:
+                    events.append(Event(t_kill + show, "hold", dur=replay, level=REPLAY_ZOOM, x=x, y=y))
             elif rec == "freeze_zoom":
                 pieces += [Piece(a.t, a.t, FREEZE_S)] + _fill(a.t, end, d - FREEZE_S, _constant, "end")
-                events += [Event(t_kill, "flash", 0.6, 0.14),
-                           Event(t_kill, "hold", dur=FREEZE_S + 0.25, level=FREEZE_ZOOM, x=x, y=y),
-                           Event(t_kill + FREEZE_S, "shake", 0.4, 0.25)]
+                events += [Event(t_kill, "flash", 0.6, 0.14), Event(t_kill + FREEZE_S, "shake", 0.4, 0.25)]
+                if zoomed:
+                    events.append(Event(t_kill, "hold", dur=FREEZE_S + 0.25, level=FREEZE_ZOOM, x=x, y=y, attack=att))
             elif rec == "ramp":
                 pieces += _fill(a.t, end, d, _ramp_recipe, "end")
-                events += [Event(t_kill, "flash", 0.75 if multi else 0.55, 0.16),
-                           Event(t_kill, "zoom", 0.6, 0.22, x=x, y=y), Event(t_kill, "shake", 0.5, 0.25)]
+                events += [Event(t_kill, "flash", 0.75 if multi else 0.55, 0.16), Event(t_kill, "shake", 0.5, 0.25)]
+                if zoomed:
+                    events.append(Event(t_kill, "zoom", 0.6, 0.22, x=x, y=y, attack=att))
             elif rec == "stair_zoom":
                 pieces += _fill(a.t, end, d, _constant, "end")
-                events += [Event(t_kill, "hold", dur=d if b else per, level=STAIR[min(stair_step, 3)], x=x, y=y),
-                           Event(t_kill, "flash", 0.45, 0.12), Event(t_kill, "shake", 0.3, 0.2)]
+                events += [Event(t_kill, "flash", 0.45, 0.12), Event(t_kill, "shake", 0.3, 0.2)]
+                if zoomed:
+                    events.append(Event(t_kill, "hold", dur=d if b else per, level=STAIR[min(stair_step, 3)],
+                                        x=x, y=y, attack=att if stair_step == 0 else 0.0))
                 stair_step += 1
             else:                                          # hard_cut: no slow motion
                 pieces += _fill(a.t, end, d, _constant, "end")
@@ -794,9 +813,9 @@ def plan_acts(clips: list[EditClip], bm: dict, op: EditOptions) -> EditResult:
             if op.text in ("kills", "both") and a.player:
                 text_end = T(r + nb) if b else t_kill + max(per * 2, 1.0)
                 texts.append(Text(t_kill, min(text_end, t_kill + 1.6), a.player, "kill", sub=a.champion))
-            kills_info.append({"clip": c.id, "t": round(t_kill, 3), "recipe": rec, "count": a.count,
-                               "player": a.player, "champion": a.champion,
-                               **({"voice_peak": True} if voiced else {})})
+            kills_info.append({"clip": c.id, "id": a.id, "clock": a.clock, "t": round(t_kill, 3), "recipe": rec,
+                               "count": a.count, "player": a.player, "champion": a.champion, "mode": a.mode,
+                               "src_t": round(a.t, 3), **({"voice_peak": True} if voiced else {})})
             r += nb
         mk = _multikill(c.multikill)
         if mk and op.text in ("kills", "both"):

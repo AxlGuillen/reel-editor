@@ -95,14 +95,21 @@ def edit():
 
 @bp.post("/edit/finish")
 def edit_finish():
-    """Resumes an edit paused with review=1: `segments` (JSON) are Ibai's
-    segments of its status, with the text fixed (without them, as they are).
+    """Resumes an edit paused with review=1 / storyboard=1: `segments` (JSON)
+    are Ibai's segments of its status, with the text fixed (without them, as
+    they are), and `kill_overrides` (JSON) the camera corrected per kill.
     The same call renders again an edit whose render failed (`retryable`)."""
     job_id = (request.form.get("job_id") or "").strip()
     if not job_manager.get_job(job_id):
         return jsonify(error="job_id no encontrado"), 404
     if not processor.edit_waiting(job_id):
         return jsonify(error="Ese edit no está esperando revisión ni se puede reintentar."), 409
+    try:
+        from modules.competitivo.schema import kill_overrides_from
+        overrides = kill_overrides_from(request.form.get("kill_overrides"))
+        processor.check_overrides(job_id, overrides)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     try:
         segments = json.loads(request.form.get("segments") or "null")
         if segments is not None and not isinstance(segments, list) or segments and not all(
@@ -113,8 +120,20 @@ def edit_finish():
     except ValueError:
         return jsonify(error="'segments' tiene que ser la lista de segmentos del status "
                              "({start, end, text, [words]}), en JSON."), 400
-    threading.Thread(target=processor.edit_finish, args=(job_id, segments), daemon=True).start()
+    threading.Thread(target=processor.edit_finish, args=(job_id, segments, overrides), daemon=True).start()
     return jsonify(job_id=job_id), 202
+
+
+@bp.get("/storyboard/<job_id>")
+@bp.get("/storyboard/<job_id>/<int:n>")
+def storyboard(job_id, n=None):
+    """The storyboard of an edit paused with storyboard=1 (the sheet, or one thumbnail)."""
+    sb = (job_manager.get_job(job_id) or {}).get("storyboard") or {}
+    name = "storyboard.jpg" if n is None else f"{n:02d}.jpg"
+    path = os.path.join(sb.get("folder") or "", name)
+    if not sb.get("folder") or not os.path.isfile(path):
+        return jsonify(error="No hay storyboard para ese edit."), 404
+    return send_file(path, mimetype="image/jpeg", max_age=0)
 
 
 @bp.get("/status/<job_id>")
@@ -132,6 +151,7 @@ def status(job_id):
         portada=job.get("portada"), intro=job.get("intro"), plan=job.get("plan"),
         segments=job.get("segments"), vocabulary=job.get("vocabulary"),
         voice_peaks=job.get("voice_peaks"), split_camera=job.get("split_camera"),
+        storyboard={k: v for k, v in (job.get("storyboard") or {}).items() if k != "folder"} or None,
         retryable=bool(job.get("retryable")),
     )
 

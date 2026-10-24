@@ -143,6 +143,11 @@ Menos lineal y con la voz de Ibai. `structure=beat` es todo lo de arriba, tal cu
   - **Look por acto** (`last_fight_look=bw`, opciones none|bw): la última pelea del drop y el outro en blanco y negro con un poco de contraste (`Segment.tint`, se aplica en la pasada 1 solo a esos planos).
   - **Cámara dividida por clip**: el status (`split_camera`) y el `.json` (`plan.split_camera`) guardan los rangos de cada tramo para verificar el detector.
   - **Render que se puede reintentar**: si el render falla (p. ej. NVENC sin sesión libre), el plan, los tramos y las palabras de Ibai quedan en memoria (`retryable: true`) y `POST /edit/finish` con el `job_id` (sin `segments`) renderiza de nuevo.
+- **Cámara (24/10):**
+  - **El zoom a tiempo**: cada kill cae en el cuadro en que sube el contador de kills del marcador (`processor.kill_frames`: el cambio del mismo lado a ≤ 1 s de la hora del feed corregida; si no se ve, la del feed − `kill_lead_s`), y el zoom entra **0.5 s antes** (`Event.attack`).
+  - **Sigue la acción** y **vista completa** (`zoom_mode=auto|zoom|full`, por defecto `auto`; ver `camera.py`): con la acción clara el recorte se desliza hacia ella y el zoom apunta ahí; si no está clara, ese momento va con la zona limpia entera (sin zoom). Medido en 52 kills reales del 23/10: con "seguro" el punto cae en la pelea; "no seguro" son sobre todo cámaras divididas y peleas desparramadas.
+  - **Correcciones por kill** (`kill_overrides`, JSON): `[{"clock": "21:41", "mode": "full"}, {"kill": "1-10#2", "focus": [0.62, 0.40]}]`. `clock` es el reloj del marcador (todas las kills a ±2 s), `kill` el id del storyboard, `focus` el punto como fracción de la miniatura. Valen en `/edit`, en `/edit/finish` y en `/finish` de los resúmenes.
+  - **Storyboard** (`storyboard=1`): antes del render largo el edit se pausa (`stage="esperando_revision"`, junto con `review=1` si se pidió) con `storyboard: {sheet, shots:[{n, id, clip, clock, t, recipe, mode, by, sure, focus, thumb}]}`; `GET /api/competitivo/storyboard/<id>` es la hoja de contacto y `…/<id>/<n>` cada miniatura. `/edit/finish` con `kill_overrides` rearma la cámara (mismos tiempos) y renderiza.
 - El status (y `resultado.plan`) trae el **plan por actos** (`acts: [{act, start, end, clips, music, game}]`) y la **receta de cada kill** (`kills: [{clip, t, recipe, count, player, champion}]`), para revisarlo; `resultado.subtitle_words` dice cuántas palabras de Ibai se quemaron.
 
 ```
@@ -150,9 +155,11 @@ POST /api/competitivo/edit   … [structure (acts | beat), recipes (auto | lista
       build_fights (0–6), chronological, teaser_s (2–3), short, ambient,
       text (off | kills | lyrics | both), kill_before_s (0–8), kill_after_s (0–6),
       max_duration_s (0 = sin tope, 10–600), team (código), voice_peaks, last_fight_look (none | bw),
+      zoom_mode (auto | zoom | full), storyboard, kill_overrides (JSON),
       voice_subs, voice_language, review, vignette, with_camera, sub_inv_size,
       sub_inv_y, sub_inv_direction, sub_inv_words, sub_font]
-POST /api/competitivo/edit/finish   job_id [+ segments (JSON)]           → 202 (review=1, o reintento)
+POST /api/competitivo/edit/finish   job_id [+ segments, kill_overrides]   → 202 (review/storyboard, o reintento)
+GET  /api/competitivo/storyboard/<id>[/<n>]                              → la hoja de contacto / una miniatura
 GET  /api/competitivo/status/<id> → … plan {structure, acts, kills, voice_peaks, split_camera,
      detected_voice_peaks}, voice_peaks [{t, dur, db, clip}], split_camera {clip: [[a, b]]},
      retryable, [segments, vocabulary]

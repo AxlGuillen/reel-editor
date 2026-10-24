@@ -70,6 +70,8 @@ class Event:
     # center by default. The camera goes back to the center when it ends.
     x: float = 0.5
     y: float = 0.5
+    # zoom / hold: it starts moving this long BEFORE t (0 = the default quick attack).
+    attack: float = 0.0
 
 
 @dataclass

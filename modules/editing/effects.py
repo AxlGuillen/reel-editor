@@ -123,8 +123,12 @@ def _push(t0: float, dur: float, var: str = "in_time") -> str:
     return f"if(between({var},{_f(t0)},{_f(t0 + dur)}),({var}-{_f(t0)})/{_f(dur)},0)"
 
 
-def _hold(t0: float, dur: float, var: str = "in_time") -> str:
-    """1 during [t0, t0 + dur] (reached in HOLD_EASE), 0 outside."""
+def _hold(t0: float, dur: float, var: str = "in_time", attack: float = 0.0) -> str:
+    """1 during [t0, t0 + dur] (reached in HOLD_EASE), 0 outside. With
+    `attack` it starts rising that long BEFORE t0 and is at 1 on t0."""
+    if attack > 0:
+        rise = f"if(between({var},{_f(t0 - attack)},{_f(t0)}),({var}-{_f(t0 - attack)})/{_f(attack)},0)"
+        return f"({rise}+if(gt({var},{_f(t0)})*lte({var},{_f(t0 + dur)}),1,0))"
     return f"if(between({var},{_f(t0)},{_f(t0 + dur)}),min(1,({var}-{_f(t0)})/{_f(HOLD_EASE)}),0)"
 
 
@@ -140,7 +144,7 @@ def camera(events: list[Event], width: int, height: int, fps: int, intensity: fl
     for i, e in enumerate(events):
         amp = e.intensity * intensity
         if e.kind == "zoom":
-            env = _pulse(e.t, e.dur, ZOOM_ATTACK, v)
+            env = _pulse(e.t, e.dur, e.attack or ZOOM_ATTACK, v)
             z.append(f"{_f(ZOOM_MAX * amp)}*{env}")
         elif e.kind == "shake":
             env = _pulse(e.t, e.dur, 0, v)
@@ -153,7 +157,7 @@ def camera(events: list[Event], width: int, height: int, fps: int, intensity: fl
             env = _push(e.t, e.dur, v)
             z.append(f"{_f(e.level)}*{env}")
         elif e.kind == "hold":
-            env = _hold(e.t, e.dur, v)
+            env = _hold(e.t, e.dur, v, e.attack)
             z.append(f"{_f(e.level)}*{env}")
         elif e.kind == "whip":
             z.append(f"{_f(WHIP_ZOOM * amp)}*{_pulse(e.t, e.dur, WHIP_ATTACK, v)}")
