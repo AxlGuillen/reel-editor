@@ -90,6 +90,14 @@ class SplitCamera(unittest.TestCase):
         self.assertAlmostEqual(a, 1.0, delta=0.2)
         self.assertAlmostEqual(b, 3.0, delta=0.2)
 
+    def test_a_short_gap_does_not_split_it(self):
+        # the line hidden 0.25 s (it passes behind a health bar): still one split
+        path = os.path.join(self.tmp, "gap.mp4")
+        _video(path, "[0:v]noise=alls=25:allf=t[g];[1:v]format=rgba,rotate=a=0.19:c=none:ow=rotw(0.19):"
+                     "oh=roth(0.19)[l];[g][l]overlay=x=880:y=-20:enable='between(t,1,3)*not(between(t,2,2.25))'[v]",
+               inputs=("color=c=0x505050:s=1920x1080:r=10", "color=c=black:s=7x1100:r=10"))
+        self.assertEqual(len(L.split_ranges(path)), 1)
+
     def test_other_dark_shapes_are_not(self):
         self.assertEqual(L.split_ranges(self.other), [])
 

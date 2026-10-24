@@ -286,9 +286,13 @@ def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5
 SPLIT_X = (860, 1140)         # where Riot's divider crosses the clean zone (source px)
 SPLIT_DARK = 14               # the line is almost black (measured 0–3)
 SPLIT_CONTRAST = 15           # and darker than both sides by at least this
-SPLIT_ROWS = 0.85             # share of the rows it has to cross
+# Share of the rows it has to cross. With the split: 0.73–1.00 (it loses rows
+# where it passes a health bar or a banner; TL-CFO 23/10 went down to 0.73 and
+# 0.85 cut it into pieces); without it, at most 0.51 (31 spans of 23/10).
+SPLIT_ROWS = 0.65
 SPLIT_SLOPE = 0.35            # |dx/dy| at most (measured −0.19: a slight diagonal)
 SPLIT_MIN_S = 0.75            # seen this long in a row (the transition flickers)
+SPLIT_GAP_S = 0.5             # a gap this short inside a split does not end it
 
 
 def _divider_rows(fr: np.ndarray) -> list[list[float]]:
@@ -348,15 +352,16 @@ def split_ranges(path: str, fps: float = 4, ss: float = 0.0,
     fr = _gris(path, f"fps={fps},crop={x1 - x0}:{jh}:{x0}:{jy},scale={x1 - x0}:{jh // step}:flags=neighbor",
                ss=ss, dur=dur, w=x1 - x0, h=jh // step)
     hits = [has_divider(f, step) for f in fr]
-    out, start = [], None
-    for i, hit in enumerate(hits + [False]):
-        if hit and start is None:
-            start = i
-        elif not hit and start is not None:
-            if (i - start) / fps >= SPLIT_MIN_S:
-                out.append((round(ss + start / fps - 0.5 / fps, 2), round(ss + i / fps - 0.5 / fps, 2)))
-            start = None
-    return out
+    runs: list[list[int]] = []                       # [first, last + 1] sample of each run
+    for i, hit in enumerate(hits):
+        if not hit:
+            continue
+        if runs and i - runs[-1][1] <= SPLIT_GAP_S * fps:
+            runs[-1][1] = i + 1                      # a short gap: the same split
+        else:
+            runs.append([i, i + 1])
+    return [(round(max(ss, ss + a / fps - 0.5 / fps), 2), round(ss + b / fps - 0.5 / fps, 2))
+            for a, b in runs if (b - a) / fps >= SPLIT_MIN_S]
 
 
 # --- Ambient shots ----------------------------------------------------------------
