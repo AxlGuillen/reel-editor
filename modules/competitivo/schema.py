@@ -289,6 +289,7 @@ class CompetitivoParams:
     carpeta_dia: str = ""
     partido: str = ""
     titulo: str = ""
+    transcript: bool = False           # also transcribe the game(s) (post-game included) once phase 1 is done
 
     @classmethod
     def from_form(cls, form) -> "CompetitivoParams":
@@ -326,6 +327,7 @@ class CompetitivoParams:
             incluir_primera_sangre=_bool(form, "incluir_primera_sangre"),
             pre_s=_num(form, "pre_s", 10, 0, 20, float),
             post_s=_num(form, "post_s", 5, 0, 15, float),
+            transcript=_bool(form, "transcript"),
             **_render(form),
             **_intro(form),
             **_salida(form),

@@ -198,9 +198,10 @@ def daily():
 
 @bp.post("/transcript")
 def transcript():
-    """The whole game transcribed (draft → nexus) on the scoreboard's clock,
-    with the index of moments: job_id of a phase 1, [game_id, language,
-    draft_lead_s, carpeta_dia, partido, mapa] → 202 {job_id NEW}."""
+    """The whole game transcribed (draft → nexus → post-game) on the scoreboard's
+    clock, with the index of moments: job_id of a phase 1, [game_id, language,
+    draft_lead_s, post_s (900: seconds after the nexus), carpeta_dia, partido,
+    mapa] → 202 {job_id NEW}."""
     phase1 = (request.form.get("job_id") or "").strip()
     sesion = processor.get_session(phase1)
     if not sesion:
@@ -211,16 +212,18 @@ def transcript():
     try:
         lead = float(request.form.get("draft_lead_s") or processor.DRAFT_LEAD_S)
         mapa = int(request.form.get("mapa") or 0) or None
+        post_s = float(request.form.get("post_s") or processor.POST_S)
     except ValueError:
-        return jsonify(error="'draft_lead_s' y 'mapa' son números."), 400
+        return jsonify(error="'draft_lead_s', 'post_s' y 'mapa' son números."), 400
     if not 0 <= lead <= 1800:
         return jsonify(error="'draft_lead_s' va de 0 a 1800 s."), 400
+    if not 0 <= post_s <= 1800:
+        return jsonify(error="'post_s' va de 0 a 1800 s."), 400
     language = (request.form.get("language") or "es").strip().lower()
-    job_id = job_manager.create_job(sesion["params"].vod_url, output_path="")
-    job_manager.update_job(job_id, modo="transcript", phase1=phase1)
+    job_id = processor.new_transcript_job(phase1, sesion["params"].vod_url, game_id)
     threading.Thread(target=processor.transcript_job, daemon=True,
                      args=(job_id, phase1, game_id, language, lead, (request.form.get("carpeta_dia") or "").strip(),
-                           (request.form.get("partido") or "").strip(), mapa)).start()
+                           (request.form.get("partido") or "").strip(), mapa, post_s)).start()
     return jsonify(job_id=job_id), 202
 
 
@@ -284,6 +287,7 @@ def status(job_id):
         voice_peaks=job.get("voice_peaks"), split_camera=job.get("split_camera"),
         storyboard={k: v for k, v in (job.get("storyboard") or {}).items() if k != "folder"} or None,
         retryable=bool(job.get("retryable")),
+        transcript_job_id=job.get("transcript_job_id"), transcript_jobs=job.get("transcript_jobs"),
     )
 
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -57,7 +58,8 @@ TRABAJO = os.path.join(config.OUTPUT_FOLDER, "competitivo")
 _SESIONES: dict[str, dict] = {}
 # The job fields of a phase 1 that are saved with its session.
 _SAVED_JOB_FIELDS = ("status", "progress", "stage", "finished", "modo", "aviso", "vod", "partidas", "clips",
-                     "seleccion", "resultado", "portada", "intro", "error", "output_path")
+                     "seleccion", "resultado", "portada", "intro", "error", "output_path",
+                     "transcript_job_id", "transcript_jobs")
 
 
 def _session_path(job_id: str) -> str:
@@ -326,8 +328,16 @@ def process(job_id: str, params: CompetitivoParams) -> None:
         lejos = [f"{d['n']} ({d['desfase_s']:+.1f} s)" for d in datos_partidas if d.get("suspicious")]
         _SESIONES[job_id] = {"params": params, "vod": vod, "partidas": datos_partidas, "clips": clips,
                              "carpeta": carpeta, "voz": (params.intro_audio_url, voz) if voz else None}
+        # transcript=1: one transcription per game, one after the other, from the
+        # moment phase 1 is done (their ids go in this job's status).
+        transcripts = [(new_transcript_job(job_id, params.vod_url, d["game_id"]), job_id, d["game_id"], "es",
+                        DRAFT_LEAD_S, POST_S, params.carpeta_dia, params.partido,
+                        params.mapa + d["n"] - 1 if len(datos_partidas) > 1 else params.mapa)
+                       for d in datos_partidas] if params.transcript else []
         job_manager.update_job(
             job_id, status="done", progress=100, stage="esperando_ancla", finished=False,
+            transcript_job_id=transcripts[0][0] if transcripts else None,
+            transcript_jobs=[{"game_id": t[2], "job_id": t[0]} for t in transcripts] or None,
             vod={"url": params.vod_url, "titulo": vod["titulo"], "inicio_utc": _iso(inicio),
                  "platform": vod.get("platform"), "offset_formula_s": offset},
             partidas=datos_partidas, clips=clips, seleccion=ids_sel,
@@ -342,6 +352,8 @@ def process(job_id: str, params: CompetitivoParams) -> None:
                 suspicious=sum(1 for d in datos_partidas if d.get("suspicious")),
                 fights=len(clips), warning=bool(dudosas))
         run.finish("ok")
+        if transcripts:
+            threading.Thread(target=transcribe_in_a_row, args=(transcripts,), daemon=True).start()
         if params.modo == "auto" and not dudosas:
             finish(job_id, FinishParams.desde(params))
     except Exception as exc:  # noqa: BLE001 - reportamos cualquier fallo al job
@@ -1280,20 +1292,35 @@ def daily(job_id: str, game_ids: list[str], vod_url: str, carpeta_dia: str, titu
 
 # --- The whole game transcribed --------------------------------------------------
 DRAFT_LEAD_S = 600           # the transcription starts this long before 0:00 (the draft)
-NEXUS_TAIL_S = 30
+POST_S = 900                 # and ends this long after the nexus (the post-game analysis)
+
+
+def new_transcript_job(phase1_id: str, vod_url: str, game_id: str | None = None) -> str:
+    """The job record of a transcription (the thread is started apart)."""
+    job_id = job_manager.create_job(vod_url, output_path="")
+    job_manager.update_job(job_id, modo="transcript", phase1=phase1_id, game_id=game_id)
+    return job_id
+
+
+def transcribe_in_a_row(specs: list[tuple]) -> None:
+    """Several transcriptions one after the other (one Whisper at a time):
+    [(job_id, phase1_id, game_id, language, draft_lead_s, post_s, carpeta_dia, partido, mapa)]."""
+    for job_id, phase1_id, game_id, language, lead, post_s, carpeta_dia, partido, mapa in specs:
+        transcript_job(job_id, phase1_id, game_id, language, lead, carpeta_dia, partido, mapa, post_s)
 
 
 def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: str = "es",
                    draft_lead_s: float = DRAFT_LEAD_S, carpeta_dia: str = "", partido: str = "",
-                   mapa: int | None = None) -> None:
-    """The narration of a whole game (draft → nexus) on the scoreboard's clock,
-    with the index of moments (transcript.py). Files: transcripcion.txt,
-    transcripcion.json and momentos.json."""
+                   mapa: int | None = None, post_s: float = POST_S) -> None:
+    """The narration of a whole game (draft → nexus → post-game) on the
+    scoreboard's clock, with the index of moments (transcript.py). After the
+    nexus the clock is "+m:ss" (time since the nexus). Files:
+    transcripcion.txt, transcripcion.json and momentos.json."""
     from modules.subtitles import processor as subtitles
     from modules.subtitles.schema import SubtitlesParams
     sesion = get_session(phase1_id)
     work = None
-    run = metrics.Run("transcripcion", job_id, language=language)
+    run = metrics.Run("transcripcion", job_id, language=language, post_s=post_s)
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe. Volvé a generar la propuesta (fase 1).")
@@ -1314,7 +1341,8 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
             return clock.to_clock(utc, clock0, pauses)
 
         a = _vod(clock0, inicio, offset) - draft_lead_s
-        b = _vod(p.frames[-1].ts, inicio, offset) + NEXUS_TAIL_S
+        nexus_vod = _vod(p.frames[-1].ts, inicio, offset)
+        b = nexus_vod + post_s
         work = os.path.join(sesion["carpeta"], f"transcript_{job_id}")
         os.makedirs(work, exist_ok=True)
         job_manager.update_job(job_id, progress=5, stage=f"Bajando el audio de la partida ({(b - a) / 60:.0f} min)…")
@@ -1332,11 +1360,17 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
         for seg in segs:
             words = vocab.correct(seg["words"], fixes)
             vod_s, clock_s = transcript.to_game_clock(seg["start"], a, inicio, offset, to_clock)
-            segments.append({"clock": transcript.fmt_clock(clock_s), "clock_s": round(clock_s, 2),
-                             "vod_s": round(vod_s, 2), "text": " ".join(w["word"] for w in words),
+            since_nexus = vod_s - nexus_vod
+            post = since_nexus >= 0
+            segments.append({"clock": transcript.fmt_post(since_nexus) if post else transcript.fmt_clock(clock_s),
+                             "clock_s": round(clock_s, 2), "vod_s": round(vod_s, 2),
+                             "vod_end_s": round(vod_s + (seg["end"] - seg["start"]), 2),
+                             **({"post": True, "post_s": round(since_nexus, 2)} if post else {}),
+                             "text": " ".join(w["word"] for w in words),
                              "words": [{"word": w["word"],
                                         "clock_s": round(transcript.to_game_clock(w["start"], a, inicio, offset,
-                                                                                   to_clock)[1], 2)}
+                                                                                   to_clock)[1], 2),
+                                        **({"post_s": round(a + w["start"] - nexus_vod, 2)} if post else {})}
                                        for w in words]})
         events = [{"clock_s": to_clock(e.ts), "tipo": e.tipo, "equipo": e.equipo, "detalle": e.detalle,
                    "cantidad": e.cantidad} for e in p.eventos]
@@ -1353,21 +1387,26 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
             folder = os.path.join(config.COMPETITIVO_FOLDER, "_transcripciones",
                                   salida.limpiar(f"{date} {d['azul']} vs {d['rojo']} · Mapa {mapa}"))
         os.makedirs(folder, exist_ok=True)
-        title = f"{d['azul']} vs {d['rojo']} · Mapa {mapa} · reloj del marcador (antes de 0:00: draft y carga)"
+        title = (f"{d['azul']} vs {d['rojo']} · Mapa {mapa} · reloj del marcador (antes de 0:00: draft y carga"
+                 + ("; +m:ss: después del nexo)" if post_s else ")"))
         files = {"txt": os.path.join(folder, "transcripcion.txt"), "json": os.path.join(folder, "transcripcion.json"),
                  "moments": os.path.join(folder, "momentos.json")}
         with open(files["txt"], "w", encoding="utf-8") as fh:
             fh.write(transcript.text_file(segments, title))
         with open(files["json"], "w", encoding="utf-8") as fh:
             json.dump({"game_id": d["game_id"], "azul": d["azul"], "rojo": d["rojo"], "clock0_utc": d["clock0_utc"],
-                       "vod": {"url": params.vod_url, "from_s": round(a, 2), "to_s": round(b, 2)},
+                       "vod": {"url": params.vod_url, "from_s": round(a, 2), "to_s": round(b, 2),
+                               "nexus_s": round(nexus_vod, 2)}, "post_s": post_s,
                        "vocabulary": terms, "segments": segments}, fh, ensure_ascii=False, indent=1)
         with open(files["moments"], "w", encoding="utf-8") as fh:
             json.dump(index, fh, ensure_ascii=False, indent=1)
         job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
                                output_path=files["txt"],
                                resultado={**files, "segments": len(segments), "moments": index,
-                                          "game_id": d["game_id"], "minutes": round((b - a) / 60, 1)})
+                                          "game_id": d["game_id"], "minutes": round((b - a) / 60, 1),
+                                          "post_segments": sum(1 for s in segments if s.get("post")),
+                                          "praise": sum(1 for m in index if m["kind"] == "elogio"),
+                                          "criticism": sum(1 for m in index if m["kind"] == "critica")})
         run.set(minutes=round((b - a) / 60, 1), segments=len(segments), moments=len(index))
         run.finish("ok")
     except Exception as exc:  # noqa: BLE001

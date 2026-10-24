@@ -26,7 +26,8 @@ class Index(unittest.TestCase):
         m = T.moments(self.SEGMENTS, self.EVENTS, ["Josedeodo", "Rest"], ["Lee Sin", "Viego"])
         voz = [x for x in m if x["source"] == "voz"]
         self.assertEqual([(x["clock"], x["kind"]) for x in voz],
-                         [("1:45", "robo de buff"), ("20:22", "barón"), ("37:10", "nexo")])
+                         [("1:45", "robo de buff"), ("1:48", "elogio"), ("20:22", "barón"), ("37:10", "nexo")])
+        voz = [x for x in voz if x["kind"] != "elogio"]       # "increíble" next to Josedeodo: praise (see test_post_game)
         steal = voz[0]
         self.assertEqual(steal["players"], ["Josedeodo"])                       # who
         self.assertIsNone(steal["feed"])                                        # no kill: the narration finds it
