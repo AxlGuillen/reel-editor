@@ -120,9 +120,9 @@ class MomentJob(unittest.TestCase):
         spans = []
         real = self.fj._span
 
-        def span(url, a, b, dest):
+        def span(url, a, b, dest, job_id=None):
             spans.append((a, b))
-            return real(url, a, b, dest)
+            return real(url, a, b, dest, job_id)
         job = job_manager.create_job("x", "")
         with mock.patch.object(processor.fuente, "bajar_tramo", side_effect=span):
             processor.edit(job, "phase1", ep, music)

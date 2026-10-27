@@ -22,7 +22,7 @@ import threading
 from flask import Blueprint, jsonify, request, send_file
 
 import config
-from core import file_utils, job_manager
+from core import file_utils, job_manager, scheduler
 from modules.competitivo import calibration, metrics, presets, processor, salida
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 
@@ -44,7 +44,7 @@ def metrics_view():
         return jsonify(error="'days' tiene que ser un número de días."), 400
     records = metrics.load(days or None)
     return jsonify(days=days, file=metrics.metrics_file(), summary=metrics.summary(records),
-                   discarded=metrics.discarded(), recent=records[-40:][::-1],
+                   discarded=metrics.discarded(), recent=records[-40:][::-1], slots=scheduler.snapshot(),
                    calibration=_calibration_brief(calibration.last_report()))
 
 
@@ -200,7 +200,8 @@ def daily():
 def transcript():
     """The whole game transcribed (draft → nexus → post-game) on the scoreboard's
     clock, with the index of moments: job_id of a phase 1, [game_id, language,
-    draft_lead_s, post_s (900: seconds after the nexus), carpeta_dia, partido,
+    draft_lead_s, post_s (900: seconds after the nexus), batched (0: Whisper in
+    batches, ~3.6x faster but with ~9 % fewer words), carpeta_dia, partido,
     mapa] → 202 {job_id NEW}."""
     phase1 = (request.form.get("job_id") or "").strip()
     sesion = processor.get_session(phase1)
@@ -223,7 +224,8 @@ def transcript():
     job_id = processor.new_transcript_job(phase1, sesion["params"].vod_url, game_id)
     threading.Thread(target=processor.transcript_job, daemon=True,
                      args=(job_id, phase1, game_id, language, lead, (request.form.get("carpeta_dia") or "").strip(),
-                           (request.form.get("partido") or "").strip(), mapa, post_s)).start()
+                           (request.form.get("partido") or "").strip(), mapa, post_s,
+                           (request.form.get("batched") or "").strip().lower() in ("1", "true", "on", "yes"))).start()
     return jsonify(job_id=job_id), 202
 
 

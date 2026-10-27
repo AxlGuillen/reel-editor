@@ -17,6 +17,7 @@ yt-dlp gets whatever is being broadcast now instead of the requested section.
 """
 from __future__ import annotations
 
+import contextlib
 import glob
 import os
 import threading
@@ -27,7 +28,7 @@ import yt_dlp
 from yt_dlp.utils import download_range_func
 
 import config
-from core import ffmpeg_runner
+from core import ffmpeg_runner, scheduler
 from modules.downloader import processor as downloader
 
 FORMATO = ("bv*[protocol^=m3u8][height<=1080][fps>30]+ba[protocol^=m3u8]/"
@@ -35,12 +36,19 @@ FORMATO = ("bv*[protocol^=m3u8][height<=1080][fps>30]+ba[protocol^=m3u8]/"
            "bv*[height<=1080]+ba/b")
 # Twitch serves video and audio together (1080p60 HLS): no merge needed.
 FORMAT_TWITCH = "b[height<=1080][fps>30]/b[height<=1080]/b"
-# Twitch drops sections when too many go at once: at most 2 at a time (for
-# the whole server, summaries and edits together), and a failed section is
-# tried again twice.
-TWITCH_SLOTS = threading.BoundedSemaphore(2)
+# Twitch drops sections when too many go at once: the downloads share the
+# "twitch" slots of core/scheduler.py (config.SLOTS: 4 for the whole server,
+# summaries, edits and transcriptions together) and a failed section is tried
+# again twice.
 TWITCH_RETRIES = 2
 RETRY_WAIT_S = 3.0
+# A long audio (a whole game: ~60 min) comes down by its HLS segments, many at a
+# time, instead of one after the other as yt-dlp's FFmpeg does (concurrent
+# fragments of yt-dlp do nothing with download_ranges: measured 16.0 s with 1, 8 or
+# 16 for 10 min of audio).
+SEGMENT_THREADS = 8
+SEGMENT_RETRIES = 3
+BY_SEGMENTS_MIN_S = 300         # shorter than this: the yt-dlp way
 
 
 def _opts(**extra) -> dict:
@@ -101,11 +109,21 @@ def info_vod(url: str) -> dict:
     return vod_info(info)
 
 
+def vod_key(url: str) -> str:
+    """The VOD a link is, to key what was measured on it: twitch.tv/videos/<id> →
+    "twitch-<id>"; any other link as it is (YouTube's watch?v=<id>)."""
+    import re
+    m = re.search(r"twitch\.tv/videos/(\d+)", url) or re.search(r"[?&]v=([\w-]{6,})", url)         or re.search(r"youtu\.be/([\w-]{6,})", url)
+    if m:
+        return ("twitch-" if "twitch" in url else "youtube-") + m.group(1)
+    return re.sub(r"[^\w.-]+", "_", url)[-80:]
+
+
 def is_twitch(url: str) -> bool:
     return "twitch.tv" in url.lower()
 
 
-def bajar_tramo(url: str, inicio: float, fin: float, destino: str) -> str:
+def bajar_tramo(url: str, inicio: float, fin: float, destino: str, job_id: str | None = None) -> str:
     """Baja [inicio, fin] (segundos del VOD) a `destino`.mp4 y devuelve la ruta.
 
     If the section comes without video (an audio-only file, or FFmpeg's
@@ -114,7 +132,7 @@ def bajar_tramo(url: str, inicio: float, fin: float, destino: str) -> str:
     TWITCH_SLOTS at a time and TWITCH_RETRIES more tries if one fails."""
     if not is_twitch(url):
         return _span_with_video(url, inicio, fin, destino)
-    with TWITCH_SLOTS:
+    with scheduler.slot("twitch", job_id):
         for attempt in range(TWITCH_RETRIES + 1):
             try:
                 return _span_with_video(url, inicio, fin, destino)
@@ -147,24 +165,109 @@ def _no_stream(message: str) -> bool:
 FORMAT_AUDIO = "audio_only/ba[protocol^=m3u8]/ba/b"
 
 
-def bajar_audio(url: str, inicio: float, fin: float, destino: str) -> str:
+def _audio_segments(url: str) -> list[tuple[str, float, float]]:
+    """[(segment url, start s, duration s)] of the audio-only rendition of a Twitch VOD
+    (its HLS playlist: the EXTINF of each segment add up to the VOD's time)."""
+    import re
+    import urllib.parse
+    import urllib.request
+    with yt_dlp.YoutubeDL(_opts(skip_download=True)) as ydl:
+        info = ydl.extract_info(url, download=False)
+    fmt = next((f for f in info.get("formats", []) if str(f.get("format_id", "")).lower().startswith("audio_only")), None)
+    if not fmt or not str(fmt.get("protocol", "")).startswith("m3u8"):
+        raise RuntimeError("el VOD no trae el audio solo en HLS")
+    with urllib.request.urlopen(fmt["url"], timeout=30) as resp:
+        text = resp.read().decode("utf-8", "replace")
+    out, t, dur = [], 0.0, None
+    for line in text.splitlines():
+        m = re.match(r"#EXTINF:([\d.]+)", line)
+        if m:
+            dur = float(m.group(1))
+        elif line and not line.startswith("#") and dur is not None:
+            out.append((urllib.parse.urljoin(fmt["url"], line), t, dur))
+            t += dur
+            dur = None
+    if not out:
+        raise RuntimeError("la lista de segmentos del audio está vacía")
+    return out
+
+
+def _get_segment(seg_url: str, path: str) -> None:
+    import urllib.request
+    last = None
+    for attempt in range(SEGMENT_RETRIES):
+        try:
+            with urllib.request.urlopen(seg_url, timeout=30) as resp, open(path, "wb") as fh:
+                data = resp.read()
+                if not data:
+                    raise OSError("segmento vacío")
+                fh.write(data)
+            return
+        except OSError as exc:
+            last = exc
+            time.sleep(0.5 * (attempt + 1))
+    raise RuntimeError(f"no se pudo bajar un segmento del audio: {last}")
+
+
+def _audio_by_segments(url: str, inicio: float, fin: float, destino: str, job_id: str | None) -> str:
+    """The audio of [inicio, fin] from the VOD's HLS segments, SEGMENT_THREADS at a
+    time, cut by the playlist's own times (exact: it does not depend on the
+    segments falling where the range starts)."""
+    import shutil
+    from concurrent.futures import ThreadPoolExecutor
+    with scheduler.slot("twitch", job_id):
+        segments = _audio_segments(url)
+        chosen = [s for s in segments if s[1] + s[2] > inicio and s[1] < fin]
+        if not chosen:
+            raise RuntimeError("ese tramo no está en el VOD (¿todavía no se grabó?)")
+        parts = destino + ".parts"
+        shutil.rmtree(parts, ignore_errors=True)
+        os.makedirs(parts)
+        try:
+            paths = [os.path.join(parts, f"{k:05d}.ts") for k in range(len(chosen))]
+            with ThreadPoolExecutor(max_workers=SEGMENT_THREADS) as ex:
+                list(ex.map(lambda sp: _get_segment(sp[0][0], sp[1]), zip(chosen, paths)))
+            joined = destino + ".all.ts"
+            with open(joined, "wb") as out:           # MPEG-TS segments simply follow each other
+                for p in paths:
+                    with open(p, "rb") as part:
+                        shutil.copyfileobj(part, out)
+        finally:
+            shutil.rmtree(parts, ignore_errors=True)
+    end = min(fin, chosen[-1][1] + chosen[-1][2])
+    result = destino + ".m4a"
+    try:
+        ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-y", "-ss", f"{max(0.0, inicio - chosen[0][1]):.3f}",
+                               "-t", f"{end - max(inicio, chosen[0][1]):.3f}", "-i", joined, "-vn", "-c:a", "copy",
+                               result])
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(joined)
+    return result
+
+
+def bajar_audio(url: str, inicio: float, fin: float, destino: str, job_id: str | None = None) -> str:
     """Only the audio of [inicio, fin] of the VOD (a game, from the draft to
-    the nexus: ~45 min) to `destino`.<ext>; its path."""
+    the nexus: ~45 min) to `destino`.<ext>; its path. A Twitch audio of 5+ min
+    comes down by its segments, many at once; if that fails, the yt-dlp way."""
     for viejo in glob.glob(destino + ".*"):
         os.remove(viejo)
+    if is_twitch(url) and fin - inicio >= BY_SEGMENTS_MIN_S:
+        try:
+            return _audio_by_segments(url, inicio, fin, destino, job_id)
+        except Exception as exc:  # noqa: BLE001 - the audio matters more than how it comes
+            print(f"[competitivo] audio por segmentos falló ({str(exc)[:80]}): por yt-dlp"
+                  .encode("ascii", "replace").decode())
+            for viejo in glob.glob(destino + ".*"):
+                os.remove(viejo)
     opts = _opts(format=FORMAT_AUDIO, outtmpl=destino + ".%(ext)s",
                  download_ranges=download_range_func(None, [(max(0.0, inicio), fin)]),
                  force_keyframes_at_cuts=False)
-    slot = TWITCH_SLOTS if is_twitch(url) else None
     try:
-        if slot:
-            slot.acquire()
-        downloader._download_with_retry(opts, url)
+        with scheduler.slot("twitch", job_id) if is_twitch(url) else contextlib.nullcontext():
+            downloader._download_with_retry(opts, url)
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(downloader._friendly_error(exc))
-    finally:
-        if slot:
-            slot.release()
     hechos = [p for p in glob.glob(destino + ".*") if not p.endswith(".part")]
     if not hechos:
         raise RuntimeError("yt-dlp terminó pero no dejó el audio descargado.")

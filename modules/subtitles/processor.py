@@ -23,7 +23,7 @@ import threading
 import uuid
 
 import config
-from core import ffmpeg_runner, job_manager
+from core import ffmpeg_runner, job_manager, scheduler
 from modules.subtitles import fonts
 from modules.subtitles.schema import ROTATE_PALETTE, SubtitlesParams, _css_to_ass
 
@@ -259,14 +259,22 @@ def _get_model(name: str, device: str, compute: str):
 
 def transcribe(video_path: str, params: SubtitlesParams,
                job_id: str | None = None, initial_prompt: str | None = None,
-               hotwords: str | None = None) -> list[dict]:
+               hotwords: str | None = None, batched: bool = False) -> list[dict]:
     """Transcribe el audio y devuelve segmentos con palabras y timestamps.
 
     Cada segmento: {"id", "start", "end", "text", "words":[{word,start,end}]}.
     Lanza RuntimeError si no se detecta voz.
     `initial_prompt` / `hotwords`: faster-whisper's, to get names right
     (competitivo passes the teams, players and champions of the game).
+    `batched`: faster-whisper's BatchedInferencePipeline (see _run_transcription).
     """
+    # One Whisper at a time on the GPU: the other jobs wait their turn (core/scheduler.py).
+    with scheduler.slot("whisper", job_id):
+        return _transcribe(video_path, params, job_id, initial_prompt, hotwords, batched)
+
+
+def _transcribe(video_path: str, params: SubtitlesParams, job_id: str | None,
+                initial_prompt: str | None, hotwords: str | None, batched: bool = False) -> list[dict]:
     hints = {k: v for k, v in (("initial_prompt", initial_prompt), ("hotwords", hotwords)) if v}
     device, compute = _get_device()
     try:
@@ -277,7 +285,7 @@ def transcribe(video_path: str, params: SubtitlesParams,
         model = _get_model(params.model, device, compute)
 
     try:
-        segments = _run_transcription(model, video_path, params, job_id, **hints)
+        segments = _run_transcription(model, video_path, params, job_id, batched=batched, **hints)
     except RuntimeError:
         if device != "cuda":
             raise
@@ -285,7 +293,7 @@ def transcribe(video_path: str, params: SubtitlesParams,
         # no debe morir por eso. Reintento único en CPU.
         print("[subtitles] la inferencia en cuda falló, reintentando en cpu/int8")
         model = _get_model(params.model, "cpu", "int8")
-        segments = _run_transcription(model, video_path, params, job_id, **hints)
+        segments = _run_transcription(model, video_path, params, job_id, batched=batched, **hints)
 
     if not segments:
         raise RuntimeError(
@@ -295,19 +303,57 @@ def transcribe(video_path: str, params: SubtitlesParams,
     return segments
 
 
+def _split_long(segments: list[dict], max_s: float = 9.0, min_s: float = 2.5) -> list[dict]:
+    """The batched pipeline returns ~25 s segments; the rest of the app (the moments
+    index, the subtitles) expects sentences. A segment longer than max_s is cut where
+    a word ends a sentence (. ? ! ...) once the piece has min_s, or at max_s."""
+    out: list[dict] = []
+    for seg in segments:
+        if seg["end"] - seg["start"] <= max_s:
+            out.append(seg)
+            continue
+        chunk: list[dict] = []
+        for w in seg["words"]:
+            chunk.append(w)
+            long = w["end"] - chunk[0]["start"]
+            if (long >= min_s and w["word"][-1:] in ".?!\u2026") or long >= max_s:
+                out.append(_chunk(chunk))
+                chunk = []
+        if chunk:
+            out.append(_chunk(chunk))
+    for i, seg in enumerate(out):
+        seg["id"] = i
+    return out
+
+
+def _chunk(words: list[dict]) -> dict:
+    return {"id": 0, "start": words[0]["start"], "end": words[-1]["end"],
+            "text": " ".join(w["word"] for w in words), "words": words}
+
+
 def _run_transcription(model, video_path: str, params: SubtitlesParams,
-                       job_id: str | None, **hints) -> list[dict]:
-    """Corre la transcripción completa y arma los segmentos (con progreso)."""
+                       job_id: str | None, batched: bool = False, **hints) -> list[dict]:
+    """Corre la transcripción completa y arma los segmentos (con progreso).
+
+    `batched`: BatchedInferencePipeline (batch 16). Medido sobre 7.5 min de narración
+    de Ibai: 135x tiempo real contra 37.5x, pero 87 % de coincidencia de palabras
+    con el modo normal (le faltan ~9 %) y segmentos de ~25 s (se parten en frases)."""
     duration = ffmpeg_runner.probe_duration(video_path) or 0
     lang = None if params.language == "auto" else params.language
-    seg_gen, _ = model.transcribe(
-        video_path,
-        language=lang,
-        word_timestamps=True,
-        vad_filter=True,
-        beam_size=5,
-        **hints,
-    )
+    if batched:
+        from faster_whisper import BatchedInferencePipeline
+        seg_gen, _ = BatchedInferencePipeline(model=model).transcribe(
+            video_path, language=lang, word_timestamps=True, vad_filter=True, beam_size=5, batch_size=16,
+            **hints)
+    else:
+        seg_gen, _ = model.transcribe(
+            video_path,
+            language=lang,
+            word_timestamps=True,
+            vad_filter=True,
+            beam_size=5,
+            **hints,
+        )
 
     segments: list[dict] = []
     for seg in seg_gen:
@@ -326,7 +372,7 @@ def _run_transcription(model, video_path: str, params: SubtitlesParams,
         })
         if job_id and duration:
             job_manager.set_progress(job_id, min(95, int(seg.end / duration * 100)))
-    return segments
+    return _split_long(segments) if batched else segments
 
 
 def transcribe_job(job_id: str, video_path: str, params: SubtitlesParams) -> None:

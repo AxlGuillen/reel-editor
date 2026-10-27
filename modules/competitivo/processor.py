@@ -27,12 +27,13 @@ import json
 import os
 import shutil
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 import config
-from core import ffmpeg_runner, file_utils, job_manager
+from core import ffmpeg_runner, file_utils, job_manager, scheduler
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
 from modules.competitivo import (camera, clock, creator, fuente, intro, kills, layout, metrics, salida,
@@ -174,7 +175,8 @@ def confidence(matches: int, shift: float) -> tuple[str, bool]:
 
 
 def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pelea],
-           carpeta: str, n_partida: int, offset: float = OFFSET_FORMULA_S["youtube"]) -> dict:
+           carpeta: str, n_partida: int, offset: float = OFFSET_FORMULA_S["youtube"],
+           job_id: str | None = None) -> dict:
     """Segundo del VOD de la primera kill de la partida, alineando el contador
     de kills del video con el feed en el tramo de la pelea más grande.
     `offset`: the platform's formula (formula_offset)."""
@@ -184,31 +186,36 @@ def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pele
     ref = max(peleas, key=lambda pe: (pe.elegible, pe.total, pe.bruto))
     a = _vod(ref.antes, inicio, offset) - VENTANA_ANCLA_S
     b = _vod(ref.ultima, inicio, offset) + VENTANA_ANCLA_S
+    cached = _anchor_cached(url, p.game_id, fb_utc, os.path.join(carpeta, f"ancla_{n_partida}.jpg"))
+    if cached:
+        return cached
     desfase, n, esperadas = 0.0, 0, 0
     frame = clock0_utc = None
     try:
-        tramo = fuente.bajar_tramo(url, a, b, os.path.join(carpeta, f"ancla_{n_partida}"))
-        vistos = layout.cambios_kills(tramo)
-        esp = [(_vod(ts, inicio, offset) - a, lado) for ts, lado in eventos]
-        esp = [e for e in esp if -RANGO_ANCLA_S <= e[0] <= (b - a) + RANGO_ANCLA_S]
-        esperadas = sum(1 for t, _ in esp if 0 <= t <= b - a)
-        desfase, n = layout.estimar_desfase(vistos, esp, rango=RANGO_ANCLA_S)
-        if not n:
-            desfase = 0.0
-        # Frame de control: la primera kill de la pelea de referencia, ya corregida.
-        frame = f"ancla_{n_partida}.jpg"
-        _captura(tramo, _vod(ref.primera, inicio, offset + desfase) - a + 0.5,
-                 os.path.join(carpeta, frame))
-        # The scoreboard's clock: when it said 0:00 (UTC). From there every
-        # time of the feed becomes the clock everyone talks about.
-        zero = clock.calibrate(tramo, [3.0 * k for k in range(1, int((b - a) / 3))][:24])
-        if zero is not None:
-            clock0_utc = inicio + timedelta(seconds=a + zero - offset - desfase)
+        tramo = fuente.bajar_tramo(url, a, b, os.path.join(carpeta, f"ancla_{n_partida}"), job_id=job_id)
+        with scheduler.slot("analysis", job_id):
+            scan = layout.Scan(tramo, layout.SCAN_ANCHOR)         # ONE decode: counter and clock
+            vistos = layout.cambios_kills(tramo, scan=scan)
+            esp = [(_vod(ts, inicio, offset) - a, lado) for ts, lado in eventos]
+            esp = [e for e in esp if -RANGO_ANCLA_S <= e[0] <= (b - a) + RANGO_ANCLA_S]
+            esperadas = sum(1 for t, _ in esp if 0 <= t <= b - a)
+            desfase, n = layout.estimar_desfase(vistos, esp, rango=RANGO_ANCLA_S)
+            if not n:
+                desfase = 0.0
+            # Frame de control: la primera kill de la pelea de referencia, ya corregida.
+            frame = f"ancla_{n_partida}.jpg"
+            _captura(tramo, _vod(ref.primera, inicio, offset + desfase) - a + 0.5,
+                     os.path.join(carpeta, frame))
+            # The scoreboard's clock: when it said 0:00 (UTC). From there every
+            # time of the feed becomes the clock everyone talks about.
+            zero = clock.calibrate(tramo, [3.0 * k for k in range(1, int((b - a) / 3))][:24], scan=scan)
+            if zero is not None:
+                clock0_utc = inicio + timedelta(seconds=a + zero - offset - desfase)
         os.remove(tramo)
     except RuntimeError as exc:
         print(f"[competitivo] ancla de {p.game_id}: {exc}".encode("ascii", "replace").decode())
     conf, suspicious = confidence(n, desfase)
-    return {
+    result = {
         "ancla_s": round(propuesta + desfase, 2),
         "ancla_propuesta_s": round(propuesta, 2),
         "desfase_s": desfase,
@@ -220,6 +227,41 @@ def _ancla(url: str, inicio: datetime, p: kills.Partida, peleas: list[kills.Pele
         "primera_kill_utc": _iso(fb_utc),
         "clock0_utc": _iso(clock0_utc) if clock0_utc else None,
     }
+    if conf == "alta" and not suspicious and clock0_utc and frame:
+        _anchor_store(url, p.game_id, result, os.path.join(carpeta, frame))
+    return result
+
+
+def _anchor_path(url: str, game_id: str) -> str:
+    return os.path.join(config.ANCHORS_FOLDER, f"{fuente.vod_key(url)}_{game_id}")
+
+
+def _anchor_cached(url: str, game_id: str, fb_utc: datetime, frame_dest: str) -> dict | None:
+    """The anchor already measured for this game of this VOD (confidence "alta" and
+    with its clock only; and only if the feed's first kill is still the same one):
+    its control frame goes back to the job's folder. None if there is none."""
+    base = _anchor_path(url, game_id)
+    try:
+        with open(base + ".json", encoding="utf-8") as fh:
+            result = json.load(fh)
+        if result.get("primera_kill_utc") != _iso(fb_utc) or not os.path.isfile(base + ".jpg"):
+            return None
+        shutil.copyfile(base + ".jpg", frame_dest)
+    except (OSError, ValueError):
+        return None
+    print(f"[competitivo] ancla de {game_id}: ya medida en este VOD".encode("ascii", "replace").decode())
+    return {**result, "frame": os.path.basename(frame_dest), "cached": True}
+
+
+def _anchor_store(url: str, game_id: str, result: dict, frame_path: str) -> None:
+    base = _anchor_path(url, game_id)
+    try:
+        os.makedirs(config.ANCHORS_FOLDER, exist_ok=True)
+        shutil.copyfile(frame_path, base + ".jpg")
+        with open(base + ".json", "w", encoding="utf-8") as fh:
+            json.dump(result, fh, ensure_ascii=False)
+    except OSError as exc:          # the cache is an extra: a job never fails for it
+        print(f"[competitivo] no se pudo guardar el ancla: {exc}".encode("ascii", "replace").decode())
 
 
 def _clock_titles(clips: list[dict], clock0_utc: datetime, pauses: list) -> None:
@@ -296,7 +338,8 @@ def process(job_id: str, params: CompetitivoParams) -> None:
         job_manager.update_job(job_id, progress=45, stage="Sincronizando el VOD con el feed…")
         with ThreadPoolExecutor(max_workers=3) as ex:
             anclas = list(ex.map(lambda i: _ancla(params.vod_url, inicio, partidas[i], peleas[i],
-                                                  carpeta, i + 1, offset=offset), range(len(partidas))))
+                                                  carpeta, i + 1, offset=offset, job_id=job_id),
+                                   range(len(partidas))))
         run.mark("anchors")
 
         datos_partidas, clips = [], []
@@ -470,21 +513,30 @@ def finish(job_id: str, fp: FinishParams) -> None:
         hechos = []
         skipped: list[str] = []        # clips whose section came without video (twice)
         en_resumen: list[str] = []     # lo que entra al resumen (el clip 1 puede llevar la intro)
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            futuros = [ex.submit(fuente.bajar_tramo, params.vod_url, *ventana(c),
-                                 os.path.join(temp, f"tramo_{k:02d}")) for k, c in enumerate(elegidos, 1)]
-            for k, (c, fut) in enumerate(zip(elegidos, futuros), 1):
-                job_manager.update_job(job_id, stage=f"Clip {k}/{n}: bajando el tramo…")
-                try:
-                    tramo = fut.result()
-                except fuente.SpanWithoutVideo:
-                    skipped.append(c["titulo"])
-                    continue
-                first = not hechos           # the first clip that made it carries the intro
+        clip_log: list[dict] = []      # per clip: download, wait, analysis and render seconds (the metrics)
+
+        def download(k, c):
+            t0 = time.monotonic()
+            path = fuente.bajar_tramo(params.vod_url, *ventana(c), os.path.join(temp, f"tramo_{k:02d}"),
+                                      job_id=job_id)
+            return path, time.monotonic() - t0
+
+        def analyze(k, c, fut):
+            """What the layout has to know about a clip (the kill counter, the live part, Riot's split
+            camera, where the action is). It runs while the clip before it is being rendered."""
+            t0 = time.monotonic()
+            try:
+                tramo, download_s = fut.result()
+            except fuente.SpanWithoutVideo:
+                return None
+            wait_s = time.monotonic() - t0
+            with scheduler.slot("analysis", job_id) as queue_s:
+                t1 = time.monotonic()
                 off = offsets[c["game_id"]]
                 a, _ = ventana(c)
+                scan = layout.Scan(tramo, layout.SCAN_CLIP)        # ONE decode for all of it
                 # Ajuste fino con las kills del propio clip (el ancla es por partida).
-                vistos = layout.cambios_kills(tramo)
+                vistos = layout.cambios_kills(tramo, scan=scan)
                 esp = [(_vod(datetime.fromisoformat(ts), inicio, off) - a, lado) for ts, lado in c["eventos"]]
                 ajuste, coinc = layout.estimar_desfase(vistos, esp, rango=RANGO_AJUSTE_S)
                 if coinc < min(2, len(esp)):
@@ -494,23 +546,42 @@ def finish(job_id: str, fp: FinishParams) -> None:
                 t_kill = _vod(datetime.fromisoformat(c["primera"]), inicio, off) - a + ajuste
                 dur_tramo = ffmpeg_runner.probe_duration(tramo) or (fin + MARGEN_CLIP_S)
                 ini, fin = max(0.0, ini), min(dur_tramo, fin)
-                an = layout.analizar(tramo, t_kill, ini, fin)
+                an = layout.analizar(tramo, t_kill, ini, fin, scan=scan)
                 if cam_of:
-                    job_manager.update_job(job_id, stage=f"Clip {k}/{n}: la cámara del creador…")
                     tramo = cam_of.apply(tramo, a, a + dur_tramo, an.camara or (layout.CAMARA_X, an.camara_y,
                                                                               layout.CAMARA_W, layout.CAMARA_H),
                                          temp, f"{k:02d}")
-                split = layout.split_ranges(tramo)      # Riot's split camera: the whole view
+                    scan = layout.Scan(tramo, ("strip", "track"))   # the composite replaced the span
+                split = layout.split_ranges(tramo, scan=scan)      # Riot's split camera: the whole view
                 track, shots = None, []
                 if fp.zoom_mode != "zoom" or overrides:
                     # Following the action (or the full view where it is not clear).
                     frames = kill_frames(vistos, esp, ajuste, KILL_LEAD_S)
                     ids = [f"{c['id']}#{n_k}" for n_k in range(1, len(frames) + 1)]
-                    tracks = {kid: (None if any(x <= t <= y for x, y in split) else layout.action_track(tramo, t))
+                    tracks = {kid: (None if any(x <= t <= y for x, y in split)
+                                    else layout.action_track(tramo, t, scan=scan))
                               for kid, t in zip(ids, frames)}
                     track, full, shots = camera.plan(list(zip(ids, frames)), tracks, fp.zoom, fp.zoom_mode,
                                                      overrides, span=(0.0, dur_tramo))
                     split = sorted(list(split) + full)
+            return {"tramo": tramo, "a": a, "ajuste": ajuste, "coinc": coinc, "t_kill": t_kill, "an": an,
+                    "split": split, "track": track, "shots": shots, "download_s": download_s, "wait_s": wait_s,
+                    "queue_s": queue_s, "analysis_s": time.monotonic() - t1}
+
+        ex = ThreadPoolExecutor(max_workers=3)
+        an_ex = ThreadPoolExecutor(max_workers=1)    # in order: the creator's camera keeps its sync from clip to clip
+        try:
+            futuros = [ex.submit(download, k, c) for k, c in enumerate(elegidos, 1)]
+            analisis = [an_ex.submit(analyze, k, c, f) for k, (c, f) in enumerate(zip(elegidos, futuros), 1)]
+            for k, (c, afut) in enumerate(zip(elegidos, analisis), 1):
+                job_manager.update_job(job_id, stage=f"Clip {k}/{n}: bajando y analizando el tramo…")
+                r = afut.result()
+                if r is None:
+                    skipped.append(c["titulo"])
+                    continue
+                tramo, a, ajuste, coinc, t_kill = r["tramo"], r["a"], r["ajuste"], r["coinc"], r["t_kill"]
+                an, split, track, shots = r["an"], r["split"], r["track"], r["shots"]
+                first = not hechos           # the first clip that made it carries the intro
                 dur = an.vivo_hasta - an.vivo_desde
                 if dur < 3:
                     raise RuntimeError(f"El clip «{c['titulo']}» cae casi entero fuera del vivo "
@@ -525,6 +596,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                         intro_info["placa_s"] = intro.fin_de_placa(voz.D, t_kill - an.vivo_desde,
                                                                    fp.placa_max_s)
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
+                t_render = time.monotonic()
                 render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
                 cmd = layout.build_command(tramo, os.path.join(carpeta, archivo), an.vivo_desde, dur,
                                            an.camara or an.camara_y, split=split, crop_track=track, **render)
@@ -551,6 +623,10 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     ffmpeg_runner.run(cmd, job_id, total_duration=dur, progress_range=((lo + hi) // 2, hi))
                     en_resumen[-1] = con
                 job_manager.update_job(job_id, status="processing")
+                clip_log.append({"id": c["id"], "video_s": round(dur, 1), "download_s": round(r["download_s"], 1),
+                                 "wait_s": round(r["wait_s"], 1), "queue_s": round(r["queue_s"], 1),
+                                 "analysis_s": round(r["analysis_s"], 1),
+                                 "render_s": round(time.monotonic() - t_render, 1)})
                 hechos.append({
                     "archivo": archivo, "id": c["id"], "titulo": c["titulo"], "partida": c["partida"],
                     "puntaje": c["puntaje"], "duracion": round(dur, 2),
@@ -562,6 +638,10 @@ def finish(job_id: str, fp: FinishParams) -> None:
                                      if b > an.vivo_desde and a < an.vivo_hasta],
                 })
                 os.remove(tramo)
+        finally:
+            an_ex.shutdown(wait=True, cancel_futures=True)
+            ex.shutdown(wait=True, cancel_futures=True)
+        run.set(clips_detail=clip_log)
         run.mark("clips")
         if not hechos:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
@@ -778,20 +858,25 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                   if ep.creator_vod_url else None)
         skipped: list[str] = []
         split_info: dict[str, list] = {}
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            futures = [ex.submit(fuente.bajar_tramo, params.vod_url, *window(c),
-                                 os.path.join(temp, f"tramo_{k:02d}")) for k, c in enumerate(chosen, 1)]
-            for k, (c, fut) in enumerate(zip(chosen, futures), 1):
-                job_manager.update_job(job_id, stage=f"Pelea {k}/{len(chosen)}: bajando y sincronizando…",
-                                       progress=12 + int(18 * (k - 1) / len(chosen)))
-                try:
-                    span = fut.result()
-                except fuente.SpanWithoutVideo:
-                    skipped.append(c["titulo"])
-                    continue
+        span_log: list[dict] = []
+
+        def download(k, c):
+            t0 = time.monotonic()
+            path = fuente.bajar_tramo(params.vod_url, *window(c), os.path.join(temp, f"tramo_{k:02d}"),
+                                      job_id=job_id)
+            return path, time.monotonic() - t0
+
+        def analyze_span(k, c, fut):
+            try:
+                span, download_s = fut.result()
+            except fuente.SpanWithoutVideo:
+                return None
+            with scheduler.slot("analysis", job_id) as queue_s:
+                t1 = time.monotonic()
                 off = offsets[c["game_id"]]
                 a, _ = window(c)
-                seen = layout.cambios_kills(span)
+                scan = layout.Scan(span, layout.SCAN_EDIT if ep.ambient else layout.SCAN_CLIP)   # ONE decode
+                seen = layout.cambios_kills(span, scan=scan)
                 expected = [(_vod(datetime.fromisoformat(ts), inicio, off) - a, side) for ts, side in c["eventos"]]
                 shift, matches = layout.estimar_desfase(seen, expected, rango=RANGO_AJUSTE_S)
                 if matches < min(2, len(expected)):
@@ -800,13 +885,14 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 end = _vod(datetime.fromisoformat(c["clip_fin"]), inicio, off) - a + shift
                 t_kill = _vod(datetime.fromisoformat(c["primera"]), inicio, off) - a + shift
                 span_dur = ffmpeg_runner.probe_duration(span) or (end + MARGEN_CLIP_S)
-                an = layout.analizar(span, t_kill, max(0.0, start - 4), min(span_dur, end))
+                an = layout.analizar(span, t_kill, max(0.0, start - 4), min(span_dur, end), scan=scan)
                 box = an.camara or an.camara_y
                 if cam_of:
                     span = cam_of.apply(span, a, a + span_dur, an.camara or (layout.CAMARA_X, an.camara_y,
                                                                              layout.CAMARA_W, layout.CAMARA_H),
                                         temp, c["id"])
-                split = layout.split_ranges(span)
+                    scan = layout.Scan(span, ("strip", "track") + (("amb_marc", "amb_rgb") if ep.ambient else ()))
+                split = layout.split_ranges(span, scan=scan)
                 authors = c.get("authors") or [None] * len(c["eventos"])
                 counts = c.get("counts") or [1] * len(c["eventos"])
                 clocks = c.get("kills_reloj") or [""] * len(c["eventos"])
@@ -819,12 +905,12 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                 # Where the action is in the 1.5 s before each kill (none inside the
                 # split camera: that is already the full view).
                 tracks = {}
-                for k in ks:
-                    if not any(x <= k.t <= y for x, y in split):
+                for kk in ks:
+                    if not any(x <= kk.t <= y for x, y in split):
                         try:
-                            tracks[k.id] = layout.action_track(span, k.t)
+                            tracks[kk.id] = layout.action_track(span, kk.t, scan=scan)
                         except RuntimeError:
-                            tracks[k.id] = None
+                            tracks[kk.id] = None
                 feat = None
                 if ep.structure == "acts" and ep.voice_peaks:
                     try:
@@ -833,10 +919,34 @@ def edit(job_id: str, phase1_id: str, ep: EditParams, music_path: str | None = N
                         feat = None
                 if c.get("moment"):
                     c = {**c, "moment": {**c["moment"], "t": t_kill}}       # its instant in the span
-                raw.append({"c": c, "span": span, "an": an, "split": split, "box": box, "kills": ks,
-                            "tracks": tracks, "feat": feat,
-                            "ambient": layout.ambient_ranges(span) if ep.ambient else []})
-                split_info[c["id"]] = [[round(x, 2), round(y, 2)] for x, y in split]
+                entry = {"c": c, "span": span, "an": an, "split": split, "box": box, "kills": ks,
+                         "tracks": tracks, "feat": feat,
+                         "ambient": layout.ambient_ranges(span, scan=scan) if ep.ambient else []}
+            return entry, {"id": c["id"], "download_s": round(download_s, 1), "queue_s": round(queue_s, 1),
+                           "analysis_s": round(time.monotonic() - t1, 1)}
+
+        ex = ThreadPoolExecutor(max_workers=3)
+        # The spans are analyzed at the same time (as many as the "analysis" slots allow),
+        # but one at a time when the creator's camera is used: it keeps its sync from span to span.
+        an_ex = ThreadPoolExecutor(max_workers=1 if cam_of else scheduler.capacity_of("analysis"))
+        try:
+            futures = [ex.submit(download, k, c) for k, c in enumerate(chosen, 1)]
+            analyses = [an_ex.submit(analyze_span, k, c, f) for k, (c, f) in enumerate(zip(chosen, futures), 1)]
+            for k, (c, afut) in enumerate(zip(chosen, analyses), 1):
+                job_manager.update_job(job_id, stage=f"Pelea {k}/{len(chosen)}: bajando y sincronizando…",
+                                       progress=12 + int(18 * (k - 1) / len(chosen)))
+                r = afut.result()
+                if r is None:
+                    skipped.append(c["titulo"])
+                    continue
+                entry, info = r
+                raw.append(entry)
+                span_log.append(info)
+                split_info[entry["c"]["id"]] = [[round(x, 2), round(y, 2)] for x, y in entry["split"]]
+        finally:
+            an_ex.shutdown(wait=True, cancel_futures=True)
+            ex.shutdown(wait=True, cancel_futures=True)
+        run.set(spans_detail=span_log)
         # Ibai's peaks: against the medians of HIS game (every span of it together).
         by_game: dict[str, list[dict]] = {}
         for r in raw:
@@ -1311,7 +1421,7 @@ def transcribe_in_a_row(specs: list[tuple]) -> None:
 
 def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: str = "es",
                    draft_lead_s: float = DRAFT_LEAD_S, carpeta_dia: str = "", partido: str = "",
-                   mapa: int | None = None, post_s: float = POST_S) -> None:
+                   mapa: int | None = None, post_s: float = POST_S, batched: bool = False) -> None:
     """The narration of a whole game (draft → nexus → post-game) on the
     scoreboard's clock, with the index of moments (transcript.py). After the
     nexus the clock is "+m:ss" (time since the nexus). Files:
@@ -1320,7 +1430,7 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
     from modules.subtitles.schema import SubtitlesParams
     sesion = get_session(phase1_id)
     work = None
-    run = metrics.Run("transcripcion", job_id, language=language, post_s=post_s)
+    run = metrics.Run("transcripcion", job_id, language=language, post_s=post_s, batched=batched)
     try:
         if not sesion:
             raise RuntimeError("La sesión ya no existe. Volvé a generar la propuesta (fase 1).")
@@ -1346,14 +1456,14 @@ def transcript_job(job_id: str, phase1_id: str, game_id: str | None, language: s
         work = os.path.join(sesion["carpeta"], f"transcript_{job_id}")
         os.makedirs(work, exist_ok=True)
         job_manager.update_job(job_id, progress=5, stage=f"Bajando el audio de la partida ({(b - a) / 60:.0f} min)…")
-        audio = fuente.bajar_audio(params.vod_url, a, b, os.path.join(work, "audio"))
+        audio = fuente.bajar_audio(params.vod_url, a, b, os.path.join(work, "audio"), job_id=job_id)
         run.mark("audio")
         job_manager.update_job(job_id, progress=25, stage="Transcribiendo la partida…")
         terms = vocab.game_terms(d.get("roster") or [], [x for x in (params.equipo_azul, params.equipo_rojo,
                                                                      d["azul"], d["rojo"]) if x])
         initial_prompt, hotwords = vocab.prompt(terms)
         segs = subtitles.transcribe(audio, SubtitlesParams(language=language), job_id=job_id,
-                                    initial_prompt=initial_prompt, hotwords=hotwords)
+                                    initial_prompt=initial_prompt, hotwords=hotwords, batched=batched)
         run.mark("whisper")
         fixes = vocab.load()
         segments = []

@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import config
-from core import ffmpeg_runner
+from core import ffmpeg_runner, scheduler
 
 _lock = threading.Lock()
 FILE: str | None = None          # another file (the tests: never the user's records)
@@ -28,8 +28,17 @@ def metrics_file() -> str:
     return FILE or os.path.join(config.COMPETITIVO_FOLDER, "_metricas", "jobs.jsonl")
 
 
+_active: dict[int, "Run"] = {}          # the runs going on now (how many jobs share the machine)
+ACTIVE_MAX_S = 6 * 3600                 # one that never finished does not count forever
+
+
 class Run:
-    """One job's record: Run(kind, job_id, ...) → mark(stage) → set(...) → finish(status)."""
+    """One job's record: Run(kind, job_id, ...) → mark(stage) → set(...) → finish(status).
+
+    Besides the time per stage it keeps how many other jobs were running when it
+    started (`concurrent_at_start`) and the most there were at once while it ran
+    (`concurrent_peak`), and, when it finishes, the seconds it waited for each
+    resource of core/scheduler.py (`waits`): the cost of sharing the machine."""
 
     def __init__(self, kind: str, job_id: str, **fields):
         self.kind, self.job_id = kind, job_id
@@ -38,6 +47,14 @@ class Run:
         self.fields = dict(fields)
         self.nvenc0 = ffmpeg_runner.stats["nvenc_fallbacks"]
         self.done = False
+        with _lock:
+            for key in [k for k, r in _active.items() if self.t0 - r.t0 > ACTIVE_MAX_S]:
+                _active.pop(key)
+            self.concurrent_at_start = len(_active)
+            self.concurrent_peak = len(_active) + 1
+            _active[id(self)] = self
+            for r in _active.values():
+                r.concurrent_peak = max(r.concurrent_peak, len(_active))
 
     def mark(self, stage: str) -> None:
         now = time.monotonic()
@@ -51,9 +68,14 @@ class Run:
         if self.done:
             return None
         self.done = True
+        with _lock:
+            _active.pop(id(self), None)
+        waits = scheduler.take_waits(self.job_id)
         record = {"kind": self.kind, "job_id": self.job_id, "at": datetime.now(timezone.utc).isoformat(),
                   "status": status, "seconds": round(time.monotonic() - self.t0, 1), "stages": self.stages,
-                  "nvenc_fallbacks": ffmpeg_runner.stats["nvenc_fallbacks"] - self.nvenc0, **self.fields}
+                  "nvenc_fallbacks": ffmpeg_runner.stats["nvenc_fallbacks"] - self.nvenc0,
+                  "concurrent_at_start": self.concurrent_at_start, "concurrent_peak": self.concurrent_peak,
+                  **({"waits": waits} if waits else {}), **self.fields}
         if error:
             record["error"] = str(error)[:300]
         write(record)
@@ -136,6 +158,13 @@ def summary(records: list[dict]) -> dict:
         "nvenc_fallbacks": sum(r.get("nvenc_fallbacks", 0) for r in records),
         "skipped_spans": sum(r.get("skipped", 0) for r in records),
         "warnings": sum(1 for r in records if r.get("warning")),
+        # What it costs to share the machine, and how long a clip takes.
+        "queue_wait_s": round(sum(sum((r.get("waits") or {}).values()) for r in records), 1),
+        "concurrent_median": _median([r.get("concurrent_peak") for r in records]),
+        "s_per_clip": _median([r["seconds"] / r["clips"] for r in by_kind.get("resumen", [])
+                               if r["status"] == "ok" and r.get("clips")]),
+        "s_per_clip_alone": _median([r["seconds"] / r["clips"] for r in by_kind.get("resumen", [])
+                                     if r["status"] == "ok" and r.get("clips") and r.get("concurrent_peak", 1) <= 1]),
         "failed": sum(1 for r in records if r["status"] == "error"),
         "presets": {p: sum(1 for r in records if r.get("preset") == p) for p in {r.get("preset") for r in records} if p},
         "days": dict(sorted(days.items())),

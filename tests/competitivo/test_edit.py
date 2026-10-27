@@ -214,7 +214,7 @@ class FullJob(unittest.TestCase):
         S.remove(self.tmp)
 
     @staticmethod
-    def _span(url, a, b, destination):
+    def _span(url, a, b, destination, job_id=None):
         return S.shots_video(destination + ".mp4", [round(b - a, 2)], w=1920, h=1080, fps=60)
 
     def _session(self):
@@ -344,10 +344,10 @@ class FullJob(unittest.TestCase):
         music = S.song(os.path.join(self.tmp, "m.wav"), bpm=120, dur=60, loud_from=24)
         ep = EditParams.from_form({"structure": "beat"}, params)
 
-        def span(url, a, b, destination):
+        def span(url, a, b, destination, job_id=None):
             if destination.endswith("tramo_01"):
                 raise processor.fuente.SpanWithoutVideo("sin video")
-            return self._span(url, a, b, destination)
+            return self._span(url, a, b, destination, job_id)
 
         job = job_manager.create_job("x", "")
         with mock.patch.object(processor.fuente, "bajar_tramo", side_effect=span):

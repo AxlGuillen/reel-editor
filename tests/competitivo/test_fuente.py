@@ -138,7 +138,8 @@ class SpanWithoutVideo(unittest.TestCase):
             fuente.bajar_tramo(TWITCH, 10, 11, self.dest)
         self.assertEqual(self.calls, 1 + fuente.TWITCH_RETRIES)
 
-    def test_at_most_two_twitch_sections_at_once(self):
+    def test_at_most_the_twitch_slots_at_once(self):
+        from core import scheduler
         import threading
         import time
         lock, now, peak, errors = threading.Lock(), [0], [0], []
@@ -159,12 +160,12 @@ class SpanWithoutVideo(unittest.TestCase):
                 errors.append(exc)
         with mock.patch.object(fuente, "TWITCH_RETRIES", 0), \
                 mock.patch.object(fuente.downloader, "_download_with_retry", side_effect=slow):
-            threads = [threading.Thread(target=one, args=(k,)) for k in range(5)]
+            threads = [threading.Thread(target=one, args=(k,)) for k in range(scheduler.capacity_of("twitch") + 2)]
             for t in threads:
                 t.start()
             for t in threads:
                 t.join()
-        self.assertEqual((peak[0], len(errors)), (2, 5))
+        self.assertEqual((peak[0], len(errors)), (scheduler.capacity_of("twitch"), scheduler.capacity_of("twitch") + 2))
 
     def test_twitch_takes_the_muxed_format(self):
         seen = []
@@ -201,7 +202,7 @@ class AnchorConfidence(unittest.TestCase):
         job = job_manager.create_job(TWITCH, output_path="")
         offsets = []
 
-        def fake_span(url, a, b, destination):
+        def fake_span(url, a, b, destination, job_id=None):
             offsets.append((a, b))
             return destination + ".mp4"
 
@@ -212,6 +213,7 @@ class AnchorConfidence(unittest.TestCase):
                                                 "platform": platform}), \
                 mock.patch.object(processor.kills, "fetch_partida", return_value=partida), \
                 mock.patch.object(processor.fuente, "bajar_tramo", side_effect=fake_span), \
+                mock.patch.object(processor.layout, "Scan"), \
                 mock.patch.object(processor.layout, "cambios_kills", return_value=[]), \
                 mock.patch.object(processor.layout, "estimar_desfase", return_value=(shift, matches)), \
                 mock.patch.object(processor, "_captura"), mock.patch.object(processor.os, "remove"), \

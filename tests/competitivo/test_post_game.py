@@ -147,7 +147,8 @@ class PostGame(unittest.TestCase):
             done.clear()
             self.assertEqual(c.post("/api/competitivo/transcript", data={"job_id": job, "post_s": "0"}).status_code, 202)
             self.assertTrue(done.wait(5))
-        self.assertEqual([a[-1] for a in got], [processor.POST_S, 0.0])
+        self.assertEqual([a[-2] for a in got], [processor.POST_S, 0.0])
+        self.assertEqual([a[-1] for a in got], [False, False])                    # batched off by default
 
     def test_the_transcription_goes_past_the_nexus(self):
         job, _ = self._phase1()
