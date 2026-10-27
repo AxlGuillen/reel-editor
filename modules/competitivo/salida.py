@@ -119,18 +119,38 @@ def _anteriores(d: Destino) -> list[str]:
     return out
 
 
+# What /transcript leaves in the extras folder: it is not part of a render, so a
+# new /finish takes it along instead of leaving it in _descartados.
+TRANSCRIPCION = ("transcripcion.txt", "transcripcion.json", "momentos.json")
+
+
 def publicar(d: Destino) -> None:
     """Pone el resumen y los extras en su lugar; lo anterior de ese mapa pasa a
-    _extras/_descartados/ (con (2), (3)… si ya hay uno con ese nombre)."""
+    _extras/_descartados/ (con (2), (3)… si ya hay uno con ese nombre). La
+    transcripción de ese mapa (si ya estaba hecha) se queda en su lugar."""
     if not d.organizada:
         return
     descartados = os.path.join(d.partido_dir, EXTRAS, DESCARTADOS)
     viejos = _anteriores(d) + ([d.extras_final] if os.path.exists(d.extras_final) else [])
     if viejos:
         os.makedirs(descartados, exist_ok=True)
+    guardadas = {f: os.path.join(d.extras_final, f) for f in TRANSCRIPCION
+                 if os.path.isfile(os.path.join(d.extras_final, f))}
+    guardadas_tmp = {}
+    if guardadas:
+        # A copy aside: the folder is about to move to _descartados.
+        aparte = os.path.join(d.partido_dir, EXTRAS, f".transcripcion.tmp-{d.mapa}")
+        shutil.rmtree(aparte, ignore_errors=True)
+        os.makedirs(aparte)
+        guardadas_tmp = {f: shutil.copy2(src, aparte) for f, src in guardadas.items()}
     for viejo in viejos:
         os.replace(viejo, _unico(descartados, os.path.basename(viejo)))
     os.replace(d.carpeta, d.extras_final)
+    for f, src in guardadas_tmp.items():
+        if not os.path.exists(os.path.join(d.extras_final, f)):
+            shutil.move(src, os.path.join(d.extras_final, f))
+    if guardadas_tmp:
+        shutil.rmtree(os.path.dirname(next(iter(guardadas_tmp.values()))), ignore_errors=True)
     os.replace(os.path.join(d.extras_final, "resumen.mp4"), d.video_final)
     d.carpeta = d.extras_final
 

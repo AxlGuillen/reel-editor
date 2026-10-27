@@ -138,6 +138,27 @@ class Estructura(_Carpeta):
         self.assertEqual(videos, ["Mapa 2 - Otra.mp4", "Mapa 3.mp4"])               # el Mapa 3 no se toca
         self.assertIn("Mapa 2 - Remontada.mp4", os.listdir(os.path.join(partido, "_extras", "_descartados")))
 
+    def test_un_finish_nuevo_conserva_la_transcripcion(self):
+        """La transcripción de /transcript vive en _extras/Mapa N: un render nuevo la
+        deja en su lugar (y la versión anterior de todo lo demás, en _descartados)."""
+        self._corrida(1)
+        extras = os.path.join(self.base, "Play-In Día 3 (17-10)", "MVK vs FUR", "_extras")
+        for f in salida.TRANSCRIPCION:
+            self._escribir(os.path.join(extras, "Mapa 2", f), f"{f} v1")
+        self._corrida(2)
+        for f in salida.TRANSCRIPCION:
+            self.assertEqual(self._leer(os.path.join(extras, "Mapa 2", f)), f"{f} v1", f)
+        self.assertEqual(self._leer(os.path.join(extras, "Mapa 2", "portada.jpg")), "portada 2")
+        self.assertEqual(self._leer(os.path.join(extras, "_descartados", "Mapa 2", "portada.jpg")), "portada 1")
+        self.assertEqual([x for x in os.listdir(extras) if x.startswith(".")], [])    # sin restos
+        # Una transcripción nueva (de otro render que la trae) no se pisa con la vieja.
+        d = salida.preparar(PARTIDAS, 2, "job3", "Play-In Día 3 (17-10)", "MVK vs FUR", "")
+        self._escribir(d.resumen)
+        self._escribir(os.path.join(d.carpeta, "transcripcion.json"), "nueva")
+        self._escribir(os.path.join(d.carpeta, "info.json"), "{}")
+        salida.publicar(d)
+        self.assertEqual(self._leer(os.path.join(extras, "Mapa 2", "transcripcion.json")), "nueva")
+
     def test_si_falla_no_toca_lo_anterior(self):
         self._corrida(1, titulo="Remontada")
         d = salida.preparar(PARTIDAS, 2, "job9", "Play-In Día 3 (17-10)", "MVK vs FUR", "Remontada")
