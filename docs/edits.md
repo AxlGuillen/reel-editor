@@ -88,6 +88,8 @@ Las peleas de la fase 1 al ritmo de una canción. Con algo que un edit de anime 
 
 **Presets.** Lo que funcionó la semana del 23/10 está con nombre en `assets/competitivo/presets.json`: `preset=edit_estandar` (actos cronológicos, sin letreros, 3 s antes y 2 s después de cada kill, picos de Ibai, `zoom_mode=auto` y **storyboard** antes del render), `edit_corto`, `edit_equipo` (+ `team`) y `edit_aura_triste`. Lo que se mande explícito gana sobre el preset; `GET /api/competitivo/presets` los lista. Cada edit queda en las métricas (`edit` / `edit_render`: kills con foco seguro, en plano entero, correcciones, reintentos), ver CLAUDE.md.
 
+**Rendimiento.** Los tramos de las peleas se bajan y se analizan a la vez (tantos como turnos de análisis, `config.SLOTS`), cada uno con UN decode (`layout.Scan`), y los trabajos hacen cola por recurso (descargas de Twitch, Whisper, render). Los números y lo que se probó y se descartó están en CLAUDE.md, sección «Rendimiento».
+
 - Cada pelea: **entrada** (1 compás, 2 si hay mucho antes), **kills** separadas por `n` beats (lo más cerca de la velocidad base, entre 0.5× y 2.5×) y **cola** hasta cerrar el compás. Así cada pelea arranca en un primer tiempo.
 - La **pelea clave** (la de cierre, o la de más puntaje) se ajusta para que su última kill caiga en un primer tiempo, y **la música arranca de modo que esa kill caiga en el drop**.
 - Si se pasa de `max_duration_s` salen las de menos puntaje (nunca la clave).

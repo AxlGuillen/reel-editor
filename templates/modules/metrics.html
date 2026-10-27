@@ -35,6 +35,16 @@
   </div>
 
   <div class="card">
+    <h3>Turnos por recurso</h3>
+    <p class="hint">Cuántos trabajos usan cada recurso a la vez (los demás esperan su turno) desde que arrancó el servidor.
+      Los cupos se cambian en <code>config.SLOTS</code> o con <code>REELFORGE_SLOTS_&lt;NOMBRE&gt;</code>.</p>
+    <table class="info-table">
+      <thead><tr><th>Recurso</th><th>Usando</th><th>Esperando</th><th>Máx. a la vez</th><th>Usos</th><th>Espera total</th></tr></thead>
+      <tbody id="mt-slots"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <div class="mt-cal-head">
       <h3>Calibración</h3>
       <button type="button" class="btn-primary" id="mt-cal-run">Correr la calibración</button>

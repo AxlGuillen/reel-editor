@@ -12,6 +12,8 @@
     calibracion: "Calibración",
   };
   const STATUS = { ok: "bien", paused: "en pausa", error: "falló" };
+  const SLOT_NAMES = { twitch: "Descargas de Twitch", whisper: "Whisper (GPU)", analysis: "Análisis de clips (CPU)",
+    nvenc: "Render (NVENC)" };
   const CAL = { ok: "bien", fail: "FALLA", error: "ERROR", missing: "falta el archivo",
     known: "conocida", fixed: "¡arreglada!" };
 
@@ -62,6 +64,8 @@
       kpi(s.retries, "reintentos", "", false),
       kpi(s.nvenc_fallbacks, "NVENC → CPU", "", false),
       kpi(s.warnings, "con aviso", `${s.skipped_spans} tramos sin video`, false),
+      kpi(secs(s.s_per_clip), "por clip (resumen)", s.s_per_clip_alone ? `${secs(s.s_per_clip_alone)} si corre solo` : "", false),
+      kpi(secs(s.queue_wait_s), "esperando turno", s.concurrent_median ? `${s.concurrent_median} trabajos a la vez (mediana)` : "", false),
       kpi(data.discarded, "descartados", "versiones rehechas", false),
     ].join("");
 
@@ -78,6 +82,9 @@
       <td>${secs(r.seconds)}</td><td class="mt-detail">${esc(detail(r))}</td></tr>`).join("")
       || `<tr><td colspan="5" class="hint">Sin trabajos en este período.</td></tr>`;
     el("mt-file").textContent = `Registro: ${data.file}`;
+    el("mt-slots").innerHTML = Object.entries(data.slots || {}).map(([name, v]) => `<tr>
+      <td>${esc(SLOT_NAMES[name] || name)}</td><td>${v.running} / ${v.capacity}</td><td>${v.waiting}</td>
+      <td>${v.peak}</td><td>${v.runs}</td><td>${secs(v.total_wait_s)}</td></tr>`).join("");
   }
 
   function renderCalibration(report) {

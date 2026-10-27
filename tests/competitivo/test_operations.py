@@ -121,6 +121,8 @@ class Metrics(unittest.TestCase):
             data = c.get("/api/competitivo/metrics?days=7").get_json()
             self.assertEqual(data["summary"]["jobs"], 1)
             self.assertEqual(data["recent"][0]["kind"], "resumen")
+            self.assertEqual(sorted(data["slots"]), ["analysis", "nvenc", "twitch", "whisper"])
+            self.assertTrue(all({"capacity", "running", "waiting", "peak"} <= set(v) for v in data["slots"].values()))
             self.assertIsNone(data["calibration"])
             self.assertEqual(c.get("/api/competitivo/metrics?days=x").status_code, 400)
 
