@@ -36,6 +36,7 @@ detecta y el clip arranca después (o termina antes) para no mezclar vistas.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -182,11 +183,141 @@ def _gris(path: str, vf: str, ss: float | None = None, dur: float | None = None,
     raw = ffmpeg_runner.capture(cmd)
     return np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(np.float32)
 
+# --- One decode per span ------------------------------------------------------------
+# The analysis used to open the same 1080p60 span many times (the camera box,
+# the scoreboard for the live part, the kill counter twice, the split line,
+# the clock, the action of each kill) and every pass decoded all its frames to
+# keep a small crop. A Scan decodes it ONCE with one output per crop (each its
+# own `fps`, so every function gets exactly the frames it asked for before).
+CAM_REGION = (1400, 380, 520, 500)     # where detect_camera_box looks (x, y, w, h)
+CAM_SPAN_S = 20.0                      # ... in the first seconds of the span
+BRANCH_FPS = {"marc_a": 5, "marc_k": 10, "kill_izq": 10, "kill_der": 10, "strip": 4, "cam": 8 / CAM_SPAN_S,
+              "track": 10, "clock": 4, "amb_marc": 2, "amb_rgb": 2}
+SCAN_CLIP = ("marc_a", "marc_k", "kill_izq", "kill_der", "strip", "cam", "track")   # what /finish reads
+SCAN_EDIT = SCAN_CLIP + ("amb_marc", "amb_rgb")                                   # + the ambient shots
+SCAN_ANCHOR = ("marc_k", "kill_izq", "kill_der", "clock")                          # what phase 1 reads
+
+
+def _branch(name: str, fps: float) -> tuple[str, int, int, int]:
+    """(filters, width, height, channels) of one output of a Scan."""
+    mx, my, mw, mh = MARCADOR
+    jx, jy, jw, jh = JUEGO
+    if name in ("marc_a", "marc_k", "amb_marc"):
+        return f"fps={fps},crop={mw}:{mh}:{mx}:{my},scale={mw // 4}:{mh // 4}:flags=area", mw // 4, mh // 4, 1
+    if name in ("kill_izq", "kill_der"):
+        kx, ky, kw, kh = KILLS_LADO[name[5:]]
+        return f"fps={fps},crop={kw}:{kh}:{kx}:{ky}", kw, kh, 1
+    if name == "strip":
+        x0, x1 = SPLIT_X
+        return (f"fps={fps},crop={x1 - x0}:{jh}:{x0}:{jy},scale={x1 - x0}:{jh // 4}:flags=neighbor",
+                x1 - x0, jh // 4, 1)
+    if name == "cam":
+        cx, cy, cw, ch = CAM_REGION
+        return f"trim=end={CAM_SPAN_S},fps={fps},crop={cw}:{ch}:{cx}:{cy}", cw, ch, 1
+    if name == "track":
+        h = _even(jh * TRACK_W / jw)
+        return f"fps={fps},crop={jw}:{jh}:{jx}:{jy},scale={TRACK_W}:{h}", TRACK_W, h, 1
+    if name == "clock":
+        from modules.competitivo import clock
+        x, y, w, h = clock.CLOCK
+        return f"fps={fps},crop={w}:{h}:{x}:{y}", w, h, 1
+    if name == "amb_rgb":
+        return f"fps={fps},crop={jw}:{jh}:{jx}:{jy},scale=160:78", 160, 78, 3
+    raise KeyError(name)
+
+
+class Scan:
+    """The crops of a span the analysis needs, from ONE decode of the file.
+
+    Scan(path, want) decodes now; get(name) gives that output as float32
+    frames (gray, or RGB for "amb_rgb"). What was not asked for at the start
+    is decoded the first time it is read, so a function given a Scan that
+    lacks something still works. `ss` / `dur`: only that part of the file;
+    `fps`: another rate for some outputs. The file is decoded on the GPU
+    (NVDEC) when it can be (`hw`), which leaves the CPU free for the render
+    of the previous clip; if that run fails it is done again on the CPU."""
+
+    def __init__(self, path: str, want: tuple = SCAN_CLIP, ss: float = 0.0, dur: float | None = None,
+                 fps: dict | None = None, threads: int = 6, hw: bool = True):
+        self.path, self.ss, self.dur, self.threads, self.hw = path, ss, dur, threads, hw
+        self.fps = {**BRANCH_FPS, **(fps or {})}
+        self._raw: dict[str, np.ndarray] = {}
+        self._decode(want)
+
+    def compatible(self, ss: float, dur: float | None, fps: dict | None) -> bool:
+        return (self.ss == ss and self.dur == dur
+                and all(abs(self.fps[k] - v) < 1e-9 for k, v in (fps or {}).items()))
+
+    def has(self, name: str) -> bool:
+        return name in self._raw
+
+    def _decode(self, names) -> None:
+        import shutil
+        import tempfile
+        names = [n for n in dict.fromkeys(names) if n not in self._raw]
+        if not names:
+            return
+        tmp = tempfile.mkdtemp(prefix="scan-")
+        try:
+            specs = {n: _branch(n, self.fps[n]) for n in names}
+            if len(names) > 1:
+                graph = [f"[0:v]split={len(names)}" + "".join(f"[s{i}]" for i in range(len(names)))]
+                src = [f"[s{i}]" for i in range(len(names))]
+            else:
+                graph, src = [], ["[0:v]"]
+            outs = []
+            for i, n in enumerate(names):
+                chain, w, h, ch = specs[n]
+                graph.append(f"{src[i]}{chain},format={'rgb24' if ch == 3 else 'gray'}[o{i}]")
+                outs += ["-map", f"[o{i}]", "-f", "rawvideo", os.path.join(tmp, f"{n}.raw")]
+            gpu = self.hw and ffmpeg_runner.cuda_decode_supported(ffmpeg_runner.probe_video_stream(self.path))
+            for on_gpu in ([True, False] if gpu else [False]):
+                cmd = [config.FFMPEG_PATH, "-v", "error"]
+                cmd += ffmpeg_runner.CUDA_DECODE_FLAGS if on_gpu else ["-threads", str(self.threads)]
+                if self.ss:
+                    cmd += ["-ss", f"{self.ss:.3f}"]
+                if self.dur is not None:
+                    cmd += ["-t", f"{self.dur:.3f}"]
+                g = list(graph)
+                if on_gpu:        # the frames come down as nv12 once, then every crop
+                    g = ["[0:v]hwdownload,format=nv12,format=yuv420p[dl]"] + [x.replace("[0:v]", "[dl]", 1) for x in g]
+                try:
+                    ffmpeg_runner.capture(cmd + ["-i", self.path, "-an", "-filter_complex", ";".join(g)] + outs)
+                    break
+                except RuntimeError:
+                    if not on_gpu:
+                        raise
+            for n in names:
+                _, w, h, ch = specs[n]
+                data = np.fromfile(os.path.join(tmp, f"{n}.raw"), np.uint8)
+                size = w * h * ch
+                data = data[: data.size // size * size]
+                self._raw[n] = data.reshape(-1, h, w, 3) if ch == 3 else data.reshape(-1, h, w)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def raw(self, name: str) -> np.ndarray:
+        """The frames as they came (uint8): for big outputs that are read in slices."""
+        self._decode([name])
+        return self._raw[name]
+
+    def get(self, name: str) -> np.ndarray:
+        return self.raw(name).astype(np.float32)
+
+
+def _scan_for(path: str, scan: "Scan | None", names: tuple, ss: float = 0.0, dur: float | None = None,
+              fps: dict | None = None) -> Scan:
+    """The scan the caller gave if it fits this call (same part of the file, same
+    rates); otherwise a new one with just what this call needs."""
+    if scan is not None and scan.compatible(ss, dur, fps):
+        return scan
+    return Scan(path, names, ss, dur, fps)
+
 
 CAMARA_BOX_DEFECTO = (CAMARA_X, CAMARA_Y_DEFECTO, CAMARA_W, CAMARA_H)
 
 
-def detect_camera_box(path: str, muestras: int = 8) -> tuple[int, int, int, int]:
+def detect_camera_box(path: str, muestras: int = 8, scan: "Scan | None" = None) -> tuple[int, int, int, int]:
     """Interior (x, y, w, h) of the box with Ibai's set camera, without
     depending on colors. It changes with the source and the day: day 1 on
     YouTube 440x246 from x 1478; on 23/10 ~450x253 from x ~1468, at y ~541 on
@@ -198,9 +329,8 @@ def detect_camera_box(path: str, muestras: int = 8) -> tuple[int, int, int, int]
     behind Ibai does not, so it is where the frame-to-frame variation drops.
     If the gameplay is still too (nothing to compare), the row where the top
     and bottom borders and the left one along the height add up the most."""
-    x0, y0, ww, hh = 1400, 380, 520, 500       # search region
-    dur = 20.0
-    fr = _gris(path, f"fps={muestras / dur},crop={ww}:{hh}:{x0}:{y0}", dur=dur, w=ww, h=hh)
+    x0, y0, ww, hh = CAM_REGION                # search region
+    fr = _scan_for(path, scan, ("cam",), fps={"cam": muestras / CAM_SPAN_S}).get("cam")
     if not len(fr):
         return CAMARA_BOX_DEFECTO
     m = np.median(fr, axis=0)
@@ -242,7 +372,8 @@ def detectar_camara(path: str, muestras: int = 8) -> int:
     return detect_camera_box(path, muestras)[1]
 
 
-def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5) -> Analisis:
+def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5,
+             scan: "Scan | None" = None) -> Analisis:
     """Mira el tramo bajado: dónde está la cámara de Ibai y qué parte está en vivo.
 
     En las repeticiones, los "stingers" y el set de Ibai a pantalla completa
@@ -250,11 +381,9 @@ def analizar(path: str, t_kill: float, inicio: float, fin: float, fps: float = 5
     frame contra su aspecto típico en el tramo (la mediana, dominada por los
     frames en vivo): lo que se aleja mucho no es la transmisión en vivo. El
     clip queda en el tramo en vivo que contiene la kill."""
-    camara = detect_camera_box(path)
+    camara = detect_camera_box(path, scan=scan)
     camara_y = camara[1]
-    mw, mh = MARCADOR[2] // 4, MARCADOR[3] // 4
-    fr = _gris(path, f"fps={fps},crop={MARCADOR[2]}:{MARCADOR[3]}:{MARCADOR[0]}:{MARCADOR[1]},"
-               f"scale={mw}:{mh}:flags=area", w=mw, h=mh)
+    fr = _scan_for(path, scan, ("marc_a",), fps={"marc_a": fps}).get("marc_a")
     if not len(fr):
         return Analisis(camara_y, inicio, fin, 0.0, camara)
     ref = np.median(fr, axis=0)
@@ -342,15 +471,12 @@ def has_divider(fr: np.ndarray, step: int = 1) -> bool:
     return False
 
 
-def split_ranges(path: str, fps: float = 4, ss: float = 0.0,
-                 dur: float | None = None) -> list[tuple[float, float]]:
+def split_ranges(path: str, fps: float = 4, ss: float = 0.0, dur: float | None = None,
+                 scan: "Scan | None" = None) -> list[tuple[float, float]]:
     """[(a, b)] seconds of the file with Riot's split camera (see has_divider),
     seen for SPLIT_MIN_S in a row. Rows every 4 px: enough for a full-height line."""
-    x0, x1 = SPLIT_X
-    jx, jy, jw, jh = JUEGO
     step = 4
-    fr = _gris(path, f"fps={fps},crop={x1 - x0}:{jh}:{x0}:{jy},scale={x1 - x0}:{jh // step}:flags=neighbor",
-               ss=ss, dur=dur, w=x1 - x0, h=jh // step)
+    fr = _scan_for(path, scan, ("strip",), ss, dur, {"strip": fps}).get("strip")
     hits = [has_divider(f, step) for f in fr]
     runs: list[list[int]] = []                       # [first, last + 1] sample of each run
     for i, hit in enumerate(hits):
@@ -381,23 +507,17 @@ def _green_share(rgb: np.ndarray) -> np.ndarray:
     return green.mean(axis=(1, 2))
 
 
-def ambient_ranges(path: str, fps: float = 2) -> list[tuple[float, float]]:
+def ambient_ranges(path: str, fps: float = 2, scan: "Scan | None" = None) -> list[tuple[float, float]]:
     """[(a, b)] seconds of the span with "ambient" shots: no scoreboard (not the
     live game) and no game image either (no replay): the stage, the players,
     the crowd. A real camera has no saturated green; the Rift always does
     (measured in IG-GEN 23/10: 0–0.1 % against 5–43 %). At least AMBIENT_MIN_S."""
-    mx_, my_, mw, mh = MARCADOR
-    m = _gris(path, f"fps={fps},crop={mw}:{mh}:{mx_}:{my_},scale={mw // 4}:{mh // 4}:flags=area",
-              w=mw // 4, h=mh // 4)
-    jx, jy, jw, jh = JUEGO
-    raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-i", path, "-an", "-vf",
-                                 f"fps={fps},crop={jw}:{jh}:{jx}:{jy},scale=160:78,format=rgb24",
-                                 "-f", "rawvideo", "-"])
-    rgb = np.frombuffer(raw, np.uint8)
-    n = min(len(m), rgb.size // (160 * 78 * 3))
+    sc = _scan_for(path, scan, ("amb_marc", "amb_rgb"), fps={"amb_marc": fps, "amb_rgb": fps})
+    m, rgb = sc.get("amb_marc"), sc.get("amb_rgb")
+    n = min(len(m), len(rgb))
     if n < 3:
         return []
-    rgb = rgb[: n * 160 * 78 * 3].reshape(n, 78, 160, 3).astype(np.float32)
+    rgb = rgb[:n]
     d = np.abs(m[:n] - np.median(m[:n], axis=0)).mean(axis=(1, 2))
     live = d < max(18.0, 3 * float(np.median(d)))
     ambient = ~live & (_green_share(rgb) < AMBIENT_GREEN)
@@ -447,7 +567,7 @@ KILLS_LADO = {"izq": (885, 22, 60, 36), "der": (975, 22, 60, 36)}
 
 
 def cambios_kills(path: str, ss: float = 0.0, dur: float | None = None,
-                  fps: float = 10) -> list[tuple[float, str]]:
+                  fps: float = 10, scan: "Scan | None" = None) -> list[tuple[float, str]]:
     """(segundo, lado) en que sube el contador de kills del marcador oficial,
     solo durante la transmisión en vivo. Segundos relativos al archivo.
 
@@ -457,17 +577,17 @@ def cambios_kills(path: str, ss: float = 0.0, dur: float | None = None,
     de los 0.5 s posteriores contra el de los 0.5 s anteriores. Así se ven
     también los cambios chicos (8→9 comparte casi todos los trazos) y no
     cuenta el ruido de compresión. Las repeticiones (sin marcador) no cuentan."""
-    mx, my, mw, mh = MARCADOR
-    m = _gris(path, f"fps={fps},crop={mw}:{mh}:{mx}:{my},scale={mw // 4}:{mh // 4}:flags=area",
-              ss=ss, dur=dur, w=mw // 4, h=mh // 4)
+    sc = _scan_for(path, scan, ("marc_k", "kill_izq", "kill_der"), ss, dur,
+                   {"marc_k": fps, "kill_izq": fps, "kill_der": fps})
+    m = sc.get("marc_k")
     if len(m) < 12:
         return []
     d_marc = np.abs(m - np.median(m, axis=0)).mean(axis=(1, 2))
     vivo = d_marc < max(18.0, 3 * float(np.median(d_marc)))
     v = max(1, int(round(fps * 0.5)))                         # ventana de cada lado del escalón
     out: list[tuple[float, str]] = []
-    for lado, (kx, ky, kw, kh) in KILLS_LADO.items():
-        k = _gris(path, f"fps={fps},crop={kw}:{kh}:{kx}:{ky}", ss=ss, dur=dur, w=kw, h=kh)
+    for lado in KILLS_LADO:
+        k = sc.get(f"kill_{lado}")
         n = min(len(k), len(vivo))
         esc = np.zeros(n)
         for i in range(v + 1, n - v):
@@ -694,7 +814,7 @@ TRACK_SURE_SPREAD = 0.16      # more spread than this (fraction of the zone): no
 TRACK_MIN_MOTION = 6.0        # less residual motion than this (0–255): nothing to follow
 
 
-def action_track(path: str, t: float, lookback: float = LOOKBACK_S) -> dict | None:
+def action_track(path: str, t: float, lookback: float = LOOKBACK_S, scan: "Scan | None" = None) -> dict | None:
     """Where the action is in the `lookback` s before second t of the span,
     over the WHOLE clean zone: {u, v} (fractions of it), spread and motion,
     and sure. The observer's camera pans with the fight, so first each frame
@@ -703,15 +823,24 @@ def action_track(path: str, t: float, lookback: float = LOOKBACK_S) -> dict | No
     import cv2
     jx, jy, jw, jh = JUEGO
     h = _even(jh * TRACK_W / jw)
-    raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{max(0.0, t - lookback):.3f}",
-                                 "-t", f"{lookback + 0.1:.3f}", "-i", path, "-an", "-vf",
-                                 f"fps={TRACK_FPS},crop={jw}:{jh}:{jx}:{jy},scale={TRACK_W}:{h},format=gray",
-                                 "-f", "rawvideo", "-"])
-    fr = np.frombuffer(raw, np.uint8)
-    n = fr.size // (TRACK_W * h)
-    if n < 3:
-        return None
-    fr = fr[: n * TRACK_W * h].reshape(n, h, TRACK_W).astype(np.float32)
+    if scan is not None and scan.has("track") and scan.compatible(0.0, None, {"track": TRACK_FPS}):
+        # The window out of the frames the Scan already decoded.
+        i0 = int(round(max(0.0, t - lookback) * TRACK_FPS))
+        fr = scan.raw("track")[i0:i0 + int(round((lookback + 0.1) * TRACK_FPS))]
+        n = len(fr)
+        if n < 3:
+            return None
+        fr = fr.astype(np.float32)
+    else:
+        raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{max(0.0, t - lookback):.3f}",
+                                     "-t", f"{lookback + 0.1:.3f}", "-i", path, "-an", "-vf",
+                                     f"fps={TRACK_FPS},crop={jw}:{jh}:{jx}:{jy},scale={TRACK_W}:{h},format=gray",
+                                     "-f", "rawvideo", "-"])
+        fr = np.frombuffer(raw, np.uint8)
+        n = fr.size // (TRACK_W * h)
+        if n < 3:
+            return None
+        fr = fr[: n * TRACK_W * h].reshape(n, h, TRACK_W).astype(np.float32)
     window = cv2.createHanningWindow((TRACK_W, h), cv2.CV_32F)
     acc = np.zeros((h, TRACK_W), np.float32)
     for a, b in zip(fr, fr[1:]):
@@ -786,7 +915,13 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
     """Un solo encode por clip: recorte exacto del tramo + layout + watermark.
 
     `intro`: la intro "encima" del clip 1 (placa + voz + ducking del juego).
-    `con_audio`: si el tramo trae audio (sin él, con intro suena solo la voz)."""
+    `con_audio`: si el tramo trae audio (sin él, con intro suena solo la voz).
+
+    Medido (27/10, 3 tramos): el grafo de filtros es el 95 % del render (12.9 s de 13.6 s
+    para 39 s de video; el decode 1.2 s, el encode casi nada), el "vivo" 5 s de ellos
+    (curves 3.1, unsharp 1.9). Decodificar en NVDEC (misma imagen, bit a bit) no lo
+    acelera (2.79x contra 2.83x) y los presets p5–p7 de NVENC suben el VMAF 0.02–0.03
+    con el tope de 16 Mbps: no se usan."""
     marca = recorte_marca(marca_path) if marca_path else None
     cmd = [config.FFMPEG_PATH, "-y", "-ss", f"{desde:.3f}", "-t", f"{duracion:.3f}", "-i", src]
     idx = 1

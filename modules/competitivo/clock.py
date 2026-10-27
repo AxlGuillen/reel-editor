@@ -26,15 +26,28 @@ MIN_SCORE = 0.75                  # correlation with the best template to accept
 TEMPLATES = os.path.join(config.ASSETS_FOLDER, "competitivo", "clock_digits.json")
 
 
-def _crop(path: str, ts: list[float]) -> list[np.ndarray]:
+READ_STEP_S = 0.25               # the readings of one clock_at are this far apart
+
+
+def _crop(path: str, t: float, tries: int) -> list[np.ndarray | None]:
+    """`tries` frames of the clock, READ_STEP_S apart from second t: ONE FFmpeg run
+    (it used to be one per frame: 120 runs to calibrate a game)."""
     x, y, w, h = CLOCK
-    out = []
-    for t in ts:
-        raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{max(0.0, t):.3f}", "-i", path,
-                                     "-frames:v", "1", "-vf", f"crop={w}:{h}:{x}:{y},format=gray",
-                                     "-f", "rawvideo", "-"])
-        out.append(np.frombuffer(raw, np.uint8).reshape(h, w).astype(np.float32) if len(raw) == w * h else None)
-    return out
+    raw = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "error", "-ss", f"{max(0.0, t):.3f}",
+                                 "-t", f"{tries * READ_STEP_S - READ_STEP_S / 2:.3f}", "-i", path,
+                                 "-an", "-vf", f"fps={1 / READ_STEP_S},crop={w}:{h}:{x}:{y},format=gray",
+                                 "-f", "rawvideo", "-"])
+    frames = np.frombuffer(raw, np.uint8)
+    n = frames.size // (w * h)
+    frames = frames[: n * w * h].reshape(n, h, w).astype(np.float32)
+    return [frames[i] if i < n else None for i in range(tries)]
+
+
+def _from_scan(scan, t: float, tries: int) -> list[np.ndarray | None]:
+    """The same frames out of a layout.Scan that has the "clock" output (4 fps)."""
+    frames = scan.get("clock")
+    i0 = int(round(max(0.0, t) / READ_STEP_S))
+    return [frames[i0 + i] if i0 + i < len(frames) else None for i in range(tries)]
 
 
 # The digits are monospaced (a "1" sits centered in the same cell as a "0")
@@ -116,11 +129,13 @@ def _match(g: np.ndarray) -> tuple[int, float]:
     return best, score
 
 
-def clock_at(path: str, t: float, tries: int = 5) -> float | None:
+def clock_at(path: str, t: float, tries: int = 5, scan=None) -> float | None:
     """The clock (s, with the fraction) at second t of the file: the reading
-    of several frames 0.25 s apart, which agree once the second changes."""
-    ts = [t + 0.25 * k for k in range(tries)]
-    vals = [(tt, read(img)) for tt, img in zip(ts, _crop(path, ts))]
+    of several frames 0.25 s apart, which agree once the second changes.
+    `scan`: a layout.Scan with the "clock" output, to read from its frames."""
+    ts = [t + READ_STEP_S * k for k in range(tries)]
+    frames = _from_scan(scan, t, tries) if scan is not None else _crop(path, t, tries)
+    vals = [(tt, read(img)) for tt, img in zip(ts, frames)]
     vals = [(tt, v) for tt, v in vals if v is not None]
     if len(vals) < 2:
         return None
@@ -134,12 +149,12 @@ def clock_at(path: str, t: float, tries: int = 5) -> float | None:
     return consensus + 0.5 if values.count(consensus) >= len(values) - 1 else None
 
 
-def calibrate(path: str, ts: list[float]) -> float | None:
+def calibrate(path: str, ts: list[float], scan=None) -> float | None:
     """Second of the FILE at which the scoreboard said 0:00: the median over
     several readings (one wrong reading does not move it)."""
     zeros = []
     for t in ts:
-        c = clock_at(path, t)
+        c = clock_at(path, t, scan=scan)
         if c is not None:
             zeros.append(t - c)
     if not zeros:

@@ -44,7 +44,7 @@ class Clock(unittest.TestCase):
 
     def test_calibrate_ignores_a_misreading(self):
         readings = {10.0: 100.0, 13.0: 103.0, 16.0: 106.0, 19.0: 999.0, 22.0: 112.0}
-        with mock.patch.object(clock, "clock_at", side_effect=lambda p, t: readings[t]):
+        with mock.patch.object(clock, "clock_at", side_effect=lambda p, t, **kw: readings[t]):
             self.assertAlmostEqual(clock.calibrate("x", list(readings)), -90.0)
 
     def test_titles_go_to_the_scoreboard_clock(self):
