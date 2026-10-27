@@ -40,6 +40,21 @@ BEATMAPS_FOLDER = os.path.join(BASE_DIR, "cache", "beatmaps")
 # Competitivo's phase-1 sessions, on disk so they survive a restart of the
 # server (the debug reloader restarts it on every code change).
 SESSIONS_FOLDER = os.path.join(BASE_DIR, "cache", "competitivo", "sessions")
+# Slots per resource (core/scheduler.py): how many jobs use each one at the same
+# time; the rest wait their turn. Override: REELFORGE_SLOTS_<NAME> (e.g.
+# REELFORGE_SLOTS_TWITCH=2 to go back to the old limit). twitch: downloads
+# (Twitch drops sections when there are too many); whisper: the speech model;
+# analysis: the CPU reading of a clip; nvenc: video encodes on the GPU.
+SLOTS = {"twitch": 4, "whisper": 1, "analysis": 2, "nvenc": 2}
+for _name in SLOTS:
+    try:
+        SLOTS[_name] = max(1, int(os.environ.get(f"REELFORGE_SLOTS_{_name.upper()}", SLOTS[_name])))
+    except ValueError:
+        pass
+# Anchors already measured per (VOD, game): a phase 1 repeated for the same game
+# (the daily summary, an edit after a summary, the next day's retry) does not
+# download and read its window again. Temporary: cache/.
+ANCHORS_FOLDER = os.path.join(BASE_DIR, "cache", "competitivo", "anchors")
 # Competitivo's calibration set: real spans of the VODs with the result each
 # detector must give (outside git: they weigh hundreds of MB).
 # Override: REELFORGE_CALIBRATION_FOLDER.

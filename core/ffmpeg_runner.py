@@ -12,7 +12,7 @@ import tempfile
 import threading
 
 import config
-from core import job_manager
+from core import job_manager, scheduler
 
 # Captura "time=HH:MM:SS.xx" y "Duration: HH:MM:SS.xx" del stderr de FFmpeg
 _TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
@@ -233,8 +233,7 @@ def video_encode_flags(crf: int = 18) -> list[str]:
 # 7 edits at once, 4 failed with "Invalid argument (-22)". At most NVENC_MAX
 # encodes run on the GPU at the same time (the rest wait), and one that
 # fails anyway is run again with libx264.
-NVENC_MAX = 3
-NVENC_SLOTS = threading.BoundedSemaphore(NVENC_MAX)
+NVENC_MAX = scheduler.capacity_of("nvenc")      # the "nvenc" slots of core/scheduler.py
 # Counters for the jobs' metrics (competitivo/metrics.py).
 stats = {"nvenc_fallbacks": 0}
 _NVENC_ERRORS = ("nvenc", "encodesession", "(-22)", "error while opening encoder")
@@ -321,7 +320,7 @@ def capture(command: list[str], timeout: float = 300, cwd: str | None = None,
     An NVENC encode waits for a GPU slot and falls back to libx264 (see NVENC_MAX)."""
     if uses_nvenc(command):
         try:
-            with NVENC_SLOTS:
+            with scheduler.slot("nvenc"):
                 return _capture(command, timeout, cwd, stderr)
         except RuntimeError as exc:
             if not nvenc_failed(str(exc)):
@@ -378,7 +377,7 @@ def run(command: list[str], job_id: str, total_duration: float | None = None,
     job_manager.update_job(job_id, status="processing", progress=lo)
     if uses_nvenc(command):
         try:
-            with NVENC_SLOTS:
+            with scheduler.slot("nvenc", job_id):
                 return _run(command, job_id, total_duration, cwd, lo, hi)
         except RuntimeError as exc:
             if not nvenc_failed(str(exc)):
