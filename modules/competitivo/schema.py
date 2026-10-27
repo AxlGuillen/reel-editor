@@ -345,6 +345,109 @@ class CompetitivoParams:
 
 
 @dataclass
+class CardParams:
+    """The player cards of /finish: at the start of a play the clip stops and a card appears
+    over each chosen player's champion (card_plan.py, cards.py). `players` is a free field:
+    the names to highlight, as the request writes them ("Canyon, Rookie"); empty = no cards."""
+    players: list = field(default_factory=list)
+    scope: str = "kills"              # kills: only in the fights where that player made a kill | all: any clip of the game
+    back: str = "auto"                # auto | pareja | campeon | jugador | partida
+    style: str = "splash"             # splash | luxury | plain
+    mode: str = "freeze"              # freeze | slow
+    dur_s: float = 2.0                # how long the clip stops (1.2–4)
+    lead_s: float = 2.0               # the freeze is looked for this long before the fight's first kill
+    scale: float = 1.0                # a multiplier of the card's size
+    pos: dict = field(default_factory=dict)   # {"Canyon": "bar:2" | [x, y]} where the detector did not decide
+    preview: bool = False             # do not render: only the frame of each clip with its bars, to check them
+    photos: dict = field(default_factory=dict)   # {"Canyon": "https://…/canyon.png"}: the photo by link
+    data: dict = field(default_factory=dict)     # {"Canyon": {...}}: anything of the card, see CARD_FIELDS
+
+
+CARD_BACKS = ("auto", "pareja", "campeon", "jugador", "partida")
+CARD_STYLES = ("splash", "luxury", "plain")
+# What `card_data` can set per player (all optional): photo / art / icon are links; the rest are texts. `back`
+# replaces the numbers of the back: {"title": "...", "caption": "...", "rows": [{"big": "4-10", "label": "V-D", "bar": 0.3}]}.
+CARD_FIELDS = ("photo", "art", "icon", "team", "side", "role", "champion", "title", "back")
+
+
+def _json_map(form, key: str) -> dict:
+    raw = form.get(key)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except ValueError:
+        raise ValueError(f"'{key}' va en JSON: {{\"Canyon\": ...}}.")
+    if not isinstance(data, dict):
+        raise ValueError(f"'{key}' va en JSON: {{\"Canyon\": ...}}.")
+    return data
+
+
+def card_data_from(form) -> tuple[dict, dict]:
+    """(photos, data): `card_photos` ({name: link}) and `card_data` ({name: {photo, art, icon, team, side, role,
+    champion, title, back}}), validated. A photo given in both places: card_data wins."""
+    photos = _json_map(form, "card_photos")
+    for name, link in photos.items():
+        if not isinstance(link, str) or not re.match(r"^https?://", link.strip(), re.I):
+            raise ValueError(f"'card_photos': el link de {name} tiene que empezar con http:// o https://.")
+    data = _json_map(form, "card_data")
+    for name, info in data.items():
+        if not isinstance(info, dict):
+            raise ValueError(f"'card_data': lo de {name} va como un objeto {{\"photo\": ...}}.")
+        extra = set(info) - set(CARD_FIELDS)
+        if extra:
+            raise ValueError(f"'card_data': {name} trae campos que no existen ({', '.join(sorted(extra))}); "
+                             f"son: {', '.join(CARD_FIELDS)}.")
+        for key in ("photo", "art", "icon"):
+            if key in info and not re.match(r"^https?://", str(info[key]).strip(), re.I):
+                raise ValueError(f"'card_data': {key} de {name} tiene que ser un link http:// o https://.")
+        if info.get("side") not in (None, "blue", "red"):
+            raise ValueError(f"'card_data': side de {name} es blue o red.")
+        back = info.get("back")
+        if back is not None:
+            rows = back.get("rows") if isinstance(back, dict) else None
+            if not isinstance(rows, list) or not 1 <= len(rows) <= 3 or not all(
+                    isinstance(r, dict) and r.get("big") and r.get("label") for r in rows):
+                raise ValueError(f"'card_data': el dorso de {name} lleva 1 a 3 'rows' con 'big' y 'label'.")
+    return photos, data
+
+
+def cards_from(form) -> CardParams:
+    """cards (names), card_scope, card_back, card_style, card_mode, card_dur_s, card_lead_s, card_scale,
+    card_pos (JSON) and cards_preview."""
+    from modules.competitivo import card_plan
+    names = card_plan.parse_names(form.get("cards"))
+
+    def pick(field_name: str, options: tuple, default: str) -> str:
+        value = str(form.get(field_name) or default).strip().lower()
+        if value not in options:
+            raise ValueError(f"'{field_name}' tiene que ser uno de: {', '.join(options)}.")
+        return value
+    pos = {}
+    raw = form.get("card_pos")
+    if raw:
+        try:
+            pos = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            if not isinstance(pos, dict):
+                raise ValueError
+        except ValueError:
+            raise ValueError("'card_pos' es un JSON {\"Canyon\": \"bar:2\"} o {\"Canyon\": [x, y]}.")
+        for name, where in pos.items():
+            ok = (isinstance(where, str) and re.fullmatch(r"bar:\d+", where)) or (
+                isinstance(where, list) and len(where) == 2 and all(isinstance(v, (int, float)) for v in where))
+            if not ok:
+                raise ValueError(f"'card_pos': la posición de {name} es \"bar:N\" o [x, y].")
+    photos, data = card_data_from(form)
+    return CardParams(
+        players=names, scope=pick("card_scope", ("kills", "all"), "kills"),
+        back=pick("card_back", CARD_BACKS, "auto"), style=pick("card_style", CARD_STYLES, "splash"),
+        mode=pick("card_mode", ("freeze", "slow"), "freeze"),
+        dur_s=_num(form, "card_dur_s", 2.0, 1.2, 4.0, float), lead_s=_num(form, "card_lead_s", 2.0, 0.0, 8.0, float),
+        scale=_num(form, "card_scale", 1.0, 0.5, 1.6, float), pos=pos, preview=_bool(form, "cards_preview"),
+        photos=photos, data=data)
+
+
+@dataclass
 class FinishParams:
     """Fase 2 (/finish): ancla por partida, clips elegidos y retoques del render."""
     anclas: dict[str, float]          # gameId → segundo del VOD de la primera kill
@@ -373,6 +476,7 @@ class FinishParams:
     creator_vod_url: str = ""          # another creator's VOD: its webcam instead of Ibai's (creator.py)
     creator_cam: tuple | None = None   # (x, y, w, h) of its webcam; None = found by itself
     creator_delta_s: float | None = None   # creator_t = ibai_t + this; None = measured
+    cards: CardParams = field(default_factory=CardParams)   # the player cards (see CardParams)
 
     @classmethod
     def desde(cls, base: CompetitivoParams) -> "FinishParams":
@@ -389,7 +493,8 @@ class FinishParams:
             raise ValueError("'zoom_mode' tiene que ser auto, zoom o full.")
         return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base),
                    **_salida(form, base), zoom_mode=mode,
-                   kill_overrides=kill_overrides_from(form.get("kill_overrides")), **creator_from(form))
+                   kill_overrides=kill_overrides_from(form.get("kill_overrides")), cards=cards_from(form),
+                   **creator_from(form))
 
 
 def _anclas_y_clips(form, base: CompetitivoParams) -> tuple[dict[str, float], list[str] | None]:

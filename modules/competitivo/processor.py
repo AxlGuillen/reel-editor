@@ -36,8 +36,8 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager, scheduler
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import (camera, clock, creator, fuente, intro, kills, layout, metrics, salida,
-                                 storyboard, transcript, vocab, voice)
+from modules.competitivo import (camera, card_plan, cards, clock, creator, fuente, intro, kills, layout, metrics,
+                                 salida, stats, storyboard, transcript, vocab, voice)
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -432,6 +432,44 @@ def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
     )
 
 
+def _tournament_stats(job_id: str, sesion: dict) -> dict:
+    """The tournament's games for the cards' backs: the ones in the store plus the games of every
+    saved phase 1 and of this series (their final frame, one call each, only the ones not yet there)."""
+    try:
+        stats.update(list(dict.fromkeys(stats.session_games() + [d["game_id"] for d in sesion["partidas"]])))
+        for d in sesion["partidas"]:
+            if d.get("ganador"):
+                stats.set_winner(d["game_id"], d["ganador"])
+        return stats.load()
+    except Exception as exc:  # noqa: BLE001 - the backs fall back to the game's own numbers
+        print(f"[competitivo] estadísticas del torneo: {str(exc)[:80]}".encode("ascii", "replace").decode())
+        return {}
+
+
+def _freeze_of(plan: "card_plan.Plan", opts, desde: float, dur: float, folder: str) -> "layout.Freeze | None":
+    """The freeze of a clip with its cards drawn: the frames of each card go to `folder`."""
+    t_out = min(max(plan.t - desde, 0.5), max(0.5, dur - 1.0))
+    overlays = []
+    for i, p in enumerate(plan.ok):
+        sub_dir = os.path.join(folder, f"{i}_{cards._plain(p.player)}")
+        cards.render(p.card, sub_dir, opts.dur_s, delay=0.08 * i, style=opts.style)
+        overlays.append(layout.CardOverlay(os.path.join(sub_dir, "f%04d.png"), p.out[0], p.out[1], p.scale))
+    return layout.Freeze(t_out, opts.dur_s, opts.mode, cards=overlays) if overlays else None
+
+
+def _save_preview(job_id: str, clip_id: str, plan: "card_plan.Plan", previews: list[dict]) -> None:
+    """The preview image of a clip (the frame with its bars) in outputs/competitivo/<job>/cards_<clip>.jpg."""
+    import cv2
+    img = card_plan.preview_image(plan)
+    if img is None:
+        previews.append({"clip": clip_id, "image": None, **plan.info()})
+        return
+    folder = os.path.join(TRABAJO, job_id)
+    os.makedirs(folder, exist_ok=True)
+    cv2.imwrite(os.path.join(folder, f"cards_{clip_id}.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    previews.append({"clip": clip_id, "image": f"cards_{clip_id}.jpg", **plan.info()})
+
+
 def finish(job_id: str, fp: FinishParams) -> None:
     sesion = get_session(job_id)
     temp = dest = None
@@ -514,6 +552,12 @@ def finish(job_id: str, fp: FinishParams) -> None:
         skipped: list[str] = []        # clips whose section came without video (twice)
         en_resumen: list[str] = []     # lo que entra al resumen (el clip 1 puede llevar la intro)
         clip_log: list[dict] = []      # per clip: download, wait, analysis and render seconds (the metrics)
+        card_names = fp.cards.players
+        tournament, card_games = None, {d["game_id"]: d for d in sesion["partidas"]}
+        previews: list[dict] = []      # cards_preview: the frame of each clip with its bars
+        if card_names:
+            tournament = _tournament_stats(job_id, sesion)
+            os.makedirs(os.path.join(temp, "cards"), exist_ok=True)
 
         def download(k, c):
             t0 = time.monotonic()
@@ -564,9 +608,17 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     track, full, shots = camera.plan(list(zip(ids, frames)), tracks, fp.zoom, fp.zoom_mode,
                                                      overrides, span=(0.0, dur_tramo))
                     split = sorted(list(split) + full)
+                plan = None
+                if card_names and c["game_id"] in card_games:
+                    plan = card_plan.plan_clip(
+                        tramo, an, t_kill, c, card_games[c["game_id"]], card_names, fp.cards, fp.zoom, split, track,
+                        utc_at=lambda tt: inicio + timedelta(seconds=a + tt - off - ajuste),
+                        caption=fp.fase or "Mundial 2026", tournament=tournament)
+                    if fp.cards.preview:
+                        _save_preview(job_id, c["id"], plan, previews)
             return {"tramo": tramo, "a": a, "ajuste": ajuste, "coinc": coinc, "t_kill": t_kill, "an": an,
                     "split": split, "track": track, "shots": shots, "download_s": download_s, "wait_s": wait_s,
-                    "queue_s": queue_s, "analysis_s": time.monotonic() - t1}
+                    "queue_s": queue_s, "analysis_s": time.monotonic() - t1, "cards": plan}
 
         ex = ThreadPoolExecutor(max_workers=3)
         an_ex = ThreadPoolExecutor(max_workers=1)    # in order: the creator's camera keeps its sync from clip to clip
@@ -595,14 +647,27 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     else:
                         intro_info["placa_s"] = intro.fin_de_placa(voz.D, t_kill - an.vivo_desde,
                                                                    fp.placa_max_s)
+                plan = r["cards"]
+                if fp.cards.preview:                       # only the frames with the bars: nothing is rendered
+                    os.remove(tramo)
+                    continue
+                freeze, cards_info = None, plan.info() if plan else None
+                if plan and plan.ok:
+                    freeze = _freeze_of(plan, fp.cards, an.vivo_desde, dur, os.path.join(temp, "cards", c["id"]))
+                    if freeze and first and modo_intro == "encima" and freeze.t < (voz.D if voz else 0) + 0.5:
+                        freeze = None                       # the intro's plate is on the screen: no cards there
+                        cards_info["notes"].append("La intro está en pantalla en ese momento: sin tarjetas en este clip.")
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
                 t_render = time.monotonic()
                 render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
+                has_audio = ffmpeg_runner.has_audio_stream(tramo) if freeze else True
                 cmd = layout.build_command(tramo, os.path.join(carpeta, archivo), an.vivo_desde, dur,
-                                           an.camara or an.camara_y, split=split, crop_track=track, **render)
+                                           an.camara or an.camara_y, split=split, crop_track=track, freeze=freeze,
+                                           con_audio=has_audio, **render)
                 lo, hi = 5 + int(85 * (k - 1) / n), 5 + int(85 * k / n)
                 con_intro = first and modo_intro == "encima"
-                ffmpeg_runner.run(cmd, job_id, total_duration=dur,
+                held = freeze.dur if freeze else 0.0
+                ffmpeg_runner.run(cmd, job_id, total_duration=dur + held,
                                   progress_range=(lo, (lo + hi) // 2 if con_intro else hi))
                 en_resumen.append(os.path.join(carpeta, archivo))
                 if con_intro:
@@ -613,16 +678,17 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     con = os.path.join(temp, "clip_01_intro.mp4")
                     cmd = layout.build_command(
                         tramo, con, an.vivo_desde, dur, an.camara or an.camara_y, split=split, crop_track=track,
-                        **render,
+                        **render, freeze=freeze,
                         intro=layout.IntroEncima(placa=placa, voz=voz.path, D=voz.D, sting=intro.sting(),
                                                  sting_vol=intro.STING_VOL, voz_filtro=intro.cadena_voz(voz),
                                                  sting_filtro=intro.cadena_sting(voz.D),
                                                  volumen_juego=fp.intro_volumen_juego / 100,
                                                  placa_fin=intro_info["placa_s"]),
                         con_audio=ffmpeg_runner.has_audio_stream(tramo))
-                    ffmpeg_runner.run(cmd, job_id, total_duration=dur, progress_range=((lo + hi) // 2, hi))
+                    ffmpeg_runner.run(cmd, job_id, total_duration=dur + held, progress_range=((lo + hi) // 2, hi))
                     en_resumen[-1] = con
                 job_manager.update_job(job_id, status="processing")
+                dur += held                                # the clip lasts what the freeze added
                 clip_log.append({"id": c["id"], "video_s": round(dur, 1), "download_s": round(r["download_s"], 1),
                                  "wait_s": round(r["wait_s"], 1), "queue_s": round(r["queue_s"], 1),
                                  "analysis_s": round(r["analysis_s"], 1),
@@ -636,6 +702,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     "camera": [sh.as_dict() for sh in shots],
                     "split_camera": [[round(a - an.vivo_desde, 2), round(b - an.vivo_desde, 2)] for a, b in split
                                      if b > an.vivo_desde and a < an.vivo_hasta],
+                    **({"cards": cards_info} if cards_info else {}),
                 })
                 os.remove(tramo)
         finally:
@@ -643,6 +710,14 @@ def finish(job_id: str, fp: FinishParams) -> None:
             ex.shutdown(wait=True, cancel_futures=True)
         run.set(clips_detail=clip_log)
         run.mark("clips")
+        if fp.cards.preview:
+            # The frame of each clip with its bars numbered and who got which: to correct (card_pos) and render.
+            salida.descartar(dest)
+            job_manager.update_job(job_id, status="done", progress=100, stage="esperando_tarjetas", finished=False,
+                                   cards_preview=previews, aviso=None)
+            run.set(preview=True, cards_clips=len(previews))
+            run.finish("paused")
+            return
         if not hechos:
             raise RuntimeError("Ningún tramo del VOD bajó con video (cada uno se intentó dos veces).")
         aviso = (f"Se saltó {'el clip' if len(skipped) == 1 else 'los clips'} "
@@ -704,6 +779,10 @@ def finish(job_id: str, fp: FinishParams) -> None:
         )
         save_session(job_id)
         run.mark("concat")
+        placed = [p for h in hechos for p in (h.get("cards") or {}).get("cards", [])]
+        run.set(cards_asked=len(placed), cards_placed=sum(1 for p in placed if p["where"]),
+                cards_ambiguous=sum(1 for p in placed if p["status"] == "ambiguous"),
+                cards_not_seen=sum(1 for p in placed if p["status"] == "not_seen"))
         run.set(clips=len(hechos), skipped=len(skipped), video_s=duracion_total, intro=modo_intro,
                 warning=bool(aviso), **_shot_counts([s for h in hechos for s in h["camera"]]))
         run.finish("ok")

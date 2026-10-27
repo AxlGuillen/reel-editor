@@ -37,7 +37,7 @@ detecta y el clip arranca después (o termina antes) para no mezclar vistas.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -907,15 +907,128 @@ def build_concat(lista: str, out: str) -> list[str]:
             "-movflags", "+faststart", out]
 
 
+@dataclass
+class CardOverlay:
+    """One card of a freeze: its frames (an image sequence with alpha) and where its canvas goes."""
+    pattern: str                      # "dir/f%04d.png", 60 fps
+    x: int                            # top-left of the canvas in the 1080x1920 output
+    y: int
+    scale: float = 1.0                # the canvas is shown at this size
+
+
+@dataclass
+class Freeze:
+    """The clip stops (or slows) at second `t` of the output to show the cards, then goes on.
+
+    `t` counts from the start of the clip as rendered (the -ss `desde`). The frame is
+    held `dur` s with the sound off ("freeze"); "slow" plays the same stretch of the
+    game at `rate` instead (so the picture and the sound go on, slowly)."""
+    t: float
+    dur: float
+    mode: str = "freeze"              # "freeze" | "slow"
+    rate: float = 0.3                 # "slow": the speed
+    cards: list[CardOverlay] = field(default_factory=list)
+
+
+def output_point(sx: float, sy: float, zoom: float, t: float, split: list[tuple[float, float]] | None = None,
+                 crop_track: list[tuple[float, float]] | None = None) -> tuple[float, float, bool]:
+    """Where a point of the source frame (px of the 1920x1080) falls in the 1080x1920 output at
+    second `t` of the span file: (x, y, visible). The same geometry as the graph: the zoomed
+    crop (its x following `crop_track`) or, inside `split`, the whole clean zone."""
+    jx, jy, jw, jh = JUEGO
+    if split and any(a <= t <= b for a, b in split):
+        x = (sx - jx) * W / jw
+        y = ARRIBA_H + (JUEGO_H - SPLIT_H) // 2 + (sy - jy) * SPLIT_H / jh
+        top, bottom = ARRIBA_H + (JUEGO_H - SPLIT_H) // 2, ARRIBA_H + (JUEGO_H - SPLIT_H) // 2 + SPLIT_H
+    else:
+        cw, ch, cx, cy = geometria(zoom).recorte
+        if crop_track:
+            pts = sorted(crop_track)
+            if t <= pts[0][0]:
+                cx = pts[0][1]
+            elif t >= pts[-1][0]:
+                cx = pts[-1][1]
+            else:
+                for (a, xa), (b, xb) in zip(pts, pts[1:]):
+                    if a <= t < b and b - a > 1e-3:
+                        cx = xa + (xb - xa) * (t - a) / (b - a)
+                        break
+        x = (sx - cx) * W / cw
+        y = ARRIBA_H + (sy - cy) * JUEGO_H / ch
+        top, bottom = ARRIBA_H, ARRIBA_H + JUEGO_H
+    return x, y, bool(0 <= x <= W and top <= y <= bottom)
+
+
+def _with_freeze(filtros: str, audio: str | None, fz: Freeze, first_input: int) -> tuple[str, str | None]:
+    """The graph with the freeze after the layout (so the layout's own time expressions do not
+    move) and the cards over the held frame; the audio goes through the same cut.
+    `audio`: the label of the sound ("[0:a]" / "[aout]") or None when the clip has none.
+    Returns the graph and the label of the new sound."""
+    assert filtros.count("[vout]") == 1
+    one = 1 / 60
+    t, d = fz.t, fz.dur
+    partes = [filtros.replace("[vout]", "[vpre]")]
+    if fz.mode == "slow":
+        src = d * fz.rate                                     # the stretch of game shown slowly
+        partes += [
+            "[vpre]split=3[fa][fb][fc]",
+            f"[fa]trim=end={t:.4f},setpts=PTS-STARTPTS[va]",
+            f"[fb]trim=start={t:.4f}:end={t + src:.4f},setpts=(PTS-STARTPTS)/{fz.rate}[vb]",
+            f"[fc]trim=start={t + src:.4f},setpts=PTS-STARTPTS[vc]",
+        ]
+    else:
+        src = one
+        partes += [
+            "[vpre]split=3[fa][fb][fc]",
+            f"[fa]trim=end={t:.4f},setpts=PTS-STARTPTS[va]",
+            f"[fb]trim=start={t:.4f}:end={t + one:.4f},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={d - one:.4f}[vb]",
+            f"[fc]trim=start={t + one:.4f},setpts=PTS-STARTPTS[vc]",
+        ]
+    partes.append("[va][vb][vc]concat=n=3:v=1:a=0[vfz]")
+    cur = "[vfz]"
+    for k, card in enumerate(fz.cards):
+        i = first_input + k
+        resize = f"scale=iw*{card.scale:.3f}:ih*{card.scale:.3f}:flags=lanczos," if abs(card.scale - 1) > 0.005 else ""
+        partes.append(f"[{i}:v]format=rgba,{resize}setpts=PTS-STARTPTS+{t:.4f}/TB[card{k}]")
+        partes.append(f"{cur}[card{k}]overlay={card.x}:{card.y}:eof_action=pass:repeatlast=0[vcard{k}]")
+        cur = f"[vcard{k}]"
+    partes.append(f"{cur}null[vout]")
+    new_audio = None
+    if audio:
+        fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+        fade = 0.08
+        if fz.mode == "slow":
+            tempo = ffmpeg_runner.atempo_chain(fz.rate)
+            partes += [
+                f"{audio}{fmt},asplit=3[aa][ab][ac]",
+                f"[aa]atrim=end={t:.4f},asetpts=PTS-STARTPTS[a1]",
+                f"[ab]atrim=start={t:.4f}:end={t + src:.4f},asetpts=PTS-STARTPTS,{tempo}[a2]",
+                f"[ac]atrim=start={t + src:.4f},asetpts=PTS-STARTPTS[a3]",
+            ]
+        else:
+            partes += [
+                f"{audio}{fmt},asplit=2[aa][ac]",
+                f"[aa]atrim=end={t:.4f},asetpts=PTS-STARTPTS,afade=t=out:st={max(0.0, t - fade):.4f}:d={fade}[a1]",
+                f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.4f},asetpts=PTS-STARTPTS[a2]",
+                f"[ac]atrim=start={t:.4f},asetpts=PTS-STARTPTS,afade=t=in:st=0:d={fade}[a3]",
+            ]
+        partes.append("[a1][a2][a3]concat=n=3:v=0:a=1[afz]")
+        new_audio = "[afz]"
+    return ";".join(partes), new_audio
+
+
 def build_command(src: str, out: str, desde: float, duracion: float, camara_y: int | tuple,
                   zoom: float = 1.3, color: str = "vivo", marca_path: str | None = None,
                   marca_alto: int = MARCA_ALTO_DEFECTO, intro: IntroEncima | None = None,
                   con_audio: bool = True, split: list[tuple[float, float]] | None = None,
-                  crop_track: list[tuple[float, float]] | None = None) -> list[str]:
+                  crop_track: list[tuple[float, float]] | None = None,
+                  freeze: Freeze | None = None) -> list[str]:
     """Un solo encode por clip: recorte exacto del tramo + layout + watermark.
 
     `intro`: la intro "encima" del clip 1 (placa + voz + ducking del juego).
     `con_audio`: si el tramo trae audio (sin él, con intro suena solo la voz).
+    `freeze`: the clip stops at a second to show the player cards (see Freeze); the
+    clip lasts `freeze.dur` more. Then `con_audio` must say whether the span has sound.
 
     Medido (27/10, 3 tramos): el grafo de filtros es el 95 % del render (12.9 s de 13.6 s
     para 39 s de video; el decode 1.2 s, el encode casi nada), el "vivo" 5 s de ellos
@@ -956,9 +1069,17 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
                                        placa_idx=placa_idx, D=placa_s, split=split,
                                        t0=desde, crop_track=crop_track) + ";" + ";".join(audio)
         amap = "[aout]"
+    filtros = filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto,
+                                              split=split, t0=desde, crop_track=crop_track)
+    if freeze:
+        for card in freeze.cards:
+            cmd += ["-framerate", "60", "-i", card.pattern]
+        sound = "[aout]" if amap == "[aout]" else ("[0:a]" if con_audio else None)
+        filtros, new_sound = _with_freeze(filtros, sound, freeze, idx)
+        if new_sound:
+            amap = new_sound
     cmd += [
-        "-filter_complex", filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto,
-                                                           split=split, t0=desde, crop_track=crop_track),
+        "-filter_complex", filtros,
         "-map", "[vout]", "-map", amap,
         "-r", "60",
         *ffmpeg_runner.video_encode_flags(),

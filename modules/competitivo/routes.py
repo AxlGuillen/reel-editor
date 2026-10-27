@@ -11,20 +11,29 @@ Contrato (también para que Claude lo opere solo; ver CLAUDE.md):
     GET  /download/<job_id>       → resumen.mp4
     GET  /download/<job_id>/<n>   → clip n (1..)
     GET  /frame/<job_id>/<n>      → JPG de control del ancla de la partida n
+    GET  /cards/<job_id>/<clip>   → JPG del cuadro de un clip con sus barras numeradas (cards_preview=1)
+    POST /cards/preview           → la tarjeta de uno o varios jugadores sin renderizar video (cards, card_style,
+                                    card_photos, card_data, [job_id, game_id]) → {cards:[…], image}
+    GET  /cards/sheet/<id>        → el PNG de esa vista previa
+    GET  /cards/styles            → los diseños de tarjeta, sus campos y los roles
+    GET  /stats                   → las estadísticas del torneo guardadas (?player=X&champion=Y: lo que aplica)
+    POST /stats/update            → baja las partidas que faltan (sessions=1, game_ids, discover=1) → 202 {job_id}
     GET  /portada/<job_id>        → portada.jpg (después de /finish)
     GET  /resumenes               → resúmenes guardados (carpeta persistente)
     GET  /resumenes/<ruta>        → un archivo guardado (ruta relativa, con subcarpetas)
 """
 import json
 import os
+import re
 import threading
 
 from flask import Blueprint, jsonify, request, send_file
 
 import config
 from core import file_utils, job_manager, scheduler
-from modules.competitivo import calibration, metrics, presets, processor, salida
-from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
+from modules.competitivo import calibration, card_plan, cards, metrics, presets, processor, salida, stats
+from modules.competitivo.schema import (CARD_BACKS, CARD_FIELDS, CARD_STYLES, CompetitivoParams, EditParams, FinishParams,
+                                        cards_from)
 
 bp = Blueprint("competitivo", __name__, url_prefix="/api/competitivo")
 
@@ -288,7 +297,7 @@ def status(job_id):
         segments=job.get("segments"), vocabulary=job.get("vocabulary"),
         voice_peaks=job.get("voice_peaks"), split_camera=job.get("split_camera"),
         storyboard={k: v for k, v in (job.get("storyboard") or {}).items() if k != "folder"} or None,
-        retryable=bool(job.get("retryable")),
+        retryable=bool(job.get("retryable")), cards_preview=job.get("cards_preview"),
         transcript_job_id=job.get("transcript_job_id"), transcript_jobs=job.get("transcript_jobs"),
     )
 
@@ -327,6 +336,115 @@ def download_clip(job_id, n):
     clip = res["clips"][n - 1]
     return send_file(os.path.join(res["carpeta"], clip["archivo"]), mimetype="video/mp4",
                      as_attachment=True, download_name=f"{res['nombre']} - {clip['archivo']}")
+
+
+@bp.get("/cards/<job_id>/<clip_id>")
+def cards_preview(job_id, clip_id):
+    """The frame of a clip with its health bars numbered and the names enlarged (cards_preview=1)."""
+    if not re.fullmatch(r"[\w-]+", job_id) or not re.fullmatch(r"[\w-]+", clip_id):
+        return jsonify(error="Clip no encontrado."), 404
+    path = os.path.join(processor.TRABAJO, job_id, f"cards_{clip_id}.jpg")
+    if not os.path.isfile(path):
+        return jsonify(error="No hay vista previa de tarjetas para ese clip."), 404
+    return send_file(path, mimetype="image/jpeg", max_age=0)
+
+
+@bp.get("/cards/styles")
+def cards_styles():
+    """Everything the model needs to fill a card: the designs, the fields `card_data` accepts and the backs."""
+    return jsonify(styles=list(CARD_STYLES), backs=list(CARD_BACKS), fields=list(CARD_FIELDS),
+                   roles=sorted(set(cards.ROLES.values())), sides=["blue", "red"],
+                   size={"w": cards.CARD_W, "h": cards.CARD_H})
+
+
+@bp.post("/cards/preview")
+def cards_preview_sheet():
+    """The cards of `cards` as they would come out (front and back of each), without rendering a clip. With a
+    phase 1 (`job_id`, and `game_id` if the series has several games) the names come from its roster; without
+    one, `card_data` has to say team, side, role and champion of each. A photo link that failed comes back as
+    `photo_error`: the card is drawn without it."""
+    form = request.form
+    try:
+        opts = cards_from(form)
+        names = card_plan.parse_names(form.get("cards")) or list((opts.data or {}).keys())
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    if not names:
+        return jsonify(error="Falta 'cards': los nombres de los jugadores."), 400
+    roster, game_id = [], (form.get("game_id") or "").strip()
+    job_id = (form.get("job_id") or "").strip()
+    if job_id:
+        sesion = processor.get_session(job_id)
+        if not sesion:
+            return jsonify(error="Sesión no encontrada. Volvé a generar la propuesta."), 404
+        games = sesion["partidas"]
+        game = next((g for g in games if g["game_id"] == game_id), None) if game_id else games[0]
+        if game is None:
+            return jsonify(error=f"La sesión no tiene la partida {game_id}."), 400
+        roster = card_plan.roster_of(game)
+    found, report = card_plan.preview_cards(names, roster, opts, (form.get("caption") or "").strip())
+    if not found:
+        return jsonify(error="Ninguna de esas tarjetas se pudo armar.", cards=report), 400
+    sheet = cards.sheet(found, opts.style)
+    folder = os.path.join(processor.TRABAJO, "_cards_preview")
+    os.makedirs(folder, exist_ok=True)
+    sheet_id = os.urandom(6).hex()
+    sheet.save(os.path.join(folder, f"{sheet_id}.png"))
+    return jsonify(style=opts.style, cards=report, image=f"/api/competitivo/cards/sheet/{sheet_id}")
+
+
+@bp.get("/cards/sheet/<sheet_id>")
+def cards_sheet(sheet_id):
+    if not re.fullmatch(r"[0-9a-f]{12}", sheet_id):
+        return jsonify(error="Vista previa no encontrada."), 404
+    path = os.path.join(processor.TRABAJO, "_cards_preview", f"{sheet_id}.png")
+    if not os.path.isfile(path):
+        return jsonify(error="Vista previa no encontrada."), 404
+    return send_file(path, mimetype="image/png", max_age=0)
+
+
+@bp.get("/stats")
+def stats_get():
+    """What the store has (games, teams, players) and, with ?player=&champion=, the numbers of the tournament
+    that go on a card's back."""
+    out = {"summary": stats.summary()}
+    player, champion = (request.args.get("player") or "").strip(), (request.args.get("champion") or "").strip()
+    if player or champion:
+        out["lookup"] = stats.lookup(player, champion)
+    return jsonify(**out)
+
+
+@bp.post("/stats/update")
+def stats_update():
+    """Adds the finished games the store does not have yet: game_ids (comma), sessions=1 (every game of the
+    saved phase 1s; the default when nothing else is asked) and discover=1 (the tournament's schedule;
+    needs REELFORGE_LOLESPORTS_KEY) → 202 {job_id}."""
+    f = request.form
+    ids = [x for x in re.split(r"[\s,;]+", f.get("game_ids") or "") if x]
+    if not all(re.fullmatch(r"\d{15,20}", x) for x in ids):
+        return jsonify(error="'game_ids' son números largos separados por coma."), 400
+    flag = lambda k: (f.get(k) or "").strip().lower() in ("1", "true", "on", "yes")  # noqa: E731
+    discover = flag("discover")
+    if discover and not os.environ.get("REELFORGE_LOLESPORTS_KEY"):
+        return jsonify(error="Para 'discover' hace falta la clave pública de lolesports.com en la variable de "
+                             "entorno REELFORGE_LOLESPORTS_KEY."), 400
+    job_id = job_manager.create_job("stats", output_path="")
+    job_manager.update_job(job_id, modo="stats")
+
+    def work():
+        try:
+            games = ids + (stats.session_games() if flag("sessions") or not (ids or discover) else [])
+            if discover:
+                games += stats.discover()
+            job_manager.update_job(job_id, status="processing", progress=5, stage=f"Leyendo {len(set(games))} partidas…")
+            res = stats.update(games, progress=lambda k, n: job_manager.update_job(
+                job_id, progress=5 + int(90 * k / max(1, n))))
+            job_manager.update_job(job_id, status="done", progress=100, stage="listo", finished=True,
+                                   resultado={**res, **stats.summary()})
+        except Exception as exc:  # noqa: BLE001
+            job_manager.update_job(job_id, status="error", error=str(exc))
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify(job_id=job_id), 202
 
 
 @bp.get("/frame/<job_id>/<int:n>")
