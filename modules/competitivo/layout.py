@@ -129,7 +129,12 @@ BARRA_H = _even(BARRA_W * BARRA[3] / BARRA[2])                       # 268
 MARCADOR_H = _even(MARCADOR_W * MARCADOR_VISTA[3] / MARCADOR_VISTA[2])  # 116
 CAMARA_H_OUT = _even(CAMARA_ANCHO * CAMARA_H / CAMARA_W)               # 470
 BARRA_Y = TOP_MARGIN
-ARRIBA_H = BARRA_Y + BARRA_H + GAP_BARRA          # where the gameplay starts (322)
+EXT = config.COMPETITIVO_LAYOUT == "ext"          # no table: the gameplay takes its place
+if EXT:
+    ARRIBA_H = BARRA_Y                             # where the gameplay starts (40)
+    JUEGO_H += BARRA_H + GAP_BARRA                 # 950 → 1232; everything below stays where it was
+else:
+    ARRIBA_H = BARRA_Y + BARRA_H + GAP_BARRA      # where the gameplay starts (322)
 MARCADOR_Y = ARRIBA_H + JUEGO_H + GAP_MARCADOR
 CAMARA_Y_OUT = MARCADOR_Y + MARCADOR_H + GAP_CAMARA
 assert CAMARA_Y_OUT + CAMARA_H_OUT <= H
@@ -687,12 +692,15 @@ def build_filter_complex(camara_y: int | tuple, zoom: float = 1.3, color: str = 
                          marca_alto: int = MARCA_ALTO_DEFECTO,
                          placa_idx: int | None = None, D: float | None = None,
                          camera: bool = True, split: list[tuple[float, float]] | None = None,
-                         t0: str | float = 0, crop_track: list[tuple[float, float]] | None = None) -> str:
+                         t0: str | float = 0, crop_track: list[tuple[float, float]] | None = None,
+                         tabla: bool = True) -> str:
     """filter_complex del layout: entra [0:v] (1920x1080) y, si hay watermark,
     [1:v] (el PNG); sale [vout] 1080x1920 yuv420p.
 
     `camara_y`: the camera box (x, y, w, h) or, the old way, its y.
     `camera=False`: no set camera (the background shows there).
+    `tabla=False`: without the stats table on top (the players' items): the blurred
+    background shows there and every other position stays where it was.
     `split`: [(a, b)] seconds of the SOURCE FILE with Riot's split camera (or
     "full" view: the whole zone); `t0` is where the input starts in that file
     (see _ranges_expr). `crop_track`: [(t, x)] the gameplay crop's x over time
@@ -703,20 +711,22 @@ def build_filter_complex(camara_y: int | tuple, zoom: float = 1.3, color: str = 
     un fade de 0.2 s y sale con otro de 0.3 s. Acá D es lo que dura la PLACA
     (IntroEncima.placa_fin), que puede ser menos que la voz."""
     g = geometria(zoom)
+    tabla = tabla and not EXT
     cw, ch, cx, cy = g.recorte
     kx, ky, kw, kh = camara_y if isinstance(camara_y, tuple) else (CAMARA_X, camara_y, CAMARA_W, CAMARA_H)
     bx, by, bw, bh = BARRA
     mx, my, mw, mh = MARCADOR_VISTA
     jx, jy, jw, jh = JUEGO
     color_f = COLOR[color]
-    n = 4 + bool(camera)
+    n = 3 + bool(tabla) + bool(camera)
     partes = [
-        f"[0:v]split={n}[s_fondo][s_barra][s_juego][s_marcador]" + ("[s_camara]" if camera else ""),
+        f"[0:v]split={n}[s_fondo]" + ("[s_barra]" if tabla else "") + "[s_juego][s_marcador]"
+        + ("[s_camara]" if camera else ""),
         # The whole frame, blurred and darkened: the margins.
         f"[s_fondo]scale=-2:{H // 4},crop={W // 4}:{H // 4},gblur=sigma=10,lutyuv=y=val*{BG_DIM},"
         f"scale={W}:{H}:flags=bilinear,format=yuv420p,setsar=1[fondo]",
-        *_rounded(f"[s_barra]crop={bw}:{bh}:{bx}:{by},scale={BARRA_W}:{BARRA_H}:flags=lanczos,",
-                  BARRA_W, BARRA_H, RADIO_BARRA, "barra"),
+        *(_rounded(f"[s_barra]crop={bw}:{bh}:{bx}:{by},scale={BARRA_W}:{BARRA_H}:flags=lanczos,",
+                   BARRA_W, BARRA_H, RADIO_BARRA, "barra") if tabla else []),
         *_rounded(f"[s_marcador]crop={mw}:{mh}:{mx}:{my},scale={MARCADOR_W}:{MARCADOR_H}:flags=lanczos,",
                   MARCADOR_W, MARCADOR_H, RADIO_MARCADOR, "marcador"),
     ]
@@ -736,7 +746,7 @@ def build_filter_complex(camara_y: int | tuple, zoom: float = 1.3, color: str = 
     else:
         partes.append(f"[s_juego]{zoomed}" + (f",{color_f}" if color_f else "") + ",format=yuv420p[juego]")
     partes += [
-        f"[fondo][barra]overlay={(W - BARRA_W) // 2}:{BARRA_Y}[p1]",
+        f"[fondo][barra]overlay={(W - BARRA_W) // 2}:{BARRA_Y}[p1]" if tabla else "[fondo]null[p1]",
         f"[p1][juego]overlay=0:{ARRIBA_H}[p2]",
         f"[p2][marcador]overlay={(W - MARCADOR_W) // 2}:{MARCADOR_Y}[p3]",
     ]
@@ -1022,7 +1032,7 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
                   marca_alto: int = MARCA_ALTO_DEFECTO, intro: IntroEncima | None = None,
                   con_audio: bool = True, split: list[tuple[float, float]] | None = None,
                   crop_track: list[tuple[float, float]] | None = None,
-                  freeze: Freeze | None = None) -> list[str]:
+                  freeze: Freeze | None = None, tabla: bool = True) -> list[str]:
     """Un solo encode por clip: recorte exacto del tramo + layout + watermark.
 
     `intro`: la intro "encima" del clip 1 (placa + voz + ducking del juego).
@@ -1067,10 +1077,10 @@ def build_command(src: str, out: str, desde: float, duracion: float, camara_y: i
                      f"{LIMITADOR},apad,atrim=0:{duracion:.3f}[aout]")
         filtros = build_filter_complex(camara_y, zoom, color, marca, marca_alto,
                                        placa_idx=placa_idx, D=placa_s, split=split,
-                                       t0=desde, crop_track=crop_track) + ";" + ";".join(audio)
+                                       t0=desde, crop_track=crop_track, tabla=tabla) + ";" + ";".join(audio)
         amap = "[aout]"
     filtros = filtros or build_filter_complex(camara_y, zoom, color, marca, marca_alto,
-                                              split=split, t0=desde, crop_track=crop_track)
+                                              split=split, t0=desde, crop_track=crop_track, tabla=tabla)
     if freeze:
         for card in freeze.cards:
             cmd += ["-framerate", "60", "-i", card.pattern]

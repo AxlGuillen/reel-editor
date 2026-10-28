@@ -34,6 +34,11 @@ THUMBS_FOLDER = os.path.join(BASE_DIR, "cache", "thumbs")
 COMPETITIVO_FOLDER = os.environ.get("REELFORGE_COMPETITIVO_FOLDER") or os.path.join(
     os.path.expanduser("~"), "Videos", "ReelForge", "Competitivo")
 
+# Layout of the competitivo module: "v2" (the stats table on top, as always) or "ext"
+# (no table: the gameplay takes its place, 1080x1232, and the crop follows the action).
+# Read at import time, so it needs a server restart. Override: REELFORGE_COMPETITIVO_LAYOUT.
+COMPETITIVO_LAYOUT = os.environ.get("REELFORGE_COMPETITIVO_LAYOUT", "v2").strip().lower()
+
 # Song analysis (beatmap): cached by file fingerprint, so the same song is not
 # analyzed again for every edit (temporary: cache/).
 BEATMAPS_FOLDER = os.path.join(BASE_DIR, "cache", "beatmaps")

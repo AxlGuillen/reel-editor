@@ -15,11 +15,12 @@ MODOS = {"revisar", "auto"}
 INTRO_MODOS = {"encima", "aparte", "off"}
 VOLUMEN_JUEGO_DEFECTO = round(layout.DUCK_VOL * 100)   # % del juego mientras habla la voz
 # Campos que /finish hereda de la fase 1 si no llegan (render e intro).
-CAMPOS_RENDER = ("zoom", "color", "watermark", "marca_alto")
+CAMPOS_RENDER = ("zoom", "color", "watermark", "marca_alto", "tabla")
 CAMPOS_SALIDA = ("carpeta_dia", "partido", "titulo")
 CAMPOS_INTRO = ("intro_modo", "intro_audio_url", "mapa", "fase", "equipo_azul", "equipo_rojo",
                 "logo_azul_url", "logo_rojo_url", "serie_marcador", "marca_4xl", "intro_volumen_juego",
-                "placa_max_s")
+                "placa_max_s", "portada_estilo", "titular", "pildora", "portada_campeon", "portada_jugador")
+PORTADA_ESTILOS = {"plantilla", "titular"}
 _GAME_ID = re.compile(r"^\d{15,20}$")
 
 
@@ -58,6 +59,7 @@ def _render(form, base: "CompetitivoParams | None" = None) -> dict:
         "color": _color(form, base.color if base else "vivo"),
         "watermark": _marca(form) if form.get("watermark") is not None or not base else base.watermark,
         "marca_alto": _num(form, "marca_alto", base.marca_alto if base else layout.MARCA_ALTO_DEFECTO, 80, 400),
+        "tabla": _bool(form, "tabla", base.tabla if base else True),
     }
 
 
@@ -109,7 +111,30 @@ def _intro(form, base=None) -> dict:
         "intro_volumen_juego": _num(form, "intro_volumen_juego",
                                     b("intro_volumen_juego", VOLUMEN_JUEGO_DEFECTO), 0, 100),
         "placa_max_s": _num(form, "placa_max_s", b("placa_max_s", intro.PLACA_MAX_S), 1, 15, float),
+        "portada_estilo": _portada_estilo(form, b("portada_estilo", "plantilla")),
+        "titular": _titular(form, b("titular", "")),
+        "pildora": _texto(form, "pildora", 50, b("pildora", "")),
+        "portada_campeon": _texto(form, "portada_campeon", 30, b("portada_campeon", "")),
+        "portada_jugador": _texto(form, "portada_jugador", 30, b("portada_jugador", "")),
     }
+
+
+def _portada_estilo(form, default: str) -> str:
+    estilo = (form.get("portada_estilo") or default).strip().lower()
+    if estilo not in PORTADA_ESTILOS:
+        raise ValueError("'portada_estilo' tiene que ser 'plantilla' o 'titular'.")
+    return estilo
+
+
+def _titular(form, default: str) -> str:
+    """El titular de la portada: hasta 3 renglones de 28 caracteres, separados por salto de línea o por «|»."""
+    raw = form.get("titular")
+    if raw is None:
+        return default
+    lines = [" ".join(p.split()) for p in str(raw).replace("|", "\n").splitlines() if p.strip()]
+    if len(lines) > 3 or any(len(ln) > 28 for ln in lines):
+        raise ValueError("'titular' admite hasta 3 renglones de 28 caracteres.")
+    return "\n".join(lines)
 
 
 def _nombre(form, name: str, max_len: int, default: str) -> str:
@@ -272,6 +297,7 @@ class CompetitivoParams:
     color: str = "vivo"
     watermark: str = ""
     marca_alto: int = layout.MARCA_ALTO_DEFECTO
+    tabla: bool = True                 # la tabla de stats (items) de arriba; False = sin ella
     # Intro con voz y portada (ver intro.py). La voz llega hecha, como link de un mp3.
     intro_modo: str = "encima"         # encima | aparte | off
     intro_audio_url: str = ""          # vacío → sin intro (aunque el modo no sea off)
@@ -285,6 +311,12 @@ class CompetitivoParams:
     marca_4xl: bool = False            # el watermark, chico y translúcido, en la portada
     intro_volumen_juego: int = VOLUMEN_JUEGO_DEFECTO   # "encima": el juego (%) mientras habla la voz
     placa_max_s: float = intro.PLACA_MAX_S             # "encima": lo máximo que se ve la placa
+    # Portada con titular (portada_titular.py): el estilo de las portadas del Día 4.
+    portada_estilo: str = "plantilla"                  # plantilla | titular
+    titular: str = ""                                  # hasta 3 renglones
+    pildora: str = ""                                  # la pastilla amarilla
+    portada_campeon: str = ""                          # el arte del campeón (nombre de Data Dragon: «Kaisa»)
+    portada_jugador: str = ""                          # su nombre en la etiqueta del arte
     # Salida organizada (ver salida.py): <carpeta_dia>/<partido>/Mapa N - <titulo>.mp4
     carpeta_dia: str = ""
     partido: str = ""
@@ -456,6 +488,7 @@ class FinishParams:
     color: str
     watermark: str
     marca_alto: int
+    tabla: bool = True
     intro_modo: str = "encima"
     intro_audio_url: str = ""
     mapa: int = 1
@@ -468,11 +501,17 @@ class FinishParams:
     marca_4xl: bool = False
     intro_volumen_juego: int = VOLUMEN_JUEGO_DEFECTO
     placa_max_s: float = intro.PLACA_MAX_S
+    portada_estilo: str = "plantilla"
+    titular: str = ""
+    pildora: str = ""
+    portada_campeon: str = ""
+    portada_jugador: str = ""
     carpeta_dia: str = ""
     partido: str = ""
     titulo: str = ""
     zoom_mode: str = "zoom"            # zoom (as always) | auto | full (camera.py)
     kill_overrides: list = field(default_factory=list)
+    focus: str = ""                    # a player's name: the crop follows his champion (follow.py)
     creator_vod_url: str = ""          # another creator's VOD: its webcam instead of Ibai's (creator.py)
     creator_cam: tuple | None = None   # (x, y, w, h) of its webcam; None = found by itself
     creator_delta_s: float | None = None   # creator_t = ibai_t + this; None = measured
@@ -494,7 +533,7 @@ class FinishParams:
         return cls(anclas=anclas, clips=clips, **_render(form, base), **_intro(form, base),
                    **_salida(form, base), zoom_mode=mode,
                    kill_overrides=kill_overrides_from(form.get("kill_overrides")), cards=cards_from(form),
-                   **creator_from(form))
+                   focus=_texto(form, "focus", 40, ""), **creator_from(form))
 
 
 def _anclas_y_clips(form, base: CompetitivoParams) -> tuple[dict[str, float], list[str] | None]:

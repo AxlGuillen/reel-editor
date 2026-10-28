@@ -36,8 +36,8 @@ import config
 from core import ffmpeg_runner, file_utils, job_manager, scheduler
 from modules.beatmap import processor as beatmap
 from modules.competitivo import edit as edit_plan
-from modules.competitivo import (camera, card_plan, cards, clock, creator, fuente, intro, kills, layout, metrics,
-                                 salida, stats, storyboard, transcript, vocab, voice)
+from modules.competitivo import (camera, card_plan, cards, clock, creator, follow, fuente, intro, kills, layout, metrics,
+                                 portada_titular, salida, stats, storyboard, transcript, vocab, voice)
 from modules.competitivo.schema import CompetitivoParams, EditParams, FinishParams
 from modules.editing import render as editing
 
@@ -417,6 +417,17 @@ def _render_con_respaldo(render, enc: intro.Encuentro, carpeta: str):
         return render(enc, carpeta)
 
 
+def _portada(fp: FinishParams, enc: intro.Encuentro, carpeta: str) -> dict:
+    """The cover: the template, or the one with a headline (portada_titular.py) if asked; if that one fails,
+    the template (a cover never fails the job)."""
+    if fp.portada_estilo == "titular":
+        try:
+            return portada_titular.render(enc, carpeta, fp.titular, fp.pildora, fp.portada_campeon, fp.portada_jugador)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[competitivo] portada con titular: {str(exc)[:80]}".encode("ascii", "replace").decode())
+    return _render_con_respaldo(intro.render_portada, enc, carpeta)
+
+
 def _encuentro(fp: FinishParams, sesion: dict) -> intro.Encuentro:
     """Datos de la portada: lo que mandó Claude/el usuario y, si falta, el feed
     (códigos de equipo del mapa, fecha local de la partida)."""
@@ -504,7 +515,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
         # Portada (siempre) y voz de la intro (si hay link y el modo no es off),
         # ANTES de bajar nada: un link roto o una voz larga fallan enseguida.
         enc = _encuentro(fp, sesion)
-        portada = _render_con_respaldo(intro.render_portada, enc, temp)
+        portada = _portada(fp, enc, temp)
         voz = None
         if fp.intro_modo != "off" and fp.intro_audio_url:
             job_manager.update_job(job_id, stage="Bajando la voz de la intro…")
@@ -597,8 +608,28 @@ def finish(job_id: str, fp: FinishParams) -> None:
                                          temp, f"{k:02d}")
                     scan = layout.Scan(tramo, ("strip", "track"))   # the composite replaced the span
                 split = layout.split_ranges(tramo, scan=scan)      # Riot's split camera: the whole view
-                track, shots = None, []
-                if fp.zoom_mode != "zoom" or overrides:
+                track, shots, followed = None, [], None
+                if fp.focus:
+                    roster = card_plan.roster_of(partidas[c["game_id"]])
+                    entry = card_plan.match_player(fp.focus, roster)
+                    if entry is None:
+                        raise RuntimeError(f"'focus': «{fp.focus}» no juega en la partida {c['game_id']}.")
+                    utc_of = lambda tt: inicio + timedelta(seconds=a + tt - off - ajuste)  # noqa: E731
+                    s_t, s_xy, followed, s_lvl = follow.seed_of(tramo, t_kill - follow.SEED_LEAD_S, entry, roster,
+                                                                partidas[c["game_id"]], utc_of)
+                    if s_xy is not None:
+                        hp_cache: dict[int, float | None] = {}
+
+                        def hp(tt, entry=entry, c=c, utc_of=utc_of, hp_cache=hp_cache):
+                            if int(tt) not in hp_cache:
+                                me = card_plan.api_players(c["game_id"], utc_of(tt)).get(entry["pid"]) or {}
+                                hp_cache[int(tt)] = (me["hp"] / me["maxhp"]
+                                                     if me.get("hp") is not None and me.get("maxhp") else None)
+                            return hp_cache[int(tt)]
+                        track, more = follow.track_player(tramo, an.vivo_desde, an.vivo_hasta, entry, s_t, s_xy,
+                                                          fp.zoom, roster=roster, hp=hp, lvl=s_lvl)
+                        followed = {**followed, **more}
+                if track is None and (fp.zoom_mode != "zoom" or overrides):
                     # Following the action (or the full view where it is not clear).
                     frames = kill_frames(vistos, esp, ajuste, KILL_LEAD_S)
                     ids = [f"{c['id']}#{n_k}" for n_k in range(1, len(frames) + 1)]
@@ -617,7 +648,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     if fp.cards.preview:
                         _save_preview(job_id, c["id"], plan, previews)
             return {"tramo": tramo, "a": a, "ajuste": ajuste, "coinc": coinc, "t_kill": t_kill, "an": an,
-                    "split": split, "track": track, "shots": shots, "download_s": download_s, "wait_s": wait_s,
+                    "split": split, "track": track, "shots": shots, "followed": followed, "download_s": download_s, "wait_s": wait_s,
                     "queue_s": queue_s, "analysis_s": time.monotonic() - t1, "cards": plan}
 
         ex = ThreadPoolExecutor(max_workers=3)
@@ -659,7 +690,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                         cards_info["notes"].append("La intro está en pantalla en ese momento: sin tarjetas en este clip.")
                 job_manager.update_job(job_id, stage=f"Clip {k}/{n}: renderizando…")
                 t_render = time.monotonic()
-                render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto)
+                render = dict(zoom=fp.zoom, color=fp.color, marca_path=marca, marca_alto=fp.marca_alto, tabla=fp.tabla)
                 has_audio = ffmpeg_runner.has_audio_stream(tramo) if freeze else True
                 cmd = layout.build_command(tramo, os.path.join(carpeta, archivo), an.vivo_desde, dur,
                                            an.camara or an.camara_y, split=split, crop_track=track, freeze=freeze,
@@ -703,6 +734,7 @@ def finish(job_id: str, fp: FinishParams) -> None:
                     "split_camera": [[round(a - an.vivo_desde, 2), round(b - an.vivo_desde, 2)] for a, b in split
                                      if b > an.vivo_desde and a < an.vivo_hasta],
                     **({"cards": cards_info} if cards_info else {}),
+                    **({"focus": r["followed"]} if r.get("followed") else {}),
                 })
                 os.remove(tramo)
         finally:
