@@ -45,7 +45,7 @@ def _num(form, name: str, default, lo, hi, cast=int):
 
 
 def _marca(form, name: str = "watermark") -> str:
-    """Nombre de un PNG de assets/watermarks ("" = sin watermark)."""
+    """Nombre de una imagen (PNG, WebP o JPG) de assets/watermarks ("" = sin watermark)."""
     nombre = os.path.basename((form.get(name) or "").strip())
     if nombre and not os.path.isfile(os.path.join(config.WATERMARKS_FOLDER, nombre)):
         raise ValueError(f"No existe el watermark «{nombre}» en assets/watermarks.")

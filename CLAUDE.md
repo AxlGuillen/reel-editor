@@ -30,7 +30,7 @@ reel-editor/
 ├── Iniciar ReelForge.bat       ← Windows: levanta el server y abre el browser
 │
 ├── assets/                     ← Assets PERSISTENTES (versionados, NO los toca "Limpiar archivos")
-│   ├── watermarks/             ← librería de PNG con transparencia (overlay)
+│   ├── watermarks/             ← librería de imágenes para el overlay: PNG o WebP (con transparencia) o JPG (sin ella)
 │   ├── competitivo/            ← fondo_portada.png y sting.mp3 opcionales (intro del módulo competitivo)
 │   ├── players/                ← fotos de los jugadores para las tarjetas (<Nombre>.png|jpg; opcional)
 │   ├── fonts/                  ← fuentes de subtítulos (Poppins Bold/ExtraBold/Black, Anton,
@@ -173,7 +173,7 @@ Compone sobre un video vertical un bloque de texto (principal blanco + secundari
 | `primary_text` / `secondary_text` | string | "" | máx 200 chars; multilínea |
 | `text_size` | int | 55 | 24–140 px |
 | `text_y` | int | 20 | 0–100 (% del alto) |
-| `watermark` | string | "" | nombre del PNG en `assets/watermarks/` |
+| `watermark` | string | "" | nombre de la imagen (PNG, WebP o JPG) en `assets/watermarks/`; un JPG no tiene transparencia, sale con su fondo |
 | `watermark_x` | string | "center" | left / center / right |
 | `watermark_size` | int | 50 | 10–200 (% del ancho; >100 desborda el cuadro) |
 | `watermark_y` | int | 100 | −50–200 (% del alto; permite desbordar el cuadro) |

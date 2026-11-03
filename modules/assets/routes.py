@@ -40,7 +40,7 @@ def upload_watermark():
     if not file.filename:
         return jsonify(error="Nombre de archivo vacío"), 400
     if not config.allowed_watermark_file(file.filename):
-        return jsonify(error="El watermark debe ser un PNG (con transparencia)."), 400
+        return jsonify(error="El watermark debe ser un PNG, WebP o JPG (PNG y WebP guardan la transparencia; un JPG sale con su fondo)."), 400
 
     file_utils.ensure_dirs()
     name = secure_filename(file.filename)

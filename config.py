@@ -143,8 +143,9 @@ FFPROBE_PATH = os.environ.get("FFPROBE_PATH") or _resolve_ffprobe()
 ALLOWED_EXTENSIONS = {"mp4", "mov", "mkv", "avi"}
 # Fuentes de audio para sound_drop: archivos de audio o videos (se extrae su pista).
 ALLOWED_AUDIO_EXTENSIONS = {"mp3", "wav", "m4a", "aac", "ogg"} | ALLOWED_EXTENSIONS
-# Watermarks: PNG con transparencia. Fuentes: solo las que soporta freetype.
-ALLOWED_WATERMARK_EXTENSIONS = {"png"}
+# Watermarks: PNG o WebP (los dos guardan transparencia; JPG no, sale como un rectángulo opaco).
+# Todo pasa por FFmpeg (format=rgba), que lee los tres. Fuentes: solo las que soporta freetype.
+ALLOWED_WATERMARK_EXTENSIONS = {"png", "webp", "jpg", "jpeg"}
 ALLOWED_FONT_EXTENSIONS = {"ttf", "otf"}
 # Imágenes usables como fondo (p. ej. el fondo del segmento 1 en hook_reel).
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
