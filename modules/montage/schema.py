@@ -46,6 +46,12 @@ def allowed_folder(path: str) -> str:
     return real
 
 
+def parse_box(data: dict, default: L.Box | None = None) -> L.Box:
+    """A validated box (`data` over `default`). The studio uses it too, so its
+    preview and the render read a box the same way."""
+    return _box(data, default)
+
+
 def _box(data: dict, default: L.Box | None = None) -> L.Box:
     base = dict((default or L.Box()).__dict__)
     for k, v in (data or {}).items():

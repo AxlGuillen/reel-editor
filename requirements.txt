@@ -18,6 +18,8 @@ scenedetect>=0.6
 opencv-python-headless>=4.8
 # Draws the player cards (modules/competitivo/cards.py): text with the project's fonts, rounded borders, the turn.
 Pillow>=10
+# Validates montaje.json against its contract (docs/contratos/montaje.schema.json): modules/studio.
+jsonschema>=4.20
 # Optional (the edits work without them; /api/editing/options lists what is there):
 #   pip install beat-this          beats and downbeats with a neural network (more accurate)
 #   pip install audio-separator    isolate the vocals to transcribe the lyrics

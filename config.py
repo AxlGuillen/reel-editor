@@ -81,6 +81,16 @@ EDITS_FOLDER = os.environ.get("REELFORGE_EDITS_FOLDER") or os.path.join(
 # Override: REELFORGE_LAYERS_FOLDER.
 LAYERS_FOLDER = os.environ.get("REELFORGE_LAYERS_FOLDER") or os.path.expanduser("~")
 
+# Studio: the montages of Presentations slides over a video (montaje.json and
+# its transcript), PERSISTENT, one folder per base video under EDITS_FOLDER.
+STUDIO_FOLDER = os.path.join(EDITS_FOLDER, "Estudio")
+# Open studio sessions (which video each one edits): they survive a restart.
+STUDIO_SESSIONS_FOLDER = os.path.join(BASE_DIR, "cache", "studio")
+# The local server of Presentations (tools/servidor-local.mjs): its API, the
+# slides in "layer mode" for the preview and the marked script. Only local.
+# Override: REELFORGE_PRESENTATIONS_URL.
+PRESENTATIONS_URL = (os.environ.get("REELFORGE_PRESENTATIONS_URL") or "http://localhost:3125").rstrip("/")
+
 # OPTIONAL external binaries (ncnn-vulkan: run on NVIDIA, AMD, Intel and Mac).
 # Without them the edits still work: slow motion repeats frames and small
 # sources are scaled with lanczos. Override with the full path.

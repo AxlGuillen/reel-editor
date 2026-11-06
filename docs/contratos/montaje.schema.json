@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reelforge.local/contratos/montaje.schema.json",
+  "title": "montaje.json v1",
+  "description": "Un montaje del Estudio de ReelForge: qué láminas de un deck de Presentations van encima de un video base y cuándo. Lo escribe y lo lee la vista «Estudio» (modules/studio); el render lo convierte en las capas de POST /api/montage/process. Las claves van en español: es el contrato del brief del estudio de montaje, compartido con Presentations.",
+  "type": "object",
+  "required": ["version", "base", "deck", "capas"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "base": {
+      "description": "El video base. Al menos uno de job_id, library_clip o archivo. La huella identifica el archivo aunque cambie de nombre o de job.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "job_id": { "type": "string", "pattern": "^[0-9a-f]{6,32}$" },
+        "library_clip": { "type": "string", "minLength": 1, "maxLength": 260 },
+        "archivo": { "type": "string", "minLength": 1, "maxLength": 260 },
+        "huella": { "type": "string", "pattern": "^[0-9a-f]{16,64}$" },
+        "duracion": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "anyOf": [
+        { "required": ["job_id"] },
+        { "required": ["library_clip"] },
+        { "required": ["archivo"] }
+      ]
+    },
+    "deck": {
+      "type": "object",
+      "required": ["desk", "deck"],
+      "additionalProperties": false,
+      "properties": {
+        "desk": { "$ref": "#/$defs/nombre" },
+        "deck": { "$ref": "#/$defs/nombre" },
+        "servidor": { "type": "string", "pattern": "^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]{1,5})?/?$" }
+      }
+    },
+    "caja": {
+      "description": "Caja por omisión de todas las capas: pisa la del manifest.json y la pisa la de cada capa. Omitida = la del manifest.",
+      "$ref": "#/$defs/caja"
+    },
+    "capas": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/capa" }
+    },
+    "subtitulos": { "type": "boolean", "default": false },
+    "render": {
+      "description": "Cómo se piden las láminas a Presentations.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formato": { "enum": ["webm", "mov"] },
+        "fps": { "type": "integer", "minimum": 1, "maximum": 120 }
+      }
+    }
+  },
+  "$defs": {
+    "nombre": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$" },
+    "palabra": {
+      "description": "Una palabra o frase de la transcripción (se compara sin tildes, mayúsculas ni puntuación, y con los números escritos pasados a dígitos) y su n-ésima aparición.",
+      "type": "object",
+      "required": ["palabra"],
+      "additionalProperties": false,
+      "properties": {
+        "palabra": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "n": { "type": "integer", "minimum": 1, "default": 1 }
+      }
+    },
+    "caja": {
+      "oneOf": [
+        { "const": "banda" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "width": { "type": "integer", "minimum": 40, "maximum": 1080 },
+            "x": { "enum": ["center", "left", "right"] },
+            "bottom": { "type": "integer", "minimum": 0, "maximum": 1920 },
+            "mode": { "enum": ["box", "band"] },
+            "y": { "type": "integer", "minimum": 0, "maximum": 1880 },
+            "height": { "type": "integer", "minimum": 40, "maximum": 1920 }
+          }
+        }
+      ]
+    },
+    "capa": {
+      "description": "Una lámina: entra en su ancla (0.1 s antes de la palabra) o en «desde» (segundos); sale en «hasta» (palabra o segundos) o, sin hasta, con las reglas de montage: hasta la siguiente, con tope de 12 s, y pegada a la siguiente si el hueco es menor a 2.5 s.",
+      "type": "object",
+      "required": ["lamina"],
+      "additionalProperties": false,
+      "properties": {
+        "lamina": { "$ref": "#/$defs/nombre" },
+        "ancla": { "$ref": "#/$defs/palabra" },
+        "desde": { "type": "number", "minimum": 0 },
+        "hasta": {
+          "oneOf": [
+            { "$ref": "#/$defs/palabra" },
+            { "type": "number", "minimum": 0 }
+          ]
+        },
+        "caja": { "$ref": "#/$defs/caja" }
+      },
+      "oneOf": [
+        { "required": ["ancla"], "not": { "required": ["desde"] } },
+        { "required": ["desde"], "not": { "required": ["ancla"] } }
+      ]
+    }
+  }
+}
