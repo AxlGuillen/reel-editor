@@ -1,0 +1,132 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-film"/></svg> Estudio</h1>
+  <p class="subtitle">Las láminas de un deck sobre tu video, en vivo: entran solas en su palabra, las movés arrastrando y el render es un clic</p>
+</div>
+
+<section class="card st-setup">
+  <div class="st-steps">
+    <div class="st-step">
+      <span class="st-step-n">1</span>
+      <div class="st-step-body">
+        <span class="st-step-title">Video base</span>
+        <div class="ed-file">
+          <input type="file" id="st-video-file" accept="video/*,.mp4,.mov,.mkv" hidden>
+          <button type="button" id="st-video-btn" class="btn-secondary">Subir video</button>
+          <button type="button" id="st-lib-btn" class="btn-secondary">Elegir de mis capturas</button>
+          <span class="ed-or">o</span>
+          <input id="st-job" class="ed-input st-job" placeholder="job_id de Reel Express">
+          <button type="button" id="st-job-btn" class="btn-secondary">Abrir</button>
+        </div>
+        <p id="st-video-info" class="hint"></p>
+      </div>
+    </div>
+
+    <div class="st-step">
+      <span class="st-step-n">2</span>
+      <div class="st-step-body">
+        <span class="st-step-title">Deck de Presentations</span>
+        <div class="ed-file">
+          <select id="st-deck" class="ed-input st-deck" disabled><option value="">Buscando decks…</option></select>
+        </div>
+        <p id="st-deck-info" class="hint"></p>
+      </div>
+    </div>
+
+    <div class="st-step">
+      <span class="st-step-n">3</span>
+      <div class="st-step-body">
+        <span class="st-step-title">Transcripción por palabra</span>
+        <div class="ed-file">
+          <button type="button" id="st-transcribe-btn" class="btn-secondary" disabled>Transcribir</button>
+          <input type="file" id="st-segments-file" accept=".json,application/json" hidden>
+          <button type="button" id="st-segments-btn" class="btn-secondary" disabled>Cargar transcripción (.json)</button>
+        </div>
+        <p id="st-transcript-info" class="hint">Si el video ya trae transcripción (Reel Express) o la guardaste antes, se usa esa.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="st-actions">
+    <label class="control st-box-ctl"><span>Caja de las láminas</span>
+      <select id="st-box">
+        <option value="deck">La del deck</option>
+        <option value="cumple" selected>Recuadro abajo (706 px, a 14 px del borde)</option>
+        <option value="band">Banda difuminada (como Lux)</option>
+        <option value="custom">Personalizada</option>
+      </select>
+    </label>
+    <label class="control st-box-custom hidden"><span>Ancho <em id="st-width-val">706</em> px</span>
+      <input type="range" id="st-width" min="200" max="1080" step="2" value="706">
+    </label>
+    <label class="control st-box-custom hidden"><span>Margen abajo <em id="st-bottom-val">14</em> px</span>
+      <input type="range" id="st-bottom" min="0" max="900" step="2" value="14">
+    </label>
+    <div class="st-buttons">
+      <button type="button" id="st-auto-btn" class="btn-secondary" disabled>Colocar automáticamente</button>
+      <button type="button" id="st-render-btn" class="btn-primary" disabled>Renderizar</button>
+    </div>
+  </div>
+</section>
+
+<section id="st-studio" class="card st-studio hidden">
+  <div class="st-main">
+    <div class="st-preview">
+      <div id="st-stage" class="st-stage">
+        <div id="st-canvas" class="st-canvas">
+          <video id="st-video" class="st-base" preload="auto" playsinline></video>
+          <div id="st-layers" class="st-layers"></div>
+          <video id="st-render" class="st-base hidden" preload="auto" playsinline></video>
+        </div>
+      </div>
+      <div class="st-transport">
+        <button type="button" id="st-play" class="btn-secondary st-play" aria-label="Reproducir">▶</button>
+        <span id="st-time" class="st-time">0:00.00</span>
+        <div class="st-ab hidden" id="st-ab">
+          <button type="button" data-ab="preview" class="st-ab-btn active">Vista previa</button>
+          <button type="button" data-ab="render" class="st-ab-btn">Render</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="st-side">
+      <div class="st-status">
+        <span id="st-saved" class="st-pill">Sin guardar</span>
+        <span id="st-latency" class="st-pill st-mono hidden"></span>
+        <span id="st-band-note" class="st-pill hidden" title="La banda difuminada se aproxima con CSS; el render la hace exacta con FFmpeg">Banda aproximada</span>
+      </div>
+      <div id="st-selected" class="st-selected">
+        <p class="hint">Tocá una lámina en la línea de tiempo para ver dónde está anclada. Arrastrala sobre otra palabra para moverla; arrastrá su borde derecho para fijar dónde termina.</p>
+      </div>
+      <div id="st-unplaced-wrap" class="st-unplaced hidden">
+        <span class="st-step-title">Sin colocar</span>
+        <div id="st-unplaced"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="st-timeline-head">
+    <span class="st-step-title">Línea de tiempo</span>
+    <label class="st-zoom">Zoom <input type="range" id="st-zoom" min="30" max="260" step="10" value="110"></label>
+  </div>
+  <div id="st-scroll" class="st-scroll">
+    <div id="st-track" class="st-track">
+      <div id="st-ruler" class="st-ruler"></div>
+      <div id="st-words" class="st-words"></div>
+      <div id="st-blocks" class="st-blocks"></div>
+      <div id="st-playhead" class="st-playhead"></div>
+    </div>
+  </div>
+</section>
+
+<div id="st-progress-wrap" class="card hidden">
+  <div class="progress-bar"><div id="st-progress-fill"></div></div>
+  <p id="st-progress-label">Trabajando…</p>
+</div>
+
+<div id="st-result-wrap" class="card card-accent hidden">
+  <p class="success">✓ Render listo</p>
+  <p class="hint st-result-hint">Usá «Vista previa / Render» debajo del reproductor para compararlos en el mismo segundo.</p>
+  <p><a id="st-download-btn" class="btn-primary" download>Descargar</a></p>
+</div>
+
+<div id="st-error-wrap" class="card error hidden"><p id="st-error-msg"></p></div>

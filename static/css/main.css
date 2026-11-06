@@ -1903,3 +1903,115 @@ a:focus:not(:focus-visible) { outline: none; }
 .mt-paused, .mt-cal-known, .mt-cal-missing { color: var(--muted); }
 .mt-toolbar .btn-secondary,
 .mt-cal-head .btn-primary { width: auto; flex: 0 0 auto; margin: 0; }
+
+/* ── Estudio: láminas de Presentations sobre el video, en vivo ─────────────
+   El lienzo de la vista previa mide 1080x1920 (los px de montage) y se escala
+   entero al escenario: la geometría que manda el server (la misma del grafo
+   de FFmpeg) se aplica tal cual, sin convertir unidades. */
+.st-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 18px; margin-bottom: 8px; }
+.st-step { display: flex; gap: 12px; align-items: flex-start; }
+.st-step-n {
+  flex: 0 0 26px; height: 26px; border-radius: var(--r-pill);
+  background: var(--solid); color: var(--on-solid);
+  display: grid; place-items: center; font: 600 12px var(--font-mono);
+}
+.st-step-body { flex: 1; min-width: 0; }
+.st-step-title { display: block; font-size: 12.5px; font-weight: 600; margin: 3px 0 9px; }
+.st-step .ed-file { margin-bottom: 6px; }
+.st-step .hint { margin: 0; }
+.st-job { flex: 1 1 140px; width: auto; font-family: var(--font-mono); }
+.st-deck { flex: 1 1 100%; }
+.st-actions { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; border-top: 1px solid var(--divider); padding-top: 16px; }
+.st-actions .control { margin-bottom: 0; flex: 1 1 200px; max-width: 300px; }
+.st-buttons { display: flex; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+.st-buttons .btn-primary, .st-buttons .btn-secondary { width: auto; margin: 0; padding: 11px 20px; }
+
+.st-main { display: grid; grid-template-columns: minmax(240px, 380px) 1fr; gap: 22px; align-items: start; }
+.st-stage {
+  position: relative; width: 100%; aspect-ratio: 9 / 16; overflow: hidden;
+  border-radius: var(--r-thumb); background: #000; box-shadow: var(--shadow-md);
+}
+.st-canvas { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; transform-origin: 0 0; }
+.st-base { position: absolute; inset: 0; width: 1080px; height: 1920px; object-fit: contain; background: #000; }
+.st-layers { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.st-layer { position: absolute; overflow: hidden; visibility: hidden; }
+/* color-scheme: el del documento del deck. Si el del iframe no coincide (la
+   app en tema oscuro), Chrome pinta un fondo opaco detrás y se pierde el alfa. */
+.st-frame {
+  position: absolute; left: 0; top: 0; width: 1080px; height: 1920px;
+  border: 0; background: transparent; color-scheme: normal;
+  transform-origin: 0 0; pointer-events: none;
+}
+.st-band { filter: blur(22px) brightness(.7); }
+.st-transport { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.st-transport .st-play { width: 44px; height: 40px; margin: 0; padding: 0; font-size: 14px; }
+.st-time { font: 500 13px var(--font-mono); font-variant-numeric: tabular-nums; min-width: 74px; }
+.st-ab { display: inline-flex; background: var(--card-2); border-radius: var(--r-pill); padding: 3px; margin-left: auto; }
+.st-ab-btn {
+  border: 0; background: transparent; color: var(--tertiary); font: 500 12px var(--font-body);
+  padding: 6px 12px; border-radius: var(--r-pill); cursor: pointer;
+}
+.st-ab-btn.active { background: var(--solid); color: var(--on-solid); }
+
+.st-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.st-status { display: flex; gap: 8px; flex-wrap: wrap; }
+.st-pill {
+  font-size: 11.5px; padding: 4px 10px; border-radius: var(--r-pill);
+  background: var(--card-2); color: var(--tertiary);
+}
+.st-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.st-pill.st-mono { background: var(--accent); color: var(--accent-ink); }
+.st-pill.slow { background: var(--err); color: #fff; }
+.st-selected { background: var(--card-2); border-radius: var(--r-md); padding: 14px; }
+.st-selected .hint { margin: 0; }
+.st-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0 0 12px; font-size: 13px; }
+.st-dl dt { color: var(--muted); }
+.st-dl dd { margin: 0; }
+.st-sel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.st-sel-actions .btn-secondary { width: auto; margin: 0; padding: 7px 12px; font-size: 12px; }
+.st-unplaced #st-unplaced { display: flex; gap: 6px; flex-wrap: wrap; }
+.st-chip {
+  border: 1px dashed var(--border-strong); background: var(--card); color: var(--text);
+  font: 500 12px var(--font-mono); padding: 5px 10px; border-radius: var(--r-pill); cursor: pointer;
+}
+.st-chip:hover { background: var(--card-hover); }
+
+.st-timeline-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 8px; }
+.st-timeline-head .st-step-title { margin: 0; }
+.st-zoom { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.st-zoom input { accent-color: var(--text); }
+.st-scroll { overflow-x: auto; overflow-y: hidden; background: var(--card-2); border-radius: var(--r-md); }
+.st-track { position: relative; height: 140px; min-width: 100%; touch-action: pan-x; user-select: none; }
+.st-ruler { position: relative; height: 22px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.st-tick { position: absolute; top: 0; height: 6px; border-left: 1px solid var(--border-strong); }
+.st-tick.major { height: 22px; font: 10px var(--font-mono); color: var(--muted); padding: 6px 0 0 4px; white-space: nowrap; }
+.st-words { position: relative; height: 54px; cursor: pointer; }
+.st-word {
+  position: absolute; top: 4px; font-size: 11.5px; white-space: nowrap; padding: 2px 5px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px; color: var(--tertiary);
+}
+.st-word.low { top: 28px; }
+.st-word.anchor { background: var(--accent); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
+.st-word.target { outline: 2px solid var(--text); outline-offset: 1px; color: var(--text); z-index: 2; }
+.st-blocks { position: relative; height: 60px; border-top: 1px solid var(--border); }
+.st-block {
+  position: absolute; top: 7px; height: 46px; border-radius: var(--r-sm); overflow: hidden;
+  background: var(--solid); color: var(--on-solid); cursor: grab; box-shadow: var(--shadow-md);
+  border: 1px solid var(--on-solid-border); border-left: 3px solid var(--on-solid);
+}
+.st-block.alt { background-color: var(--solid-hover); background-image: var(--halftone); background-size: 6px 6px; }
+.st-block.selected { box-shadow: 0 0 0 2px var(--accent), var(--shadow-md); z-index: 3; }
+.st-block.dragging { cursor: grabbing; opacity: .85; z-index: 4; }
+.st-fade { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, var(--on-solid-fill), transparent); }
+.st-block-label, .st-block-meta { position: relative; display: block; padding: 0 12px 0 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-block-label { font: 600 11px var(--font-mono); margin-top: 7px; }
+.st-block-meta { font-size: 10.5px; color: var(--on-solid-dim); margin-top: 2px; }
+.st-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize; background: var(--on-solid-border); }
+.st-handle.pinned { background: var(--accent); }
+.st-playhead { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--err); pointer-events: none; z-index: 5; }
+.st-result-hint { margin-top: 0; }
+
+@media (max-width: 860px) {
+  .st-main { grid-template-columns: 1fr; }
+  .st-stage { max-width: 340px; margin: 0 auto; }
+}

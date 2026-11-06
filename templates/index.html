@@ -86,6 +86,9 @@
         <button class="nav-item" data-target="view-montage">
           <span class="nav-icon"><svg class="icon"><use href="#i-layers"/></svg></span> Montaje
         </button>
+        <button class="nav-item" data-target="view-studio">
+          <span class="nav-icon"><svg class="icon"><use href="#i-film"/></svg></span> Estudio
+        </button>
         <button class="nav-item" data-target="view-beatmap">
           <span class="nav-icon"><svg class="icon"><use href="#i-activity"/></svg></span> Beatmap
         </button>
@@ -155,6 +158,9 @@
       <section id="view-montage" class="module-view hidden">
         {% include "modules/montage.html" %}
       </section>
+      <section id="view-studio" class="module-view hidden">
+        {% include "modules/studio.html" %}
+      </section>
       <section id="view-beatmap" class="module-view hidden">
         {% include "modules/beatmap.html" %}
       </section>
@@ -205,6 +211,7 @@
   <script src="{{ url_for('static', filename='js/beatmap.js') }}"></script>
   <script src="{{ url_for('static', filename='js/anime_edit.js') }}"></script>
   <script src="{{ url_for('static', filename='js/montage.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/studio.js') }}"></script>
   <script src="{{ url_for('static', filename='js/info.js') }}"></script>
   <script src="{{ url_for('static', filename='js/timeline.js') }}"></script>
   <script src="{{ url_for('static', filename='js/metrics.js') }}"></script>
