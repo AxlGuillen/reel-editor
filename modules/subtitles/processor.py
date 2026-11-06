@@ -375,12 +375,13 @@ def _run_transcription(model, video_path: str, params: SubtitlesParams,
     return _split_long(segments) if batched else segments
 
 
-def transcribe_job(job_id: str, video_path: str, params: SubtitlesParams) -> None:
+def transcribe_job(job_id: str, video_path: str, params: SubtitlesParams,
+                   initial_prompt: str | None = None) -> None:
     """Job de transcripción (fase 1). Guarda los segmentos en el job."""
     try:
         job_manager.update_job(job_id, status="processing", progress=2,
                                stage="Transcribiendo…")
-        segments = transcribe(video_path, params, job_id=job_id)
+        segments = transcribe(video_path, params, job_id=job_id, initial_prompt=initial_prompt)
         job_manager.update_job(job_id, status="done", progress=100, stage=None,
                                segments=segments)
     except Exception as exc:  # noqa: BLE001

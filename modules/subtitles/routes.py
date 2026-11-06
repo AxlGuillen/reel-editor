@@ -47,29 +47,45 @@ def styles_route():
     )
 
 
+MAX_PROMPT_CHARS = 1500
+
+
 @bp.post("/transcribe")
 def transcribe_route():
-    if "video" not in request.files:
-        return jsonify(error="Falta el archivo 'video'."), 400
-    video = request.files["video"]
-    if not video.filename:
-        return jsonify(error="Nombre de video vacío."), 400
-    if not config.allowed_file(video.filename):
-        return jsonify(
-            error=f"Extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"
-        ), 400
-
+    """`video` (upload) or `job_id` of a finished job whose video is already on
+    the server (the studio's session: a 600 MB video is not uploaded twice).
+    `initial_prompt` (optional): Whisper's prompt, to get names right. There
+    is no `hotwords`: on the LeBlanc video they made Whisper loop."""
     try:
         params = SubtitlesParams.from_form(request.form)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+    prompt = (request.form.get("initial_prompt") or "").strip() or None
+    if prompt and len(prompt) > MAX_PROMPT_CHARS:
+        return jsonify(error=f"El prompt de Whisper tiene más de {MAX_PROMPT_CHARS} caracteres."), 400
 
-    video_path = file_utils.save_upload(video)
+    if request.form.get("job_id") and "video" not in request.files:
+        src = job_manager.get_job(request.form["job_id"].strip())
+        video_path = (src or {}).get("output_path") or (src or {}).get("input_path") or ""
+        if not src or src["status"] != "done" or not os.path.isfile(video_path):
+            return jsonify(error="Ese job no terminó o ya no tiene su video."), 400
+    else:
+        if "video" not in request.files:
+            return jsonify(error="Falta el archivo 'video' (o el 'job_id' de un video ya abierto)."), 400
+        video = request.files["video"]
+        if not video.filename:
+            return jsonify(error="Nombre de video vacío."), 400
+        if not config.allowed_file(video.filename):
+            return jsonify(
+                error=f"Extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"
+            ), 400
+        video_path = file_utils.save_upload(video)
     job_id = job_manager.create_job(video_path, output_path="")
 
     thread = threading.Thread(
         target=processor.transcribe_job,
         args=(job_id, video_path, params),
+        kwargs={"initial_prompt": prompt},
         daemon=True,
     )
     thread.start()
