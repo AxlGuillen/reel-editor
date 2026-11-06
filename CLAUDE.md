@@ -57,7 +57,8 @@ reel-editor/
 │   ├── beatmap/                ← Ritmo de una canción: beats, compases, secciones, drop, letra
 │   ├── editing/                ← MOTOR de los edits: EDL → render en dos pasadas (sin routes de proceso)
 │   ├── anime_edit/             ← PIPELINE: pelea de anime + canción → variantes de edit (2 fases)
-│   └── montage/                ← Montaje: capas animadas con alfa sobre un video, por palabra o segundo
+│   ├── montage/                ← Montaje: capas animadas con alfa sobre un video, por palabra o segundo
+│   └── studio/                 ← Estudio: las láminas de un deck de Presentations sobre el video, en vivo
 │
 │   Cada módulo que procesa video tiene los mismos tres archivos:
 │       routes.py      ← Blueprint Flask con sus endpoints
@@ -65,16 +66,18 @@ reel-editor/
 │       schema.py      ← Parámetros y validación del módulo
 │   assets, library y timeline son solo routes.py: no procesan nada. editing es
 │   un motor (edl, timing, effects, titles, render) que usan competitivo y anime_edit.
+│   studio tiene los tres archivos pero no encodea: su render es el de montage.
 │
 ├── cookies/                    ← cookies.txt de yt-dlp. SENSIBLE: gitignored
 ├── cache/thumbs/               ← miniaturas de la librería de clips (temporal)
 ├── cache/beatmaps/             ← análisis de canciones cacheados por huella (temporal)
-├── docs/edits.md               ← beatmap, motor, modo edit, anime_edit y montage en detalle
+├── docs/edits.md               ← beatmap, motor, modo edit, anime_edit, montage y el estudio en detalle
+├── docs/contratos/             ← montaje.schema.json: el contrato del montaje.json del estudio
 │
 ├── tests/                      ← unittest (sin pytest): python -m unittest discover -s tests -t .
 │   ├── synthetic.py            ← canciones y videos sintéticos (tempo y cortes conocidos)
 │   ├── competitivo/            ← detección de peleas (fixture real), layout, sincronía, validación, edit
-│   └── beatmap/ editing/ anime_edit/ montage/
+│   └── beatmap/ editing/ anime_edit/ montage/ studio/
 │
 ├── core/
 │   ├── ffmpeg_runner.py        ← Único lugar que ejecuta FFmpeg + helpers ffprobe
@@ -183,7 +186,7 @@ Compone sobre un video vertical un bloque de texto (principal blanco + secundari
 ### 4. subtitles — `/api/subtitles` (dos fases)
 
 Transcribe el audio con **faster-whisper** y quema subtítulos estilo **karaoke** (palabra activa coloreada) con libass. Flujo:
-- `POST /transcribe` → sube el video, transcribe en thread; el status, al terminar, trae los `segments` (con palabras + timestamps).
+- `POST /transcribe` → sube el video (o `job_id` de un video que ya está en el server, como la sesión del Estudio), transcribe en thread; el status, al terminar, trae los `segments` (con palabras + timestamps). `initial_prompt` opcional: la pista de nombres para Whisper (nunca `hotwords`: en el video de LeBlanc hicieron que Whisper repitiera frases en bucle).
 - El usuario **revisa y corrige** el texto en la UI.
 - `POST /render` → con los segmentos (editados) + estilo, arma un `.ass` y FFmpeg lo quema. Si el texto cambió, los timestamps por palabra se **redistribuyen** proporcional a la longitud.
 
@@ -481,6 +484,36 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
 
 La regla: **el LLM elige momentos y estilo, nunca tiempos.** Los tiempos los calcula el código.
 
+### 12. studio — `/api/studio` (Estudio, sección Edits)
+
+Las láminas de un deck de **Presentations** encima de un video, **viéndolas en vivo**: entran solas en su palabra, se mueven arrastrando y el render es un clic. Es la fase 2 del brief `PKB/proyectos/personales/reel-editor/brief-estudio-de-montaje.md`; la fase 1 (el «modo capa» de `deck-stage.js` y la API local en el puerto 3125) está en el repo de Presentations. **No tiene motor de render propio** ni llama a FFmpeg (salvo ffprobe para la duración): pide las láminas a Presentations y corre `POST /api/montage/process`. El detalle está en [`docs/edits.md`](docs/edits.md).
+
+- **Una sola fuente de tiempos.** Todo cambio va a `POST /api/studio/place`, que traduce `montaje.json` a las capas de montage (`processor.to_specs`) y las resuelve con **`montage.layers.resolve`** (0.1 s antes de la palabra, tope de 12 s, pegar huecos de menos de 2.5 s, fundido entre pegadas). La vista previa y el render reciben las mismas capas: lo comprueba un test.
+- **Dónde entra cada lámina, sin trabajo extra (las reglas):** (1) el guion marcado del deck (`video-out/laminas/guion-marcado.txt`, `⟦lamina:id⟧` antes de la palabra) se alinea con la transcripción (`difflib` sobre palabras normalizadas; Whisper escribe «Liz» por Elise o «16» por dieciséis) y cada marca se vuelve un **ancla en las palabras de la transcripción**: la frase más corta (hasta 4 palabras) que se dice una sola vez, o su n-ésima aparición; (2) si no hay guion, las `palabras` del manifest (`data-palabras`); (3) si no, queda «sin colocar». En LeBlanc: 21 de 21, con 509 de 537 palabras iguales (lo mismo que se logró a mano para CapCut).
+- **El guion también ayuda a Whisper:** sus nombres propios van como `initial_prompt` («Vocabulario: LeBlanc, LeBlunK, …»). **Nunca como `hotwords`**: medido en LeBlanc (6/11), con hotwords Whisper repitió «tienden tienden…» y «Y la de Invictus» ×20; con el prompt solo, 534 palabras limpias y «LeBlanc» bien escrito.
+- **Transcripción:** la del job base (Reel Express), la guardada junto al montaje, un `.json` cargado a mano o, si no hay ninguna, `POST /api/subtitles/transcribe` con `job_id` = la sesión (el video no se sube dos veces).
+- **Vista previa:** un `<video>` con el video base y, encima, un iframe por lámina activa (`<presentations>/<desk>/<deck>/?capa=<id>&alfa=1`). El modo capa entrega la lámina a 1080×1920: el estudio **recorta el panel (1080×1370 desde y = 275, como `laminas.mjs`)** y lo pone donde lo pone el grafo de FFmpeg de montage (`processor.preview_geometry`: el lado escalado redondeado a par como `scale=w:-2`, y x/y bajados a par como el overlay sobre yuv420p, así un recuadro de 706 px centrado cae en x = 186; comprobado contra FFmpeg). En cada `requestAnimationFrame` manda `{tipo:'seek', t: video − inicio}` a cada iframe activo (solo al origen de Presentations, y solo acepta `listo` de ese origen); fundidos y orden de capas como los overlays de montage. Precarga la siguiente y guarda hasta 5 iframes. La banda difuminada es aproximada (CSS `blur`); el render la hace exacta.
+- **Línea de tiempo:** arriba las palabras (las ancladas en lima), abajo un bloque por lámina. Soltar un bloque sobre una palabra lo **ancla a esa palabra** (frase + aparición), no al segundo; arrastrar su borde derecho fija `hasta` (doble clic: vuelve a la regla). Si dos se enciman, vuelve a su lugar con el error de montage. «Movida en N ms» mide desde que se suelta hasta que se ve: **29 ms** con el iframe cargado y **463 ms** cargándolo (LeBlanc, 6/11).
+- **Guardar:** automático en cada cambio, en `EDITS_FOLDER/Estudio/<video> · <huella>/` (`montaje.json` + `transcripcion.json`). La huella (tamaño + primer y último MB) reconoce el mismo video aunque se suba otra vez o con otro nombre, y al abrirlo se carga su montaje.
+- **Renderizar:** `POST <presentations>/api/render {desk, deck, laminas, alfa: webm, fps: 30}` (solo rehace las que cambiaron) → espera su `carpeta` → `POST /api/montage/process` con `job_id` = la sesión, `layers` = las capas de `/place` y `layers_folder` = esa carpeta. Al terminar, el botón **Vista previa / Render** cambia entre los dos en el mismo segundo.
+- **Vista previa = render (LeBlanc, 6/11), 5 cuadros de control** capturados en el navegador: cruce entre dos láminas, animación a la mitad, lámina congelada al final de su animación, hueco sin lámina y la última animándose. Mismo contenido y misma posición (el mejor alineado es 0,0 px); 41 dB sin lámina y 27–33 dB en el panel, por la nitidez de los bordes (lanczos de FFmpeg contra el escalado del navegador) y la compresión VP9 (brillo medio 2/255 más bajo). Al saltar a un punto nuevo, la lámina tarda ~0.5 s en aparecer (carga del iframe).
+- **Sesiones:** cada video abierto es un job terminado (`kind: studio`, `output_path` = el video), así montage y subtitles lo toman como `job_id`. Se guardan en `cache/studio/<id>.json`: si el server se reinicia (el modo debug recarga al cambiar código), `GET /session/<id>` la recupera; la UI lo llama antes de transcribir y antes de montar.
+
+```
+GET  /api/studio/config               → {presentations_url}
+POST /api/studio/open                 video | library_clip | job_id → {studio_id, name, duration, video_url,
+                                        fingerprint, base, folder, segments, montaje}
+GET  /api/studio/session/<id>         → recupera la sesión después de un reinicio
+GET  /api/studio/video/<id>           → el video base (Range)
+GET  /api/studio/script?desk=&deck=   → {script, marks, prompt}: el guion marcado y la pista de Whisper
+POST /api/studio/segments  (JSON)     studio_id, segments → {words}
+POST /api/studio/place     (JSON)     studio_id, montaje, manifest, [script, auto, words]
+                                      → {montaje, layers (con geometry), specs, unplaced, source, alignment, words, ms}
+POST /api/studio/save      (JSON)     studio_id, montaje, [manifest] → {path}
+```
+
+**`montaje.json` v1** (`docs/contratos/montaje.schema.json`, JSON Schema 2020-12; `schema.validate_montaje` lo valida con `jsonschema` al colocar y al guardar, más lo que el schema no sabe: que la lámina exista en el deck y no se repita). Claves en español: es el contrato del brief, compartido con Presentations. `base` (`job_id` | `library_clip` | `archivo`, + `huella`, `duracion`), `deck` (`desk`, `deck`, `servidor`), `caja` (opcional: la caja por omisión de todas las capas, pisa la del manifest; LeBlanc usa la de Cumplelolero, 706 px a 14 px del borde), `capas` (`lamina` + `ancla {palabra, n}` **o** `desde`; `hasta` palabra, segundos u omitido; `caja` propia o `"banda"`), `subtitulos`, `render` (`formato`, `fps`).
+
 ### assets — blueprint de assets persistentes
 
 No procesa video: gestiona la **librería de watermarks** y la **fuente**.
@@ -522,7 +555,7 @@ POST /api/<modulo>/process       → 202 { job_id }   (corre en thread)
 GET  /api/<modulo>/status/<id>   → { status, progress, error, [stage], [segments], [title] }
 GET  /api/<modulo>/download/<id> → archivo (mimetype correcto, as_attachment)
 ```
-`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express`, `hook_reel`, `competitivo` y `anime_edit` usan `/process` + `/finish` (competitivo suma `/edit`, que abre un job nuevo). Global: `POST /api/cleanup` vacía las carpetas temporales.
+`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express`, `hook_reel`, `competitivo` y `anime_edit` usan `/process` + `/finish` (competitivo suma `/edit`, que abre un job nuevo). `studio` no procesa: abre sesiones (`/open`), coloca (`/place`) y guarda (`/save`); su render es el de montage. Global: `POST /api/cleanup` vacía las carpetas temporales.
 
 ---
 
@@ -600,6 +633,9 @@ SLOTS                              # turnos por recurso: {"twitch": 4, "whisper"
                                    # (env REELFORGE_SLOTS_TWITCH, …_WHISPER, …_ANALYSIS, …_NVENC)
 LUTS_FOLDER                        # assets/luts/ (.cube)
 LAYERS_FOLDER                      # raíz de las carpetas de capas del montaje (env REELFORGE_LAYERS_FOLDER, default ~)
+STUDIO_FOLDER                      # EDITS_FOLDER/Estudio: montaje.json + transcripcion.json por video, PERSISTENTE
+STUDIO_SESSIONS_FOLDER             # cache/studio/: las sesiones abiertas del estudio (sobreviven a un reinicio)
+PRESENTATIONS_URL                  # el servidor local de Presentations (env REELFORGE_PRESENTATIONS_URL, default http://localhost:3125)
 RIFE_PATH / REALESRGAN_PATH        # binarios opcionales (env REELFORGE_RIFE / REELFORGE_REALESRGAN o el PATH)
 MAX_UPLOAD_SIZE_MB = 2000
 FFMPEG_PATH   = os.environ.get("FFMPEG_PATH")  or _resolve_ffmpeg()
@@ -619,7 +655,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 17 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 18 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
@@ -641,6 +677,8 @@ Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onD
 - **librosa** (pip) para beatmap y **scenedetect + opencv-python-headless** para los planos de anime_edit (sin scenedetect cae al `scdet` de FFmpeg).
 - **Opcionales** de los edits: `beat-this` (beats con red neuronal), `audio-separator` (voz para la letra), y los binarios `rife-ncnn-vulkan` / `realesrgan-ncnn-vulkan`. `GET /api/editing/options` dice cuáles hay.
 - **Pillow** (pip) para dibujar las tarjetas de jugador (`modules/competitivo/cards.py`).
+- **jsonschema** (pip) para validar el `montaje.json` del Estudio contra su contrato.
+- **El servidor local de Presentations** (`node tools/servidor-local.mjs` en ese repo, puerto 3125) para el Estudio: sin él, la vista lo avisa y no lista decks.
 - **faster-whisper** (pip) para subtitles. La 1ª transcripción descarga el modelo (~1.6 GB turbo). En Mac corre en **CPU** (CTranslate2 no usa Metal/GPU); modelos chicos (small/medium) son más livianos.
 
 ---

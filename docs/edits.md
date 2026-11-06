@@ -219,9 +219,48 @@ GET /api/montage/status/<id> → {status, progress, stage, error, layers: [{file
 GET /api/montage/download/<id>
 ```
 
+## studio — `/api/studio` (Estudio)
+
+La vista «Estudio» (sección Edits) arma un video con las láminas de un deck de Presentations encima, **viéndolo en vivo**, y lo renderiza con montage. Es la fase 2 del brief del estudio de montaje (`PKB/proyectos/personales/reel-editor/brief-estudio-de-montaje.md`). El resumen y la API están en `CLAUDE.md` («12. studio»); acá va cómo se usa y cómo funciona por dentro.
+
+**Flujo (lo que hace Axl):**
+1. **Video base:** subirlo, elegirlo de las capturas o abrir el `job_id` de un Reel Express.
+2. **Deck:** elegirlo de la lista que da Presentations (`node tools/servidor-local.mjs` en ese repo). Las láminas se leen **sin renderizar**.
+3. **Transcripción:** si el video no la trae, «Transcribir» (Whisper con los nombres del guion como pista). Las láminas se colocan solas.
+4. **Ajustar:** reproducir, arrastrar un bloque a otra palabra o su borde derecho para que salga en otra. Todo se guarda solo.
+5. **Renderizar:** pide a Presentations las láminas que cambiaron (webm con alfa, 30 fps) y corre montage. Al terminar, «Vista previa / Render» compara los dos en el mismo segundo.
+
+**Reglas para no hacer trabajo extra** (`modules/studio/processor.py`):
+- **El guion marcado manda.** `video-out/laminas/guion-marcado.txt` (las marcas `⟦lamina:id⟧` antes de la palabra en que entra cada lámina) se lee del servidor de Presentations. Se normaliza igual que montage (sin tildes ni mayúsculas, números escritos a dígitos) y se alinea con la transcripción con `difflib.SequenceMatcher`. Las palabras que Whisper oyó distinto («Liz» por Elise, «Boran» por Boram) se interpolan entre los tramos que sí coinciden.
+- **Cada marca se vuelve un ancla de la transcripción**, no del guion: la frase más corta desde esa palabra (hasta 4) que se dice una sola vez; si ninguna es única, la de 4 con su número de aparición. `montage.layers.find` la devuelve a la misma palabra (lo prueba un test con todas las posiciones). Así un ancla sobrevive a mover otras láminas y a regrabar la voz, mientras la frase siga ahí.
+- **Sin guion:** las `palabras` del manifest (`data-palabras`), la primera aparición después de la lámina anterior. Sin nada: «sin colocar» (botón «＋» para anclarla donde está el cursor).
+- **Whisper:** los nombres propios del guion (palabras con mayúscula que no abren frase, hasta 40) van como `initial_prompt`. Nunca como `hotwords` (ver CLAUDE.md: en LeBlanc hicieron que repitiera frases en bucle).
+
+**Por qué la vista previa coincide con el render:**
+- **Tiempos:** `/place` resuelve con `montage.layers.resolve` y las mismas opciones por omisión de `MontageParams` (fundidos 0.25/0.2, tope 12, adelanto 0.1). El render manda esas mismas capas a `/api/montage/process`. Un test compara las dos rutas (inicio, fin, fundidos y caja) con el mismo montaje.
+- **Geometría:** el modo capa de Presentations dibuja la lámina a 1080×1920, igual que `cuadros.mjs`. El recorte del panel (`1080:1370:0:275`, el de `laminas.mjs`) lo hace el estudio con un contenedor `overflow: hidden` y el iframe escalado y subido 275 px. La caja sale de `processor.preview_geometry`, con los mismos redondeos que FFmpeg:
+  - `scale=w:-2` → el otro lado a par, redondeado;
+  - el overlay sobre yuv420p baja x e y impares a par: un recuadro de 706 px centrado cae en x = 186, no en 187, y la caja del deck (bottom 275) en y = 274. Comprobado con FFmpeg el 6/11.
+- **Animación:** `{tipo:'seek', t}` con `t` = segundo del video − inicio de la capa, en cada cuadro. El modo capa usa el mismo `section.__tl.time(t, false)` que `cuadros.mjs` y lo acota a la duración, así que después de su animación la lámina queda congelada, como el `tpad=stop_mode=clone` del render.
+- **Fundidos y orden:** la opacidad de cada capa sigue el `fade` alfa de montage, y las capas de después van encima, como los overlays encadenados.
+- **Lo que no coincide a propósito:** la banda difuminada (CSS `blur(22px) brightness(.7)` contra `gblur=22` + `eq=-0.3`), marcada en la vista como «Banda aproximada».
+
+**Medido con LeBlanc (Cumplelolero #30, 6/11):**
+- `prereel 242.mp4`, 2:44, 600 MB: se abre en 1 s.
+- Transcripción con la pista: 6–7 s (GPU).
+- Colocación automática: 21 de 21 láminas (509 de 537 palabras del guion iguales a las de Whisper).
+- Mover una lámina: 29 ms con el iframe cargado, 463 ms cargándolo.
+- Render con las láminas ya en la caché de Presentations: montage solo, ~1 min.
+- 5 cuadros de control iguales: misma posición al píxel (el mejor alineado es 0,0); entre 27 y 33 dB en el panel por la nitidez de los bordes y la compresión VP9, y 41 dB sin lámina.
+
+**Pendiente / ideas:**
+- Mostrar el PNG de la lámina mientras carga su iframe: al saltar lejos hay ~0.5 s sin lámina.
+- Estirar el inicio de un bloque (hoy se mueve entero; el final se fija con el borde derecho).
+- Elegir formato y fps del render desde la vista: hoy son `webm` y 30 en `montaje.render`.
+
 ## Tests
 
-`tests/synthetic.py` arma canciones (bombo y hi-hat con tempo conocido) y videos de planos de colores con cortes en segundos conocidos: nada con derechos y sin internet. `tests/beatmap`, `tests/editing`, `tests/competitivo/test_edit.py` (incluye el job completo con el VOD simulado), `tests/anime_edit`, `tests/montage`.
+`tests/synthetic.py` arma canciones (bombo y hi-hat con tempo conocido) y videos de planos de colores con cortes en segundos conocidos: nada con derechos y sin internet. `tests/beatmap`, `tests/editing`, `tests/competitivo/test_edit.py` (incluye el job completo con el VOD simulado), `tests/anime_edit`, `tests/montage`, `tests/studio`.
 
 ## Pendiente / ideas
 
