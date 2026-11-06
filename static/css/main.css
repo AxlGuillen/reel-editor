@@ -2000,6 +2000,10 @@ a:focus:not(:focus-visible) { outline: none; }
   border: 1px solid var(--on-solid-border); border-left: 3px solid var(--on-solid);
 }
 .st-block.alt { background-color: var(--solid-hover); background-image: var(--halftone); background-size: 6px 6px; }
+.st-block.rest {
+  background: transparent; color: var(--muted); box-shadow: none; cursor: default;
+  border: 1px dashed var(--border-strong); border-left: 1px dashed var(--border-strong);
+}
 .st-block.selected { box-shadow: 0 0 0 2px var(--accent), var(--shadow-md); z-index: 3; }
 .st-block.dragging { cursor: grabbing; opacity: .85; z-index: 4; }
 .st-fade { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, var(--on-solid-fill), transparent); }

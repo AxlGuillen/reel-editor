@@ -17,6 +17,9 @@ Where a slide comes in, with no manual work (the rules):
      and each mark becomes an anchor in the transcript's OWN words.
   2. Otherwise, the slide's `palabras` from the manifest (data-palabras).
   3. Otherwise it stays unplaced (the UI lists it).
+  The deck's rest slide (`reposo: true` in the manifest, data-reposo) is not
+  placed: it fills every gap between the others (`fill_rest`), so a deck in
+  the "banda inferior" format never leaves its band empty.
 
 The script also feeds Whisper: its proper names go as `initial_prompt` so the
 names come out right. Never as `hotwords`: measured on the LeBlanc video
@@ -140,6 +143,7 @@ def auto_layers(manifest: list[dict], segments: list[dict] | None, script: str |
     {capas, unplaced: [ids], source: {id: "guion"|"palabras"}, alignment}."""
     tr = L.transcript_words(segments or [])
     words = [w for w, _, _ in tr]
+    manifest = [m for m in manifest if not m.get("reposo")]     # the rest slide is not placed: it fills
     ids = [str(m["id"]) for m in manifest]
     capas, source = {}, {}
     alignment = None
@@ -230,42 +234,89 @@ def to_specs(montaje: dict, manifest: list[dict]) -> list[dict]:
     return specs
 
 
-def resolve(specs: list[dict], segments: list[dict] | None, duration: float) -> list[dict]:
+def resolve(specs: list[dict], segments: list[dict] | None, duration: float,
+            crops: dict[str, str] | None = None) -> list[dict]:
     """The layers' times with montage's own resolver and defaults (the same
-    call MontageParams.resolved_layers makes): what the render will do."""
+    call MontageParams.resolved_layers makes): what the render will do.
+    `crops`: each slide's panel in the deck (the manifest's `recorte`), for
+    the preview geometry. Each layer gets a `key` (the id, or id@start for a
+    slide that appears more than once, like the rest slide)."""
     from modules.montage.schema import MontageParams, parse_box
     defaults = MontageParams(specs=[])
     clean = [{**s, "file": s["id"], "box": parse_box(s.get("box"), defaults.box).__dict__} for s in specs]
     layers = L.resolve(clean, segments, duration, defaults.box, defaults.fade_in_s, defaults.fade_out_s,
                        defaults.max_s, defaults.lead_s)
-    return [{"id": c.label, "start": c.start, "end": c.end, "fade_in": c.fade_in, "fade_out": c.fade_out,
-             "box": dict(c.box.__dict__), "geometry": preview_geometry(dict(c.box.__dict__))}
-            for c in layers]
+    seen: dict[str, int] = {}
+    out = []
+    for c in layers:
+        seen[c.label] = seen.get(c.label, 0) + 1
+        out.append({"id": c.label, "key": c.label if seen[c.label] == 1 else f"{c.label}@{c.start:.3f}",
+                    "start": c.start, "end": c.end, "fade_in": c.fade_in, "fade_out": c.fade_out,
+                    "box": dict(c.box.__dict__),
+                    "geometry": preview_geometry(dict(c.box.__dict__), (crops or {}).get(c.label))})
+    return out
+
+
+REST_MIN_S = 0.3        # a gap shorter than this is not filled (montage needs 0.2 s per layer)
+
+
+def fill_rest(specs: list[dict], layers: list[dict], rest_id: str, rest_box: dict, duration: float) -> list[dict]:
+    """The specs plus the rest slide in every gap the resolved layers leave
+    (before the first, between two, after the last), each one with its exact
+    start and end. Back to back with its neighbours, montage cross-fades them
+    like any two stuck layers and the band is never empty. (A layer followed
+    by a gap keeps its own end: only stuck layers are extended, and those
+    leave no gap.)"""
+    gaps, t = [], 0.0
+    for lay in layers:
+        if lay["start"] - t >= REST_MIN_S:
+            gaps.append((t, lay["start"]))
+        t = max(t, lay["end"])
+    if duration - t >= REST_MIN_S:
+        gaps.append((t, duration))
+    return specs + [{"id": rest_id, "start": round(a, 3), "end": round(b, 3), "box": dict(rest_box)}
+                    for a, b in gaps]
+
+
+def parse_crop(recorte: str | None) -> tuple[int, int, int, int]:
+    """(width, height, x, y) of a slide's panel in the 1080x1920 deck: the
+    manifest's `recorte` ("1080:680:0:1240"), or laminas.mjs's default."""
+    try:
+        w, h, x, y = (int(v) for v in str(recorte).split(":"))
+        if w > 0 and h > 0:
+            return w, h, x, y
+    except (TypeError, ValueError):
+        pass
+    return CROP_W, CROP_H, 0, CROP_Y
 
 
 CROP_W = 1080
 
 
-def preview_geometry(box: dict, out_w: int = 1080, out_h: int = 1920) -> dict:
+def preview_geometry(box: dict, recorte: str | None = None, out_w: int = 1080, out_h: int = 1920) -> dict:
     """Where montage's FFmpeg graph puts a slide, in px of the 1080x1920 frame,
     for the preview's iframe. Same numbers as processor.build_command:
       - scale=w:-2 (or -2:h): the other side rounded to the nearest EVEN px;
       - overlay on yuv420p: x and y go down to even (FFmpeg's normalize_xy),
-        so a centered 706 px slide lands on x = 186, not 187."""
+        so a centered 706 px slide lands on x = 186, not 187.
+    `crop_x`/`crop_y`/`crop_w`/`crop_h`: the panel inside the deck's frame
+    (the iframe shows the whole 1080x1920 deck and the preview crops it)."""
     def xy(v: float) -> int:
         return int(v) & ~1
 
+    cw, ch, cx, cy = parse_crop(recorte)
+    crop = {"crop_x": cx, "crop_y": cy, "crop_w": cw, "crop_h": ch}
     if box.get("mode") == "band":
         h = int(box["height"])
-        w = _even(CROP_W * h / CROP_H)
+        w = _even(cw * h / ch)
         x = {"left": 0, "right": out_w - w}.get(box.get("x", "center"), (out_w - w) / 2)
-        return {"x": xy(x), "y": xy(int(box["y"])), "w": w, "h": h, "scale": h / CROP_H, "band": True,
-                "crop_y": CROP_Y, "band_y": xy(int(box["y"]))}
+        return {"x": xy(x), "y": xy(int(box["y"])), "w": w, "h": h, "scale": h / ch, "band": True,
+                "band_y": xy(int(box["y"])), **crop}
     w = int(box["width"])
-    h = _even(CROP_H * w / CROP_W)
+    h = _even(ch * w / cw)
     x = {"left": 0, "right": out_w - w}.get(box.get("x", "center"), (out_w - w) / 2)
     return {"x": xy(x), "y": xy(out_h - h - int(box.get("bottom", 0))), "w": w, "h": h,
-            "scale": w / CROP_W, "band": False, "crop_y": CROP_Y}
+            "scale": w / cw, "band": False, **crop}
 
 
 def _even(v: float) -> int:

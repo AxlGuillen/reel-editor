@@ -253,6 +253,8 @@ La vista «Estudio» (sección Edits) arma un video con las láminas de un deck 
 - Render con las láminas ya en la caché de Presentations: montage solo, ~1 min.
 - 5 cuadros de control iguales: misma posición al píxel (el mejor alineado es 0,0); entre 27 y 33 dB en el panel por la nitidez de los bordes y la compresión VP9, y 41 dB sin lámina.
 
+**Formato «banda inferior» (Ambessa, 6/11):** el primer montaje (recuadro de 706 px sobre el watermark del campeón) tenía dos capas decorativas encimadas y tapaba la barra de habilidades. Ahora la franja de abajo es del deck: el prereel sale sin watermark y con el ajuste −10 el gameplay ocupa de 297 a 1239, así que queda libre 1080×680 desde y = 1240 (la misma franja que la banda de Lux). El deck la declara (`data-recorte="1080:680:0:1240"`) y el estudio la lee del manifest. La lámina de reposo (`data-reposo`) llena los huecos. Con las láminas ya renderizadas, el montaje completo tardó 21 s.
+
 **Pendiente / ideas:**
 - Mostrar el PNG de la lámina mientras carga su iframe: al saltar lejos hay ~0.5 s sin lámina.
 - Estirar el inicio de un bloque (hoy se mueve entero; el final se fija con el borde derecho).

@@ -23,7 +23,7 @@ const st = {
   words: [],                          // [{i, w, start, end, anchor}]
   montaje: null, layers: [], specs: [], unplaced: [],
   selected: null,
-  views: new Map(),                   // lamina id → {wrap, frame, bgWrap, bgFrame, ready, sent, used}
+  views: new Map(),                   // layer key (id, or id@start for the rest slide) → its iframe(s)
   pps: 110,
   mode: "preview",                    // preview | render
   pendingMeasure: null,               // {id, t0} after a move, until it is on screen
@@ -338,6 +338,7 @@ function renderWords() {
 function anchoredWords() {
   const out = new Map();
   for (const l of st.layers) {
+    if (l.rest) continue;
     const w = wordAt(l.start + LEAD_S);
     const capa = capaOf(l.id);
     if (w && capa && capa.ancla) out.set(w.i, l.id);
@@ -350,6 +351,11 @@ function renderBlocks() {
   lane.innerHTML = st.layers.map((l, k) => {
     const capa = capaOf(l.id) || {};
     const fadeW = Math.min(l.fade_in * st.pps, (l.end - l.start) * st.pps);
+    if (l.rest) {
+      return `<div class="st-block rest" data-key="${l.key}" style="left:${l.start * st.pps}px;` +
+        `width:${Math.max(6, (l.end - l.start) * st.pps)}px" title="Lámina de reposo: llena el hueco sola">` +
+        `<span class="st-block-label">reposo</span></div>`;
+    }
     return `<div class="st-block${st.selected === l.id ? " selected" : ""}${k % 2 ? " alt" : ""}" data-id="${l.id}" ` +
       `style="left:${l.start * st.pps}px;width:${Math.max(6, (l.end - l.start) * st.pps)}px">` +
       `<span class="st-fade" style="width:${fadeW}px"></span>` +
@@ -424,6 +430,7 @@ el("st-selected").addEventListener("click", (e) => {
 // Click on the ruler or the words: seek. Click on a block: select it.
 el("st-track").addEventListener("pointerdown", (e) => {
   const block = e.target.closest(".st-block");
+  if (block && block.classList.contains("rest")) return;
   if (block) return startDrag(e, block);
   const x = e.clientX - el("st-track").getBoundingClientRect().left;
   seek(x / st.pps);
@@ -548,15 +555,15 @@ function syncViews(geometryChanged = false) {
   const t = video.currentTime;
   const wanted = new Set();
   st.layers.forEach((l, k) => {
-    if (l.start <= t + PRELOAD_S && l.end > t - 0.5) wanted.add(l.id);
-    if (l.start > t && (!st.layers[k - 1] || st.layers[k - 1].start <= t)) wanted.add(l.id);
+    if (l.start <= t + PRELOAD_S && l.end > t - 0.5) wanted.add(l.key);
+    if (l.start > t && (!st.layers[k - 1] || st.layers[k - 1].start <= t)) wanted.add(l.key);
   });
-  const ids = new Set(st.layers.map((l) => l.id));
-  for (const [id, v] of st.views) {
-    if (!ids.has(id)) dropView(id);
-    else if (geometryChanged) placeView(v, st.layers.find((l) => l.id === id));
+  const keys = new Set(st.layers.map((l) => l.key));
+  for (const [key, v] of st.views) {
+    if (!keys.has(key)) dropView(key);
+    else if (geometryChanged) placeView(v, st.layers.find((l) => l.key === key));
   }
-  for (const id of wanted) if (!st.views.has(id)) makeView(st.layers.find((l) => l.id === id));
+  for (const key of wanted) if (!st.views.has(key)) makeView(st.layers.find((l) => l.key === key));
   if (st.views.size > MAX_VIEWS) {
     [...st.views.entries()].filter(([id]) => !wanted.has(id))
       .sort((a, b) => a[1].used - b[1].used)
@@ -582,23 +589,25 @@ function makeFrame(id) {
 }
 
 function makeView(layer) {
-  const v = { id: layer.id, ready: false, sent: null, used: performance.now(), frames: [], loaded: new Set() };
+  const v = { id: layer.id, key: layer.key, ready: false, sent: null, used: performance.now(), frames: [],
+              loaded: new Set() };
   v.wrap = document.createElement("div");
   v.wrap.className = "st-layer";
   v.frame = makeFrame(layer.id);
   v.wrap.appendChild(v.frame);
   v.frames.push(v.frame);
-  st.views.set(layer.id, v);
+  st.views.set(layer.key, v);
   placeView(v, layer);
   el("st-layers").appendChild(v.wrap);
 }
 
-/** Crops the deck's 1080x1920 frame to the panel (1080x1370 from y=275, like
- *  laminas.mjs) and puts it where montage's FFmpeg graph puts it. */
+/** Crops the deck's 1080x1920 frame to the slide's panel (its `recorte` in the
+ *  manifest, or 1080x1370 from y=275: what laminas.mjs cuts) and puts it where
+ *  montage's FFmpeg graph puts it. */
 function placeView(v, layer) {
   const g = layer.geometry;
   Object.assign(v.wrap.style, { left: `${g.x}px`, top: `${g.y}px`, width: `${g.w}px`, height: `${g.h}px` });
-  v.frame.style.transform = `translate(0px, ${-g.crop_y * g.scale}px) scale(${g.scale})`;
+  v.frame.style.transform = `translate(${-g.crop_x * g.scale}px, ${-g.crop_y * g.scale}px) scale(${g.scale})`;
   if (g.band && !v.bgWrap) {
     // Montage's band: the slide over a full-width copy of itself, scaled to
     // cover, blurred (gblur sigma 22) and darkened (eq brightness -0.3). CSS
@@ -617,8 +626,8 @@ function placeView(v, layer) {
     v.ready = v.loaded.has(v.frame);
   }
   if (v.bgWrap) {
-    const s = Math.max(1, g.h / 1370);
-    const dx = -(1080 * s - 1080) / 2, dy = -g.crop_y * s - (1370 * s - g.h) / 2;
+    const s = Math.max(1080 / g.crop_w, g.h / g.crop_h);
+    const dx = -g.crop_x * s - (g.crop_w * s - 1080) / 2, dy = -g.crop_y * s - (g.crop_h * s - g.h) / 2;
     Object.assign(v.bgWrap.style, { left: "0px", top: `${g.band_y}px`, width: "1080px", height: `${g.h}px` });
     v.bgFrame.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
   }
@@ -626,12 +635,12 @@ function placeView(v, layer) {
   el("st-band-note").classList.toggle("hidden", !st.layers.some((l) => l.geometry.band));
 }
 
-function dropView(id) {
-  const v = st.views.get(id);
+function dropView(key) {
+  const v = st.views.get(key);
   if (!v) return;
   v.wrap.remove();
   if (v.bgWrap) v.bgWrap.remove();
-  st.views.delete(id);
+  st.views.delete(key);
 }
 
 function clearViews() { for (const id of [...st.views.keys()]) dropView(id); }
@@ -664,7 +673,7 @@ function tick() {
   if (st.mode !== "preview") return;
   syncViews();
   st.layers.forEach((l, k) => {
-    const view = st.views.get(l.id);
+    const view = st.views.get(l.key);
     if (!view) return;
     const on = t >= l.start && t <= l.end;
     let alpha = 0;
@@ -695,8 +704,8 @@ function tick() {
   });
   const m = st.pendingMeasure;
   if (m) {
-    const view = st.views.get(m.id);
     const l = st.layers.find((x) => x.id === m.id);
+    const view = l && st.views.get(l.key);
     const visible = l && t >= l.start && t <= l.end;
     if (!l || (visible && view && view.ready)) {
       const ms = Math.round(performance.now() - m.t0);
@@ -738,7 +747,8 @@ el("st-render-btn").addEventListener("click", async () => {
     progress(1, "Pidiendo las láminas a Presentations…");
     const r = await fetch(`${st.pres}/api/render`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ desk: st.deck.desk, deck: st.deck.deck, laminas: st.layers.map((l) => l.id), alfa: fmt, fps }),
+      body: JSON.stringify({ desk: st.deck.desk, deck: st.deck.deck, alfa: fmt, fps,
+                           laminas: [...new Set(st.layers.map((l) => l.id))] }),
     });
     const job = await r.json();
     if (!r.ok) throw new Error(job.error || `Presentations respondió ${r.status}.`);

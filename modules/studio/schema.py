@@ -15,6 +15,7 @@ SCHEMA_PATH = os.path.join(config.BASE_DIR, "docs", "contratos", "montaje.schema
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 MAX_SCRIPT_CHARS = 60_000
 MAX_SEGMENTS = 5_000
+CROP = re.compile(r"^\d{1,4}:\d{1,4}:\d{1,4}:\d{1,4}$")
 
 
 @lru_cache(maxsize=1)
@@ -52,7 +53,7 @@ def validate_montaje(data, lamina_ids: list[str] | None = None) -> dict:
 
 def validate_manifest(data) -> list[dict]:
     """The deck's slides as the Presentations API returns them (only what the
-    studio reads: id, caja, palabras, dur_anim)."""
+    studio reads: id, caja, palabras, dur_anim, recorte and reposo)."""
     if not isinstance(data, list) or not data:
         raise ValueError("El deck no tiene láminas (data-lamina).")
     out = []
@@ -61,8 +62,12 @@ def validate_manifest(data) -> list[dict]:
             raise ValueError("Una lámina del deck no tiene un id válido.")
         caja = m.get("caja") if isinstance(m.get("caja"), dict) else None
         palabras = [str(p) for p in (m.get("palabras") or []) if str(p).strip()]
+        recorte = m.get("recorte")
+        if recorte is not None and not CROP.match(str(recorte)):
+            raise ValueError(f"La lámina {m['id']} trae un recorte inválido: {recorte!r}.")
         out.append({"id": str(m["id"]), "caja": caja, "palabras": palabras,
-                    "dur_anim": float(m.get("dur_anim") or 0)})
+                    "dur_anim": float(m.get("dur_anim") or 0), "recorte": recorte,
+                    "reposo": bool(m.get("reposo"))})
     return out
 
 

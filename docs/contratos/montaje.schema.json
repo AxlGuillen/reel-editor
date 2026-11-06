@@ -46,6 +46,11 @@
       "items": { "$ref": "#/$defs/capa" }
     },
     "subtitulos": { "type": "boolean", "default": false },
+    "reposo": {
+      "description": "Si el deck tiene una lámina de reposo (data-reposo), llena los huecos entre las demás. false = dejar los huecos con el video base.",
+      "type": "boolean",
+      "default": true
+    },
     "render": {
       "description": "Cómo se piden las láminas a Presentations.",
       "type": "object",

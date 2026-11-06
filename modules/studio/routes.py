@@ -244,12 +244,23 @@ def place_route():
         needs_words = any("word" in s or "end_word" in s for s in specs)
         if needs_words and not segments:
             raise ValueError("Hay láminas ancladas a palabras y todavía no hay transcripción.")
-        layers = P.resolve(specs, segments, float(job["duration"])) if specs else []
+        duration = float(job["duration"])
+        crops = {m["id"]: m["recorte"] for m in manifest if m.get("recorte")}
+        layers = P.resolve(specs, segments, duration, crops) if specs else []
+        # The deck's rest slide fills the gaps (unless the montaje turns it off):
+        # resolved again with it, so the times are the ones the render will use.
+        rest = next((m for m in manifest if m["reposo"]), None)
+        if rest and montaje.get("reposo", True) and specs:
+            rest_box = P.layer_box({}, rest, montaje.get("caja"))
+            specs = P.fill_rest(specs, layers, rest["id"], rest_box, duration)
+            layers = P.resolve(specs, segments, duration, crops)
+            for lay in layers:
+                lay["rest"] = lay["id"] == rest["id"]
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     placed = {c["lamina"] for c in montaje["capas"]}
     return jsonify(montaje=montaje, specs=specs, layers=layers,
-                   unplaced=[i for i in ids if i not in placed],
+                   unplaced=[i for i in ids if i not in placed and not (rest and i == rest["id"])],
                    source=(auto or {}).get("source"), alignment=(auto or {}).get("alignment"),
                    words=P.word_list(segments) if data.get("words") else None,
                    ms=round((time.perf_counter() - t0) * 1000, 1))

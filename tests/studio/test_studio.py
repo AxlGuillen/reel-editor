@@ -164,6 +164,50 @@ class Geometry(unittest.TestCase):
         self.assertEqual(g["x"], 272)
 
 
+class BandFormat(unittest.TestCase):
+    """The "banda inferior" decks: each slide's panel comes in the manifest
+    (`recorte`) and the rest slide (`reposo`) fills the gaps."""
+    BAND = {"width": 1080, "x": "center", "bottom": 0}
+
+    def _manifest(self):
+        return [{"id": i, "caja": self.BAND, "palabras": [], "dur_anim": 2.5, "recorte": "1080:680:0:1240",
+                 "reposo": i == "am-reposo"} for i in ("am-portada", "am-kit", "am-reposo")]
+
+    def test_geometry_from_the_manifest_crop(self):
+        g = P.preview_geometry({**self.BAND, "mode": "box"}, "1080:680:0:1240")
+        self.assertEqual((g["x"], g["y"], g["w"], g["h"], g["crop_y"], g["crop_h"]), (0, 1240, 1080, 680, 1240, 680))
+        g = P.preview_geometry({"width": 540, "x": "center", "bottom": 0, "mode": "box"}, "1080:680:0:1240")
+        self.assertEqual((g["h"], g["scale"]), (340, 0.5))
+        self.assertEqual(P.parse_crop("x"), (1080, 1370, 0, 275))     # without it, laminas.mjs's default
+        self.assertEqual(SC.validate_manifest(self._manifest())[0]["recorte"], "1080:680:0:1240")
+        with self.assertRaises(ValueError):
+            SC.validate_manifest([{**self._manifest()[0], "recorte": "1080x680"}])
+
+    def test_rest_fills_the_gaps_back_to_back(self):
+        manifest = SC.validate_manifest(self._manifest())
+        m = _montaje([{"lamina": "am-portada", "desde": 2, "hasta": 5}, {"lamina": "am-kit", "desde": 10, "hasta": 14}])
+        specs = P.to_specs(m, manifest)
+        first = P.resolve(specs, None, 20, {"am-portada": "1080:680:0:1240"})
+        rest = manifest[2]
+        filled = P.fill_rest(specs, first, "am-reposo", P.layer_box({}, rest, None), 20)
+        self.assertEqual([(s["id"], s["start"], s["end"]) for s in filled[2:]],
+                         [("am-reposo", 0.0, 2.0), ("am-reposo", 5.0, 10.0), ("am-reposo", 14.0, 20.0)])
+        layers = P.resolve(filled, None, 20)
+        keys = [lay["key"] for lay in layers]
+        self.assertEqual(len(set(keys)), len(keys), "a slide that appears several times gets its own key")
+        # No gaps and no overlaps: montage cross-fades each pair (the earlier one stays under the fade).
+        for a, b in zip(layers, layers[1:]):
+            self.assertAlmostEqual(b["start"], a["end"] - b["fade_in"], places=3)
+            self.assertEqual(a["fade_out"], 0.0)
+        # Gaps under 0.3 s are left alone.
+        tight = [{"id": "am-portada", "start": 0.1, "end": 5, "box": self.BAND}]
+        self.assertEqual(P.fill_rest(tight, P.resolve(tight, None, 5.2), "am-reposo", self.BAND, 5.2), tight)
+
+    def test_rest_is_never_placed(self):
+        auto = P.auto_layers(SC.validate_manifest(self._manifest()), _segments(), SCRIPT)
+        self.assertNotIn("am-reposo", [c["lamina"] for c in auto["capas"]] + auto["unplaced"])
+
+
 class Contract(unittest.TestCase):
     def test_brief_example(self):
         example = {"version": 1, "base": {"job_id": "85567968bac0"},
