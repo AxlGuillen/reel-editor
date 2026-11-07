@@ -25,8 +25,21 @@ FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen f
 # (white every `every` frames for `dur`) and glow (a bloom pulse).
 # follow (phase 5): an image that follows a tracked point (motion.subject),
 # `track` = [[t, x, y, w], …] in output seconds and px.
+# Effects bank 2: speedlines (anime speed lines toward x/y or along `angle`),
+# impactframe (the frame as a high-contrast b/w, inverted or posterized
+# drawing), spin (the frame turns `degrees` with mirrored borders), zoomblur
+# (radial blur from the center), glitch (blocks, vhs or flicker), echo
+# (ghost trail of the last frames), grain, satpulse (saturation swell),
+# overlay (a light leak / embers file blended over), lens (barrel distortion
+# + radial chromatic aberration) and tilt (a 3D perspective tilt).
 EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black", "panel",
-               "invert", "strobe", "glow", "follow")
+               "invert", "strobe", "glow", "follow",
+               "speedlines", "impactframe", "spin", "zoomblur", "glitch", "echo", "grain", "satpulse",
+               "overlay", "lens", "tilt")
+EVENT_STYLES = {"speedlines": ("radial", "parallel"), "impactframe": ("bw", "inv", "poster"),
+                "glitch": ("blocks", "vhs", "flicker"), "overlay": ("screen", "add", "normal"),
+                "tilt": ("left", "right", "up", "down")}
+SPLIT_LAYOUTS = ("top_bottom", "left_right", "diagonal")
 FLASH_SHAPES = ("pulse", "mix")   # pulse: brightness that decays · mix: a flat mix toward white
 PANEL_BOX = (1040 / 1080, 1700 / 1920)   # the panel fits in this fraction of the frame (rules v1.0)
 TEXT_STYLES = ("word", "kill", "multikill", "title", "sub")
@@ -74,6 +87,10 @@ class Segment:
     # With RIFE: drop the repeated drawings (anime on twos/threes) before
     # interpolating, so the invented frames move between real drawings.
     dedupe: bool = False
+    # Split screen: a second source shown at the same time, {"source": path,
+    # "start": s (the instant shown at the shot's start), "layout":
+    # top_bottom | left_right | diagonal}. Both run at the shot's speed.
+    split: dict | None = None
 
     @property
     def dur(self) -> float:
@@ -113,6 +130,14 @@ class Event:
     track: list = field(default_factory=list)
     opacity: float = 0.93
     fade: float = 0.12
+    # effects bank 2 (see EVENT_STYLES): the variant, a shake's blur along its
+    # axis (px in a 1920-wide frame), a spin's turn, a lens' radial chromatic
+    # aberration (fraction of the frame) and a seed for the random looks.
+    style: str = ""
+    blur: float = 0.0
+    degrees: float = 360.0
+    ca: float = 0.0
+    seed: int = 0
 
 
 @dataclass
@@ -181,6 +206,12 @@ class Edl:
                 raise ValueError(f"El plano {i} no tiene piezas.")
             if s.tint not in TINT_KINDS:
                 raise ValueError(f"Tono desconocido en el plano {i}: {s.tint!r}.")
+            if s.split is not None:
+                if not os.path.isfile(str(s.split.get("source", ""))):
+                    raise ValueError(f"No existe la segunda fuente de la pantalla dividida del plano {i}.")
+                if s.split.get("layout", "top_bottom") not in SPLIT_LAYOUTS:
+                    raise ValueError(f"Pantalla dividida del plano {i}: layout {s.split.get('layout')!r}. "
+                                     f"Opciones: {', '.join(SPLIT_LAYOUTS)}.")
             if s.mblur is not None and not (isinstance(s.mblur, dict) and 0 < float(s.mblur.get("amount", 0)) <= 200):
                 raise ValueError(f"El desenfoque de movimiento del plano {i} es {{angle, amount (1–200 px)}}.")
             for p in s.pieces:
@@ -193,6 +224,14 @@ class Edl:
                 raise ValueError(f"Evento desconocido: {e.kind!r}.")
             if e.kind == "flash" and e.shape not in FLASH_SHAPES:
                 raise ValueError(f"Forma de destello desconocida: {e.shape!r}.")
+            if e.kind in EVENT_STYLES and e.style and e.style not in EVENT_STYLES[e.kind]:
+                raise ValueError(f"Estilo desconocido para {e.kind}: {e.style!r}. "
+                                 f"Opciones: {', '.join(EVENT_STYLES[e.kind])}.")
+            if e.kind in ("speedlines", "impactframe", "spin", "zoomblur", "glitch", "echo", "grain",
+                          "satpulse", "overlay", "lens", "tilt") and e.dur <= 0:
+                raise ValueError(f"El evento {e.kind} en {e.t:.2f} s no dura nada.")
+            if e.kind == "overlay" and (not e.image or not os.path.isfile(e.image)):
+                raise ValueError(f"No existe el archivo del overlay: {e.image or '(vacío)'}")
             if e.kind == "strobe" and not 2 <= e.every <= 8:
                 raise ValueError("El estrobo va de un cuadro blanco cada 2 a cada 8 ('every').")
             if e.kind in ("invert", "strobe", "glow") and e.dur <= 0:
@@ -234,7 +273,11 @@ class Edl:
                         **({"track_points": len(e.track)} if e.kind == "follow" else {}),
                         **({"angle": round(e.angle, 1)} if e.angle is not None else {}),
                         **({"dur": round(e.dur, 3)} if e.kind in ("invert", "strobe", "glow") else {}),
-                        **({"every": e.every} if e.kind == "strobe" else {})}
+                        **({"every": e.every} if e.kind == "strobe" else {}),
+                        **({"style": e.style} if e.style else {}),
+                        **({"dur": round(e.dur, 3)} if e.kind in ("speedlines", "impactframe", "spin", "zoomblur",
+                                                                    "glitch", "echo", "grain", "satpulse",
+                                                                    "overlay", "lens", "tilt") else {})}
                        for e in self.events],
             **({"video_fade_out": self.video_fade_out} if self.video_fade_out else {}),
             "music_gain": [[round(t, 3), round(g, 3)] for t, g in self.music_gain],

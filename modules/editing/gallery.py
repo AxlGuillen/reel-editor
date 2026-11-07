@@ -36,6 +36,19 @@ def _defaults(effect: dict) -> dict:
             if isinstance(v, dict) and "default" in v and v["default"] is not None}
 
 
+OVERLAY_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".webm")
+
+
+def overlay_asset() -> str:
+    """The first asset of assets/overlays/ (for the overlay's gallery clip), or ""."""
+    folder = os.path.join(config.ASSETS_FOLDER, "overlays")
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.lower().endswith(OVERLAY_EXTENSIONS))
+    except OSError:
+        return ""
+    return os.path.join(folder, names[0]) if names else ""
+
+
 def map_hints(source: str, start: float) -> dict:
     """Angle and action center around EFFECT_AT from the motion map (or {})."""
     try:
@@ -59,14 +72,19 @@ def variant(effect: dict, source: str, start: float, hints: dict, vf: str = "") 
     angle = hints.get("angle")
     if effect["stage"] == "output":
         kind = effect.get("event", effect["id"])
-        kw = {k: v for k, v in p.items() if k in ("intensity", "dur", "level", "attack", "decay", "every")}
+        kw = {k: v for k, v in p.items() if k in ("intensity", "dur", "level", "attack", "decay", "every", "style",
+                                                   "degrees", "ca", "blur", "seed", "fade", "opacity", "angle")}
         kw.update(effect.get("fixed", {}))
-        if kind in ("zoom", "push", "hold") and hints:
+        if kind in ("zoom", "push", "hold", "speedlines") and hints:
             kw.update(x=hints["x"], y=hints["y"])
-        if kind in ("shake", "whip") and angle is not None:
+        if kind in ("shake", "whip", "speedlines") and angle is not None:
             kw["angle"] = angle
         if kind in ("panel", "follow"):
             return None                       # they need an image (and follow a track)
+        if kind == "overlay":
+            kw["image"] = overlay_asset()
+            if not kw["image"]:
+                return None                   # no asset in assets/overlays yet
         if kind == "push":
             events.append(Event(0.2, kind, **kw))
         else:
@@ -77,6 +95,14 @@ def variant(effect: dict, source: str, start: float, hints: dict, vf: str = "") 
         hit = start + EFFECT_AT
         seg.pieces = timing.hit_ramp(start, hit, start + GALLERY_DUR * 0.8, GALLERY_DUR, EFFECT_AT,
                                      "constant", "breathe")
+    elif effect["id"] == "velocity":
+        seg.pieces = timing.velocity(start, start + GALLERY_DUR * 0.9, GALLERY_DUR, p.get("shape", "rise"))
+    elif effect["id"] == "velocity_hit":
+        hit = start + EFFECT_AT
+        seg.pieces = timing.velocity_hit(start, hit, start + GALLERY_DUR * 0.8, GALLERY_DUR, EFFECT_AT)
+    elif effect["id"] == "split":
+        # the same take, 0.6 s later, in the other half: shows the layout
+        seg.split = {"source": source, "start": start + 0.6, "layout": p.get("layout", "top_bottom")}
     else:
         return None                           # dedupe: only visible with RIFE
     return Edl([seg], width=W, height=H, fps=FPS, events=events, look="neutral", fade_out=0)
@@ -101,7 +127,7 @@ def sheet(clips: list[tuple[str, str]], out: str) -> str:
     d = ImageDraw.Draw(im)
     font = _font(15)
     for i, (name, path) in enumerate(clips):
-        k = round(EFFECT_AT * FPS) + (2 if name not in ("push", "ramp") else 20)
+        k = round(EFFECT_AT * FPS) + (2 if name not in ("push", "ramp", "velocity", "velocity_hit", "split") else 20)
         raw = ffmpeg_runner.capture(motion.decode_command(path, k, 1, FPS, tw, th), timeout=120)
         frame = Image.frombytes("RGB", (tw, th), raw[:tw * th * 3], "raw", "BGR")
         x, y = 6 + (i % cols) * (tw + 6), 6 + (i // cols) * (th + 30)

@@ -183,7 +183,7 @@ def panel(src: str, img: str, dst: str, e: Event, fps: int) -> str:
     YUV tv range equals multiplying R, G and B) and the panel goes on top."""
     a, b = frames_of(e.t, e.dur, fps)
     on = f"between(n,{a},{b})"
-    if e.kind == "follow":                     # the same overlay, no darkening
+    if e.kind in ("follow", "speedlines"):     # the same overlay, no darkening
         return f"[{src}][{img}]overlay=x=0:y=0:enable='{on}'[{dst}]"
     return (f"[{src}]drawbox=x=0:y=0:w=iw:h=ih:color=black@{_f(1 - e.dim)}:t=fill:enable='{on}'[{img}d];"
             f"[{img}d][{img}]overlay=x=0:y=0:enable='{on}'[{dst}]")   # eof_action=pass dropped the last frame

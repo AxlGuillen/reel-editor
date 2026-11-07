@@ -72,6 +72,65 @@ def follow_frames(e, width: int, height: int, fps: int, folder: str) -> str:
     return pattern
 
 
+SPEEDLINES = 90               # lines per frame at intensity 1
+
+
+def speedline_frames(e, width: int, height: int, fps: int, folder: str) -> str:
+    """Anime speed lines, redrawn every frame (they flicker, like the drawn
+    ones). radial: wedges from beyond the frame's edge toward (x, y) (fractions
+    of the frame), leaving a clear disk around it; parallel: thin streaks
+    along `angle`. White, fading in and out over `fade`; the random layout
+    comes from the frame number and the seed (same edit, same lines)."""
+    import math
+    import random
+    from PIL import ImageDraw
+    a, b = effects.frames_of(e.t, e.dur, fps)
+    n = b - a + 1
+    style = e.style or "radial"
+    key = hashlib.sha1(f"sl|{width}x{height}|{fps}|{a}|{n}|{style}|{e.x}|{e.y}|{e.angle}|{e.intensity}|"
+                       f"{e.seed}|{e.fade}".encode()).hexdigest()[:12]
+    sub = os.path.join(folder, f"speedlines_{key}")
+    pattern = os.path.join(sub, "f_%04d.png")
+    if os.path.isfile(os.path.join(sub, f"f_{n - 1:04d}.png")):
+        return pattern
+    os.makedirs(sub, exist_ok=True)
+    cx, cy = e.x * width, e.y * height
+    reach = math.hypot(width, height)
+    count = max(8, int(SPEEDLINES * min(1.5, e.intensity)))
+    for k in range(n):
+        rng = random.Random(e.seed * 100003 + a + k)
+        t = (a + k) / fps
+        # measured from the frame's end: the first frame is already visible
+        ease = max(0.0, min(1.0, (t + 1 / fps - e.t) / e.fade if e.fade else 1.0,
+                            (e.t + e.dur - t) / e.fade if e.fade else 1.0))
+        alpha = int(230 * max(0.45, ease))      # the fade starts visible: lines on its first frame
+        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        d = ImageDraw.Draw(canvas)
+        if style == "radial":
+            clear = 0.22 * min(width, height)
+            for _ in range(count):
+                th = rng.uniform(0, 2 * math.pi)
+                inner = clear * rng.uniform(1.0, 2.6)
+                half = rng.uniform(0.004, 0.012)                    # wedge half-width (radians)
+                p_in = (cx + inner * math.cos(th), cy + inner * math.sin(th))
+                p1 = (cx + reach * math.cos(th - half), cy + reach * math.sin(th - half))
+                p2 = (cx + reach * math.cos(th + half), cy + reach * math.sin(th + half))
+                d.polygon([p_in, p1, p2], fill=(255, 255, 255, alpha))
+        else:
+            ang = math.radians(e.angle if e.angle is not None else 0.0)
+            ux, uy = math.cos(ang), -math.sin(ang)
+            px_, py_ = -uy, ux
+            for _ in range(count):
+                off = rng.uniform(-reach / 2, reach / 2)
+                along = rng.uniform(-reach / 2, reach / 2)
+                length = rng.uniform(0.25, 0.8) * reach / 2
+                mx, my = width / 2 + px_ * off + ux * along, height / 2 + py_ * off + uy * along
+                d.line([(mx - ux * length / 2, my - uy * length / 2), (mx + ux * length / 2, my + uy * length / 2)],
+                       fill=(255, 255, 255, alpha), width=rng.randint(2, 5))
+        canvas.save(os.path.join(sub, f"f_{k:04d}.png"), compress_level=1)
+    return pattern
+
+
 def _place(canvas: Image.Image, layer: Image.Image, x: int, y: int) -> None:
     """alpha_composite that clips at the frame edges (it refuses negative offsets)."""
     x0, y0 = max(0, x), max(0, y)

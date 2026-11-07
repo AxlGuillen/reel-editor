@@ -96,6 +96,52 @@ def hit_ramp(start: float, hit: float, end: float, dur: float, hit_out: float,
     return ramp(start, hit, hit_out, before) + ramp(hit, end, dur - hit_out, after)
 
 
+VELOCITY_SHAPES = ("rise", "fall", "dip", "bump")
+VELOCITY_STEPS = 8
+VELOCITY_MIN_PIECE = 0.05     # s: shorter steps collapse to a frame or two
+
+
+def velocity_curve(shape: str = "rise", steps: int = VELOCITY_STEPS, low: float = 0.35,
+                   high: float = 1.8) -> list[tuple[float, float]]:
+    """A smooth speed curve sampled in `steps` equal pieces (CapCut's
+    "velocity" curves, without the stairs of the PROFILES): rise (slow →
+    fast, smoothstep), fall (fast → slow), dip (fast, slow in the middle,
+    fast) or bump (slow, fast in the middle, slow). Relative speeds: ramp()
+    scales them so the source fits."""
+    import math
+    if shape not in VELOCITY_SHAPES:
+        raise ValueError(f"Curva de velocidad desconocida: {shape!r}. Opciones: {', '.join(VELOCITY_SHAPES)}.")
+    steps = max(1, int(steps))
+    out = []
+    for i in range(steps):
+        u = (i + 0.5) / steps
+        w = {"rise": u * u * (3 - 2 * u), "fall": 1 - u * u * (3 - 2 * u),
+             "dip": 1 - math.sin(math.pi * u), "bump": math.sin(math.pi * u)}[shape]
+        out.append((1.0 / steps, low + (high - low) * w))
+    return out
+
+
+def velocity(start: float, end: float, dur: float, shape: str = "rise", steps: int = VELOCITY_STEPS,
+             low: float = 0.35, high: float = 1.8) -> list[Piece]:
+    """The source [start, end] over `dur` s following a smooth velocity curve.
+    Fewer steps when they would be shorter than VELOCITY_MIN_PIECE."""
+    steps = max(1, min(int(steps), int(dur / VELOCITY_MIN_PIECE)))
+    return ramp(start, end, dur, velocity_curve(shape, steps, low, high))
+
+
+def velocity_hit(start: float, hit: float, end: float, dur: float, hit_out: float,
+                 steps: int = VELOCITY_STEPS, low: float = 0.35, high: float = 1.8) -> list[Piece]:
+    """The velocity edit around a hit: accelerating into it (rise), then slow
+    motion right after it that speeds up again (rise), with the hit frame
+    exactly at `hit_out` (each half normalized on its own, like hit_ramp)."""
+    if not 0 < hit_out < dur:
+        raise ValueError("El golpe tiene que caer dentro del plano (0 < hit_out < dur).")
+    if not start <= hit <= end:
+        raise ValueError("El cuadro del golpe tiene que estar dentro del tramo de la fuente.")
+    return (velocity(start, hit, hit_out, "rise", steps, low, high)
+            + velocity(hit, end, dur - hit_out, "rise", steps, low, high))
+
+
 def clamp_speeds(pieces: list[Piece], vmin: float = MIN_SPEED, vmax: float = MAX_SPEED) -> list[Piece]:
     """No piece slower than vmin nor faster than vmax: the SOURCE is trimmed
     (not the duration), so the output time — the rhythm — does not change.

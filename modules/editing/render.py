@@ -16,14 +16,20 @@ dominates the total time.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 import config
 from core import external, ffmpeg_runner, file_utils, job_manager
-from modules.editing import effects, panels, timing, titles
+from modules.editing import bank2, effects, panels, timing, titles
+
 from modules.editing.edl import Edl, Piece, Segment
+
+# events drawn as a full-frame RGBA sequence (editing.panels) and overlaid
+SEQUENCE_KINDS = ("panel", "follow", "speedlines")
+_SEQUENCE_DRAW = {"panel": "frames", "follow": "follow_frames", "speedlines": "speedline_frames"}
 
 INTERMEDIATE_CRF = 14
 PARALLEL = 3
@@ -58,6 +64,31 @@ def vf_vertical_blur(width: int, height: int, scale: float = 1.0) -> str:
             f"[vb_bg][vb_fg]overlay=(W-w)/2:(H-h)/2")
 
 
+SPLIT_LINE = 6                # px of the white seam between the two halves
+
+
+def vf_split(layout: str, width: int, height: int, fps: float) -> str:
+    """Split-screen geometry: [0:v] and [1:v] each cover their half (or, in
+    `diagonal`, the whole frame, cut along the diagonal from the top right to
+    the bottom left) with a white seam. Last chain left open, like vf_cover."""
+    f = f"fps={fps:.6f},"           # the second source on the first one's clock
+    if layout == "diagonal":
+        cover = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=gbrp"
+        line = SPLIT_LINE / (2 * min(width, height))
+        return (f"[0:v]{cover}[sp_a];[1:v]{f}{cover}[sp_b];"
+                f"[sp_a][sp_b]blend=all_expr='if(lt(abs(X/W+Y/H-1),{line:.5f}),255,"
+                f"if(lt(X/W+Y/H,1),A,B))',format=yuv420p")
+    if layout == "left_right":
+        w, h, stack = width // 2 // 2 * 2, height, "hstack"
+        seam = f"drawbox=x={w - SPLIT_LINE // 2}:y=0:w={SPLIT_LINE}:h=ih:color=white:t=fill"
+    else:
+        w, h, stack = width, height // 2 // 2 * 2, "vstack"
+        seam = f"drawbox=x=0:y={h - SPLIT_LINE // 2}:w=iw:h={SPLIT_LINE}:color=white:t=fill"
+    cover = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,format=yuv420p"
+    return (f"[0:v]{cover}[sp_a];[1:v]{f}{cover}[sp_b];[sp_a][sp_b]{stack}=inputs=2,"
+            f"scale={width}:{height},{seam}")
+
+
 def _n(dur: float, fps: int) -> int:
     return max(1, round(dur * fps))
 
@@ -73,6 +104,17 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
     cmd = [config.FFMPEG_PATH, "-y", "-ss", f"{ss:.3f}", "-t", f"{b - ss + 0.3:.3f}", "-i", seg.source]
     k = len(seg.pieces)
     geo = (seg.vf or vf_cover(width, height)).replace(SOURCE_T0, f"{ss:.4f}")
+    inputs = 1
+    if seg.split:
+        # split.start is the second source's instant at the shot's first piece
+        # (a): its input starts that far before, so both share the clock
+        ss2 = float(seg.split.get("start", 0.0)) - (a - ss)
+        pad = max(0.0, -ss2)
+        cmd += ["-ss", f"{max(0.0, ss2):.3f}", "-t", f"{b - ss + 0.3:.3f}", "-i", seg.split["source"]]
+        inputs = 2
+        geo = vf_split(seg.split.get("layout", "top_bottom"), width, height, source_fps or 30)
+        if pad:
+            geo = geo.replace("[1:v]", f"[1:v]tpad=start_duration={pad:.4f}:start_mode=clone,", 1)
     # A graph that already names its input ([0:v]…, like competitivo's layout)
     # goes as-is; otherwise the input is prepended. Its last chain must stay
     # open: the retime is appended here.
@@ -114,7 +156,7 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
     else:
         total = sum(_n(p.dur, fps) for p in seg.pieces) / fps
         cmd += ["-f", "lavfi", "-t", f"{total:.4f}", "-i", "anullsrc=r=48000:cl=stereo"]
-        amap = "1:a"
+        amap = f"{inputs}:a"
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", amap,
             *ffmpeg_runner.video_encode_flags(INTERMEDIATE_CRF), "-c:a", "pcm_s16le", out]
     return cmd
@@ -136,12 +178,22 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if edl.watermark:
         cmd += ["-i", edl.watermark]
         watermark_idx, idx = idx, idx + 1
-    panel_events = [e for e in edl.events if e.kind in ("panel", "follow")]
+    panel_events = [e for e in edl.events if e.kind in SEQUENCE_KINDS]
     panel_inputs = []
     for e in panel_events:
         cmd += ["-framerate", str(edl.fps), "-start_number", "0", "-i", panels[id(e)]]
         panel_inputs.append(idx)
         idx += 1
+    window_events = sorted((e for e in edl.events if bank2.is_window(e)), key=lambda e: e.t)
+    asset_inputs = {}
+    for e in window_events:
+        if e.kind == "overlay":
+            if os.path.splitext(e.image)[1].lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                cmd += ["-loop", "1", "-framerate", str(edl.fps), "-t", f"{e.dur + 1:.3f}", "-i", e.image]
+            else:
+                cmd += ["-stream_loop", "-1", "-t", f"{e.dur + 1:.3f}", "-i", e.image]
+            asset_inputs[id(e)] = idx
+            idx += 1
 
     W, H = edl.width, edl.height
     parts = []
@@ -164,13 +216,22 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if any(e.kind == "glow" for e in edl.events):
         parts.append(effects.glow_pulse(current, "glowp", edl.events, W, H, intensity, edl.fps))
         current = "glowp"
+    # effects bank 2 windows: each one a branch trimmed to its frames, overlaid back
+    for j, e in enumerate(window_events):
+        parts.append(bank2.window(current, f"wv{j}", e, j, edl.fps, W, H, intensity, asset_inputs.get(id(e))))
+        current = f"wv{j}"
     accents = [f for f in (effects.flash(edl.events, intensity),
                            effects.flash_mix(edl.events, edl.fps, intensity),
                            effects.strobe(edl.events, edl.fps, intensity),
                            effects.camera(edl.events, W, H, edl.fps, intensity),
                            effects.whip_blur(edl.events, intensity),
+                           bank2.shake_blur(edl.events, edl.fps, W),
                            effects.rgb(edl.events, intensity, edl.fps),
                            effects.invert(edl.events, edl.fps),
+                           bank2.impactframe(edl.events, edl.fps),
+                           bank2.glitch_chain(edl.events, edl.fps, intensity),
+                           bank2.satpulse(edl.events, edl.fps, intensity),
+                           bank2.grain(edl.events, edl.fps, intensity),
                            effects.blackout(edl.events, edl.fps)) if f]
     if edl.vignette:
         accents.append(effects.VIGNETTE)
@@ -255,7 +316,7 @@ def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> 
         factor = 4 if slowest < 0.3 else 2
         source, _ = external.interpolate(source, start, end, factor, work, dedupe=seg.dedupe)
     pieces = [Piece(p.start - a, p.end - a, p.dur) for p in seg.pieces]
-    return Segment(source, pieces, seg.label, seg.vf, False, seg.tint, seg.exact_phase, seg.mblur)
+    return dataclasses.replace(seg, source=source, pieces=pieces, interpolate=False)
 
 
 def render(edl: Edl, out: str, job_id: str | None, work: str, *,
@@ -317,9 +378,9 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
                 fh.write(f"file '{path}'\n")
         ass = titles.write(edl.texts, edl.width, edl.height, text_y, accent)
         subs = _subtitles(edl)
-        prepared = {id(e): (panels.frames if e.kind == "panel" else panels.follow_frames)(
+        prepared = {id(e): getattr(panels, _SEQUENCE_DRAW[e.kind])(
                         e, edl.width, edl.height, edl.fps, os.path.join(work, "panels"))
-                    for e in edl.events if e.kind in ("panel", "follow")}
+                    for e in edl.events if e.kind in SEQUENCE_KINDS}
         report("Color, acentos y música…", mid)
         cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop, subs, prepared)
         if job_id:
