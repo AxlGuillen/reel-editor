@@ -130,6 +130,8 @@ class FinishParams:
     phrases: list | None = None
     music_end: float | None = None
     words: list | None = None
+    motion: str = "off"
+    blocks: list | None = None
 
     @classmethod
     def from_form(cls, form, valid_ids: set[int]) -> "FinishParams":
@@ -227,5 +229,12 @@ class FinishParams:
         words = _json(form, "words")
         if words is not None and not isinstance(words, list):
             raise ValueError("'words' es una lista {word, start, end} en segundos del edit.")
+        motion = str(form.get("motion") or "off").strip().lower()
+        if motion not in ("off", "on"):
+            raise ValueError("'motion' es on (bloques y efectos en los golpes) u off (las reglas v1.0 tal cual).")
+        blocks = _json(form, "blocks")
+        if blocks is not None and (not isinstance(blocks, list)
+                                   or not all(isinstance(b, dict) and "take" in b and "block" in b for b in blocks)):
+            raise ValueError("'blocks' es una lista {\"take\": índice de toma, \"block\": id de blocks.json}.")
         return {"takes": takes, "panels": panels, "panels_folder": folder, "grid": grid, "flashes": flashes,
-                "phrases": phrases, "music_end": end, "words": words}
+                "phrases": phrases, "music_end": end, "words": words, "motion": motion, "blocks": blocks}

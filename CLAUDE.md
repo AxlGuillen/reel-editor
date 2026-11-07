@@ -500,6 +500,11 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
     - Salen además dos `.srt` solo con tiempos.
     - En la fase 1, `shots=0` evita detectar planos en un episodio entero, y `video_path`/`music_path` toman archivos locales.
     - `python -m modules.anime_edit.repro` rearma el edit 3 y lo compara con el original.
+    - Con **`motion=on`** (por omisión `off`, idéntico a las reglas v1.0), cada toma recibe un bloque de `anime_edit/blocks.json` según la curva de la canción y su mapa de movimiento.
+      - Los efectos caen en el cuadro de salida de cada golpe real (`fit.out_frame`).
+      - `rampa` pone el golpe en el beat.
+      - Las transiciones rotan entre al menos 3 tipos.
+      - Claude puede fijar bloques con `blocks=[{take, block}]`.
 - **montage** (`/api/montage`): capas con alfa (ProRes 4444, VP9, PNG) sobre un video vertical, por segundo o por PALABRA de la transcripción, con las reglas de suiza y Lux; también como `layers` en el `/finish` de Reel Express (misma pasada que los subtítulos).
 
 La regla: **el LLM elige momentos y estilo, nunca tiempos.** Los tiempos los calcula el código.

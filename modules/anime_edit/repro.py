@@ -1,7 +1,13 @@
 """Rebuild edit 3 of Magna vs Dante from its plan with the `manga` preset, and
 compare it against the reference video (phase 2 acceptance).
 
-    python -m modules.anime_edit.repro "<Edit Magna vs Dante folder>" "<episode.mkv>" [--out file.mp4] [--keep]
+    python -m modules.anime_edit.repro "<Edit Magna vs Dante folder>" "<episode.mkv>" [--out file.mp4]
+           [--motion off|on] [--baseline phase2.mp4]
+
+--motion off checks that the plan equals phase 2's and, with --baseline, that
+every decoded frame matches (framemd5). --motion on checks phase 4: every
+hit-locked effect within ±1 frame of its hit, the drop above the buildup and
+the transition variety.
 
 edit3.py's plan (P) and framings (MODES) are copied below as data: 37 items,
 11 panels. The song is audio/glee_desde-145s_67s.wav (already cut at 144.70 s
@@ -182,22 +188,63 @@ def _sheet(tiles, out: str) -> None:
     im.save(out, quality=88)
 
 
-def main(material: str, episode: str, out: str | None, keep: bool) -> dict:
-    out = out or os.path.join(tempfile.gettempdir(), "reelforge-edit3-repro.mp4")
+def framemd5(path: str) -> list[str]:
+    """MD5 of every decoded frame (the container's bytes may differ with the
+    same frames)."""
+    text = ffmpeg_runner.capture([ffmpeg_runner.config.FFMPEG_PATH, "-v", "error", "-i", path, "-map", "0:v",
+                                  "-f", "framemd5", "-"], timeout=900).decode()
+    return [line.rsplit(",", 1)[-1].strip() for line in text.splitlines() if line and not line.startswith("#")]
+
+
+def plan_motion(material: str, episode: str, motion_mode: str):
+    """The plan with motion off (phase 2) or on (phase 4: real beatmap + motion maps)."""
+    from modules.beatmap import processor as beatmap
+    from modules.motion import processor as motion
     res = ffmpeg_runner.probe_resolution(episode)
-    edl, info = manga.plan(episode, res, {"duration": END - START}, takes(), options(material))
+    op = options(material)
+    op.motion = motion_mode
+    music = os.path.join(material, MUSIC)
+    if motion_mode == "off":
+        return manga.plan(episode, res, {"duration": END - START}, takes(), op)
+    bm = beatmap.get(music, "librosa")
+    return manga.plan(episode, res, bm, takes(), op, map_for=lambda a, b: motion.get(episode, a, b))
+
+
+def main(material: str, episode: str, out: str | None, keep: bool, motion_mode: str | None = None,
+         baseline: str | None = None) -> dict:
+    out = out or os.path.join(tempfile.gettempdir(), "reelforge-edit3-repro.mp4")
+    if motion_mode is None:
+        res = ffmpeg_runner.probe_resolution(episode)
+        edl, info = manga.plan(episode, res, {"duration": END - START}, takes(), options(material))
+    else:
+        edl, info = plan_motion(material, episode, motion_mode)
     edl.music = os.path.join(material, MUSIC)
     work = tempfile.mkdtemp(prefix="reelforge-repro-")
     render.render(edl, out, None, work)
-    report = compare(out, os.path.join(material, REFERENCE), info, os.path.splitext(out)[0] + "-control.jpg")
+    if motion_mode == "on":
+        from modules.anime_edit import blocks
+        report = blocks.check(info["motion"], 30)
+        report["blocks"] = [(b["block"], b["section"], b["target"]) for b in info["motion"]["blocks"]]
+        report["intensity"] = info["motion"]["intensity"]
+    else:
+        report = compare(out, os.path.join(material, REFERENCE), info, os.path.splitext(out)[0] + "-control.jpg")
+        if motion_mode == "off":
+            phase2_edl, _ = manga.plan(episode, ffmpeg_runner.probe_resolution(episode), {"duration": END - START},
+                                       takes(), options(material))
+            phase2_edl.music = edl.music
+            report["edl_identical_to_phase2"] = edl.to_dict() == phase2_edl.to_dict()
+            if baseline:
+                a, b = framemd5(out), framemd5(baseline)
+                report["framemd5_identical_to_phase2"] = a == b
+                report["framemd5_frames"] = [len(a), len(b), sum(x != y for x, y in zip(a, b))]
     report["video"] = out
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return report
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    out = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else None
-    if out in args:
-        args.remove(out)
-    main(args[0], args[1], out, "--keep" in sys.argv)
+    def opt(name):
+        return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+    out, mode, base = opt("--out"), opt("--motion"), opt("--baseline")
+    args = [a for a in sys.argv[1:] if not a.startswith("--") and a not in (out, mode, base)]
+    main(args[0], args[1], out, "--keep" in sys.argv, mode, base)

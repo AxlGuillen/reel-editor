@@ -102,13 +102,17 @@ def _output_folder(fp: FinishParams) -> str:
 def _manga_options(fp: FinishParams) -> manga.MangaOptions:
     return manga.MangaOptions(music_start=fp.music_start or 0.0, music_end=fp.music_end, fps=fp.fps,
                               grid=fp.grid, flashes=fp.flashes, phrases=fp.phrases,
-                              panels_folder=fp.panels_folder, panels=fp.panels or [], words=fp.words or [])
+                              panels_folder=fp.panels_folder, panels=fp.panels or [], words=fp.words or [],
+                              motion=fp.motion, blocks=fp.blocks or [])
 
 
 def _manga_plan(session: dict, fp: FinishParams, res: tuple[int, int]):
     if fp.format != "vertical":
         raise ValueError("El preset manga es vertical (1080×1920).")
-    return manga.plan(session["video"], res, session["bm"], fp.takes, _manga_options(fp))
+    from modules.motion import processor as motion
+    video = session["video"]
+    return manga.plan(video, res, session["bm"], fp.takes, _manga_options(fp),
+                      map_for=lambda a, b: motion.get(video, a, b))
 
 
 def finish(job_id: str, fp: FinishParams) -> None:

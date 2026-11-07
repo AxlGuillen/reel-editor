@@ -303,6 +303,35 @@ GET /api/anime-edit/presets          → {presets: [{id, description}], formats}
   - En la toma de 1127.95 s el primer cuadro del episodio cae 0.01 s después, y sin esto salía otro cuadro.
   - Solo lo activa `manga`, así los demás módulos no cambian.
 
+### `motion: on` — bloques, curva y efectos en los golpes
+
+`/finish` del preset `manga` con `motion=on` (por omisión `off`: las reglas v1.0 tal cual). Con `off` el plan no cambia nada: la misma EDL y los mismos cuadros que la fase 2. `anime_edit/blocks.py` + `blocks.json` + `fit.py`:
+
+1. **Curva:** la sección de la canción bajo cada toma (beatmap: `intro`, `verse`, `chorus`, `bridge`, `outro`, la subida antes de cada coro y el drop) da una intensidad objetivo. Por omisión `{intro 1, verse 2, bridge 1, outro 1, chorus 4, buildup 3, drop 5}`.
+2. **Bloque:** el más intenso con intensidad ≤ objetivo cuyos requisitos cumple el mapa de movimiento de la toma. En un empate gana el bloque propio de la sección. Claude puede fijarlos con `blocks=[{"take": i, "block": id}]`.
+
+   | Bloque | Int. | Qué pone | Necesita |
+   |---|---|---|---|
+   | `calma` / `texto` | 1 | acercamiento lento al centro de la acción | — |
+   | `panel` | 2 | la pausa del preset | — |
+   | `camara_lenta` | 2 | la toma a 0.6× (RIFE y `dedupe` si está), zoom en su golpe | 1 golpe |
+   | `rampa` | 3 | rápido hacia el golpe más fuerte y lento después, **con el golpe en el beat** (`fit.fit_hit`); destello y sacudida en su dirección | 1 golpe |
+   | `rafaga_zooms` | 4 | zoom en escalera, un escalón por beat, al centro de la acción | — |
+   | `estrobo` | 4 | estrobo cada 2 cuadros (solo en la subida) | — |
+   | `rafaga_golpes` | 5 | cada golpe con su acento (destello / sacudida / zoom), el más fuerte invierte un cuadro | 3 golpes |
+   | `pantalla_dividida` | 3 | **no disponible**: necesita un plano con dos fuentes | — |
+
+3. **Efectos en el golpe:** cada efecto va en el cuadro de salida donde aparece el cuadro de su golpe, `fit.out_frame`.
+   - El filtro `fps` cuenta desde el **primer cuadro de la fuente** de cada pieza, no desde su inicio. Una pieza que empieza entre dos cuadros se corre `round(desfase · fps / velocidad)`. Medido contra un render real de una fuente de 23.976 fps numerada cuadro a cuadro: sin esa corrección el golpe caía un cuadro antes.
+   - El plan guarda cada efecto clavado (`locked`: `{kind, frame, hit_frame}`). El `hit_frame` se recalcula al final desde las piezas definitivas de la toma.
+4. **Encaje golpe–beat** (`rampa`):
+   - [inicio, golpe] va en [0, beat] y [golpe, fin] en el resto, con velocidades entre 0.4× y 2.5×.
+   - La mitad que entra al golpe se limita moviendo su **inicio** y la de después recortando su **final**, así el golpe no se mueve.
+   - Si la toma cambia de duración en la fuente, su pausa con panel congela el **nuevo** último cuadro.
+5. **Transiciones** en los cortes entre dos tomas con intensidad ≥ 3 (nunca contra una pausa con panel): `whip` (con el ángulo del paneo o golpe más cercano), `flash`, `black`, `invert` y `zoom` en rotación. Al menos 3 tipos y ninguno más de 6 veces; el resto, corte seco.
+
+`blocks.check(info["motion"], fps)` verifica el criterio de la fase 4 sobre el plan: desfase máximo efecto–golpe, intensidad del drop contra la subida y variedad de transiciones. El status trae `motion: {blocks, locked, transitions, intensity}`.
+
 **Rearmar el edit 3** (criterio de la fase 2): `python -m modules.anime_edit.repro "<carpeta Edit Magna vs Dante>" "<episodio.mkv>"`. Rearma el edit desde `P`/`MODES`, compara los cortes con la fórmula de `edit3.py`, busca el salto de diferencia en cada corte de los dos videos y mide el SSIM de 5 cuadros de control con una hoja lado a lado (`…-control.jpg`).
 
 ## montage — `/api/montage`

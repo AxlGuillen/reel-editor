@@ -38,6 +38,7 @@ VIDEO_FADE = 1.5
 MUSIC_FADE_IN = 0.03
 PHRASE_GAP = 0.45             # a pause this long between sung words starts a new phrase
 MIN_WORD_SRT = 0.15
+MAP_MARGIN = 0.5              # s of motion map on each side of a take (the hit–beat fit may reach there)
 
 
 @dataclass
@@ -55,6 +56,10 @@ class MangaOptions:
     panel_beats: float = 2.0
     words: list[dict] = field(default_factory=list)   # own texts, invert layout: [{word, start, end}] output s
     word_style: dict = field(default_factory=dict)
+    # motion: "off" = the rules v1.0 edit exactly (phase 2); "on" = blocks,
+    # effects on the real hits and hit–beat fit (anime_edit/blocks.py).
+    motion: str = "off"
+    blocks: list[dict] = field(default_factory=list)  # [{"take": i, "block": id}] chosen by Claude
 
 
 # ---------------------------------------------------------------- the grid
@@ -205,8 +210,10 @@ def phrases_from(bm: dict, op: MangaOptions) -> list[dict]:
 
 
 def plan(video: str, source_size: tuple[int, int], bm: dict, takes: list[dict],
-         op: MangaOptions) -> tuple[Edl, dict]:
-    """The EDL of the manga edit and a summary (cuts in frames, panels, flashes)."""
+         op: MangaOptions, map_for=None) -> tuple[Edl, dict]:
+    """The EDL of the manga edit and a summary (cuts in frames, panels, flashes).
+    With op.motion == "on", `map_for(start, end)` returns the motion map of a
+    source span (motion.processor.get): the blocks read it."""
     if op.music_end is None:
         op.music_end = float(bm["duration"])
     if op.music_end <= op.music_start:
@@ -249,11 +256,26 @@ def plan(video: str, source_size: tuple[int, int], bm: dict, takes: list[dict],
     if op.words:
         edl.subtitle_words = op.words
         edl.subtitle_style = dict(op.word_style)
+    motion_info = None
+    if op.motion == "on":
+        from modules.anime_edit import blocks
+        maps = {}
+        for i, it in enumerate(items):
+            if it["kind"] == "take" and map_for is not None:
+                seg = segments[i]
+                maps[i] = map_for(max(0.0, seg.pieces[0].start - MAP_MARGIN), seg.pieces[-1].end + MAP_MARGIN)
+        beat_frames = sorted({round((grid.at(k) - op.music_start) * fps) for k in range(0, 4096)
+                              if grid.at(k) < op.music_end})
+        motion_info = blocks.apply(edl, items, spans, maps, beat_frames, bm, op.music_start, fps, op.blocks)
+    elif op.motion != "off":
+        raise ValueError("'motion' es on u off.")
     info = {"cuts": [f1 for _, f1 in spans[:-1]], "frames": spans[-1][1], "duration": round(total, 3),
             "panels": [{"name": it["name"], "start": round(f0 / fps, 3), "end": round(f1 / fps, 3)}
                        for it, (f0, f1) in zip(items, spans) if it["kind"] == "panel"],
             "flashes": [round(t, 3) for t in flash_out], "grid": "constant" if op.grid else "beatmap",
             "first_downbeat": round(grid.first - op.music_start, 4)}
+    if motion_info is not None:
+        info["motion"] = motion_info
     return edl, info
 
 
