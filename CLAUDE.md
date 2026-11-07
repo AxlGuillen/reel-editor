@@ -515,6 +515,7 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
     - Salen además dos `.srt` solo con tiempos.
     - En la fase 1, `shots=0` evita detectar planos en un episodio entero, y `video_path`/`music_path` toman archivos locales.
     - `python -m modules.anime_edit.repro` rearma el edit 3 y lo compara con el original.
+    - `python -m modules.anime_edit.edit_long` rearma el edit largo de Magna (3:32, la canción entera, con letra alineada por `editing/lyrics_align.py`). Cómo se hizo y qué se aprendió: `docs/edits.md`, «Edit largo de Magna vs Dante».
     - Con **`motion=on`** (por omisión `off`, idéntico a las reglas v1.0), cada toma recibe un bloque de `anime_edit/blocks.json` según la curva de la canción y su mapa de movimiento.
       - Los efectos caen en el cuadro de salida de cada golpe real (`fit.out_frame`).
       - `rampa` pone el golpe en el beat.
