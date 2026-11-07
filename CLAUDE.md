@@ -484,6 +484,12 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
   - Salidas: un resumen en texto para Claude, la hoja de eventos (JPG) y la vista previa opcional.
   - Decodifica **al cuadro exacto** (`select` sobre los timestamps del archivo: el seek solo se saltaba cuadros en el mkv).
   - Medido: 10/10 parejas de Magna vs Dante (golpes a ±1 cuadro) a ~170 cuadros/s en la CPU.
+  - `python -m modules.motion.reference <edit.mp4>` mide un edit terminado:
+    - dónde corta y pone destellos, zooms y sacudidas;
+    - si caen en el beat o en los golpes del anime;
+    - si corta en una rejilla;
+    - la densidad por sección.
+    - Es lo que se usó con la referencia de asen en el A/B.
 - **beatmap** (`/api/beatmap`): beats, primer tiempo de cada compás, energía, secciones (`intro`/`verse`/`chorus`/`bridge`/`outro`), drop, subidas (`buildups`) y la letra palabra por palabra (`words`) → `beatmap.json`, cacheado por huella en `cache/beatmaps/`. `beatmap.processor.get()` es lo que usan los demás. Preview con pitidos para validar la rejilla.
 - **editing** (motor, `/api/editing/options`): una EDL (`Segment` con `Piece` a velocidad, `Event` flash/zoom/shake/rgb/push/hold/whip/black que pueden apuntar a un punto, `Text`, volúmenes automatizados de música y juego, y palabras para subtítulos invertidos) que arman los **planificadores puros** y que `render.py` ejecuta en dos pasadas: por plano (geometría y retime cuadrado al cuadro, intermedios mkv con PCM) y final (LUT/look, glow, acentos, subtítulos, ASS, watermark y música). RIFE / Real-ESRGAN por `core/external.py` si están.
   - **Banco de efectos:** [`docs/efectos.md`](docs/efectos.md) y `modules/editing/catalog.json` (`GET /api/editing/catalog`).

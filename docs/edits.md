@@ -105,6 +105,19 @@ python -m modules.motion.bench speed <video> [inicio fin]
 
 El resumen para Claude es una línea por evento: «toma 13 · golpe fuerte en 1249.16 s (cuadro 29950), hacia la izquierda, centro (0.78, 0.51)».
 
+**Analizar un edit terminado** (`python -m modules.motion.reference <edit.mp4> [--out carpeta]`): mapa de movimiento + beatmap de su audio. Mide:
+- **Cortes y efectos:** destellos, invertidos y, desde la cámara, golpes de zoom (cambio rápido de zoom) y sacudidas (la cámara invierte la dirección varias veces en pocos cuadros). De cada uno, cuántos caen en un beat, en el 1 del compás y en un golpe del anime.
+- **Rejilla:** si los cortes siguen alguna (la mejor rejilla constante contra lo que daría el azar).
+- **Densidad por sección.**
+- En un edit estilizado, el mapa toma por cortes algunos golpes de zoom. Si la cámara hace zoom fuerte y los colores se mantienen (histograma HSV), cuenta como zoom.
+- Los *whips* y negros todavía no se distinguen de un corte.
+
+Medido en el edit de asen (TikTok 7703346653037710610, 46 s):
+- 243 cortes, plano mediano de 0.1 s.
+- **No corta en una rejilla:** 29 % de los cortes en la mejor, contra 22 % al azar.
+- Los efectos sí van **sobre los golpes del anime:** 11 de 13 destellos y 51 de 102 zooms.
+- La densidad sube de 0.27 efectos/s en la intro a 2.8 en el coro y 3.6 al final.
+
 ## editing — el motor (`modules/editing/`)
 
 > El banco de efectos (todos los eventos, `mblur`, `dedupe`, `hit_ramp`, la galería y lo que se corrigió de `rgb` y `glow`) está en [`efectos.md`](efectos.md).
@@ -398,6 +411,12 @@ La vista «Estudio» (sección Edits) arma un video con las láminas de un deck 
 
 ## Pendiente / ideas
 
+- **Mapa de movimiento (después del A/B):**
+  - La v2.0 de las reglas se escribe cuando Axl elija en el A/B (`Edits/AB Magna vs Dante - mapa de movimiento`).
+  - `pantalla_dividida` necesita planos con dos fuentes.
+  - Los umbrales de golpe se ajustaron con 10 parejas: hace falta un set aparte (otra pelea anotada).
+  - El analizador de referencias no distingue *whips* ni negros.
+  - El beatmap de Glee marca casi toda la canción como verso, y eso aplana la curva.
 - **Capas GSAP de presentations**: `cuadros.mjs --alfa` + un kit de recetas para edits (brasas, rayos, letreros de kill, palabra con máscara) que entren por montage o por la EDL.
 - **Máscaras** (SAM 2.1 / ToonOut) para el texto detrás del personaje, como en el edit de referencia.
 - Calibrar `kill_lead_s` y la intensidad de los acentos con un edit real de Worlds.
