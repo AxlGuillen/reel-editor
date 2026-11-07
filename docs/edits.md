@@ -57,6 +57,54 @@ GET  /api/beatmap/status/<id>   → {status, progress, stage, error, summary, be
 GET  /api/beatmap/download/<id> → preview.mp4 ·  GET /api/beatmap/json/<id> → beatmap.json
 ```
 
+## motion — `/api/motion` (mapa de movimiento)
+
+`modules/motion/analysis.py` (puro sobre los cuadros) + `processor.py` (`get()`, con caché) + `sheet.py` (hoja de eventos, hoja de parejas y vista previa) + `bench.py` (mide contra la verdad anotada). Como beatmap: describe el video y no decide nada. Lo usan los planificadores con `motion.processor.get(path, start, end)`, `hits(m)` y `focus_at(m, t)`.
+
+**Una sola decodificación por tramo**, a 480 px y en BGR, que comparten el flujo óptico, el color y el detector de cortes (`shots.FrameCuts`: el mismo AdaptiveDetector de `shots.cuts()`, alimentado con esos cuadros). **Cuadro exacto:** el seek de entrada de FFmpeg solo, sobre el mkv de Black Clover, a veces se saltaba el primer cuadro y el modo CFR duplicaba o tiraba cuadros a mitad del tramo (las primeras hojas de anotación estaban corridas sin regla fija). `decode_command` busca 1 s antes y `select='gte(t,…)'` con `-copyts` y `-fps_mode passthrough` toma los cuadros por los timestamps del archivo. Lo comprueba un test con un video cuyo cuadro k tiene brillo 3k.
+
+| Señal (por cuadro, en `frames`) | Cómo sale |
+|---|---|
+| `held`, `drawing` | cadencia: un cuadro repite el dibujo si su diferencia media de luma es < max(1.0, 35 % de la mediana de los últimos 8) **o** si el flujo apenas se movió (p97 < 1 px). El flujo corre solo entre dibujos distintos y se divide entre los cuadros que tardó; ese valor llena los cuadros del cambio (sin peine) |
+| `cam_dx`, `cam_dy`, `cam_zoom` | homografía RANSAC sobre una malla de puntos cada 20 px del flujo (300 iteraciones: las 2000 por omisión eran el 70 % del tiempo) |
+| `force`, `angle`, `dirgram` | el flujo menos la cámara: percentil 90 (px por cuadro en unidades de 1920 de ancho), ángulo ponderado (0° derecha, 90° arriba) y directograma de 8 direcciones |
+| `luma`, `sat`, `inverted`, `bw` | brillo y saturación; invertido = el cuadro se parece más al negativo del anterior |
+| `cx`, `cy` | centro de la mancha conectada de movimiento con más movimiento adentro, suavizado por toma (EMA 0.4) |
+| `shot`, `err` | toma; `err` = cuánto del cambio NO explica el flujo (alto en un barrido o en un corte) |
+
+| Evento | Regla |
+|---|---|
+| `impact` | pico de fuerza de un dibujo, frenazo en los 4 cuadros siguientes (≤ 60 %) y **prominencia** (fuerza / mediana de ±12 cuadros) ≥ 6, o ≥ 2.5 si frena fuerte (≤ 30 %: la ráfaga, donde todo se mueve) o ≥ 2 si lo marca un destello o un cuadro de impacto. El cuadro es el del pico (el contacto); se corre a la ráfaga de impacto o al destello si arrancan ahí. Un destello sobre movimiento fuerte (≥ 1.5×) también es golpe (la explosión de fuego no frena). Uno por momento: el más fuerte en 5 cuadros |
+| `smear` | un dibujo rápido (≥ percentil 90) que el flujo no explica (`err` ≥ 0.75) |
+| `pan` | la cámara se mueve ≥ 4 px/cuadro en una dirección (±35°) durante 6 cuadros o más; la dirección es la de la cámara |
+| `calm` | fuerza < 2.5 durante 2 s (o lo que pida `calm_s`, p. ej. un compás) |
+| `flash` | la luma sube más de 25 en un cuadro (que no es corte) |
+| `cut` | corte de PySceneDetect que no es: un destello que vuelve a bajar, un cuadro invertido, una ráfaga de 1–3 cuadros tras la que vuelve la imagen de antes (miniaturas de 32×18: `min_scene_len` esconde el segundo corte) ni un cambio que el flujo explica |
+
+**Medido (6/11):**
+- Las 10 parejas del anexo de las reglas v1.0, con el cuadro exacto anotado a mano en hojas de la decodificación exacta (`tests/motion/pairs.json`). Cinco son golpes y cinco son poses o cortes, porque el anexo marca ventanas de hasta 2 s:
+  - **10/10 y golpes 5/5**, con deltas de −1, 0, 0, 0 y 0 cuadros.
+  - La pareja 7 es una ráfaga y pasa por su contacto 27219, anotado como alternativa antes de medir; el contacto de la cara, 27212, no tiene pico propio (prominencia 1.6).
+- **Ojo:** los umbrales se ajustaron con esas mismas 10 parejas (no hay un set aparte).
+- En la toma 09 (1240–1258 s), unos 20 de los 24 eventos más fuertes son golpes o barridos reales. Los dudosos son caras con poco movimiento.
+- Densidad: 1–2 golpes por segundo en las peleas y 0.2–0.9 fuera de ellas.
+- **~170 cuadros/s** a 480 px en la CPU, con la decodificación de 1080p incluida.
+
+**Límite conocido:** DIS (preset FAST) pierde desplazamientos de más de ~24 px por eje a 480 px (~100 px/cuadro a 1920). Un movimiento así sale como un barrido (`err` alto) con fuerza subestimada. Se probó un paso grueso a media resolución: arreglaba ese caso pero empeoró las parejas reales (8/10), así que se descartó. Los sintéticos usan texturas tipo cel (bordes duros), porque con ruido difuminado DIS falla incluso en desplazamientos chicos.
+
+**Caché** en `cache/motion/<huella>-<f0>-<cuadros>-w<ancho>-v<versión>.json`. La huella es tamaño + primer y último MB (`file_utils.quick_fingerprint`): un episodio de 1.4 GB no se lee entero.
+
+```
+POST /api/motion/process   video (archivo) | library_clip | job_id | path (archivo local)
+                           [start, end (s o m:ss), width=480 (160–1280), preview]
+GET  /api/motion/status/<id>   → {status, progress, stage, error, summary, motion, has_preview}
+GET  /api/motion/json/<id> · /summary/<id> (texto) · /sheet/<id> (JPG) · /download/<id> (preview.mp4)
+python -m modules.motion.bench pairs <episodio> [--sheet carpeta] [--refresh]   # las 10 parejas
+python -m modules.motion.bench speed <video> [inicio fin]
+```
+
+El resumen para Claude es una línea por evento: «toma 13 · golpe fuerte en 1249.16 s (cuadro 29950), hacia la izquierda, centro (0.78, 0.51)».
+
 ## editing — el motor (`modules/editing/`)
 
 `edl.py` (modelo), `timing.py` (curvas de velocidad y cuantizado), `effects.py` (filtros), `titles.py` (letreros ASS), `render.py` (dos pasadas). `GET /api/editing/options` lista `looks`, `luts`, `profiles` y qué opcionales están instalados (`rife`, `esrgan`, `beat_this`, `vocal_separation`).
@@ -262,7 +310,7 @@ La vista «Estudio» (sección Edits) arma un video con las láminas de un deck 
 
 ## Tests
 
-`tests/synthetic.py` arma canciones (bombo y hi-hat con tempo conocido) y videos de planos de colores con cortes en segundos conocidos: nada con derechos y sin internet. `tests/beatmap`, `tests/editing`, `tests/competitivo/test_edit.py` (incluye el job completo con el VOD simulado), `tests/anime_edit`, `tests/montage`, `tests/studio`.
+`tests/synthetic.py` arma canciones (bombo y hi-hat con tempo conocido) y videos de planos de colores con cortes en segundos conocidos: nada con derechos y sin internet. `tests/beatmap`, `tests/editing`, `tests/competitivo/test_edit.py` (incluye el job completo con el VOD simulado), `tests/anime_edit`, `tests/montage`, `tests/studio`, `tests/motion` (golpes sintéticos con ángulo, cuadro, cadencia, paneo, destello, corte y ráfaga conocidos; `synthetic.motion_video`).
 
 ## Pendiente / ideas
 

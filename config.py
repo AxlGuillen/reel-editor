@@ -42,6 +42,8 @@ COMPETITIVO_LAYOUT = os.environ.get("REELFORGE_COMPETITIVO_LAYOUT", "v2").strip(
 # Song analysis (beatmap): cached by file fingerprint, so the same song is not
 # analyzed again for every edit (temporary: cache/).
 BEATMAPS_FOLDER = os.path.join(BASE_DIR, "cache", "beatmaps")
+# Motion maps of video spans, cached by file fingerprint + span + width + version.
+MOTION_FOLDER = os.path.join(BASE_DIR, "cache", "motion")
 # Competitivo's phase-1 sessions, on disk so they survive a restart of the
 # server (the debug reloader restarts it on every code change).
 SESSIONS_FOLDER = os.path.join(BASE_DIR, "cache", "competitivo", "sessions")

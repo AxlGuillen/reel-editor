@@ -1,0 +1,56 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-zap"/></svg> Movimiento</h1>
+  <p class="subtitle">Qué pasa en la imagen, cuadro por cuadro: golpes, barridos, paneos, calma, destellos y cortes (lo que usan los edits)</p>
+</div>
+
+<section class="card">
+  <div class="ed-file">
+    <input type="file" id="mo-video" accept="video/*,.mp4,.mov,.mkv,.avi" hidden>
+    <button type="button" id="mo-video-btn" class="btn-secondary">Elegir video</button>
+    <button type="button" id="mo-lib-btn" class="btn-secondary">Elegir de mis capturas</button>
+    <span id="mo-video-name" class="file-name"></span>
+    <span class="ed-or">o</span>
+    <input type="text" id="mo-path" class="ed-input" style="flex:1 1 260px"
+           placeholder="Ruta de un archivo en esta compu (un episodio entero no hace falta subirlo)">
+  </div>
+  <div class="ed-row">
+    <label class="control"><span>Desde (s o m:ss)</span><input type="text" id="mo-start" class="ed-input" placeholder="0"></label>
+    <label class="control"><span>Hasta (s o m:ss)</span><input type="text" id="mo-end" class="ed-input" placeholder="el final"></label>
+    <label class="control"><span>Ancho del análisis</span>
+      <select id="mo-width">
+        <option value="480" selected>480 px (recomendado)</option>
+        <option value="320">320 px (más rápido)</option>
+        <option value="640">640 px</option>
+      </select>
+    </label>
+  </div>
+  <label class="control-check"><input type="checkbox" id="mo-preview"> Vista previa: el tramo con la curva de movimiento y las marcas</label>
+  <button id="mo-process-btn" class="btn-primary">Analizar</button>
+  <p class="hint">Analiza a ~170 cuadros por segundo en la CPU. El resultado queda en caché por archivo y tramo: pedir lo mismo otra vez es instantáneo.</p>
+</section>
+
+<div id="mo-progress-wrap" class="card hidden">
+  <div class="progress-bar"><div id="mo-progress-fill"></div></div>
+  <p id="mo-progress-label">Analizando… 0%</p>
+</div>
+
+<div id="mo-result-wrap" class="card card-accent hidden">
+  <div id="mo-stats" class="ed-stats"></div>
+  <div id="mo-track" class="mo-track" aria-label="Eventos en el tramo"></div>
+  <div class="mo-legend">
+    <span class="mo-k mo-impact">golpe</span><span class="mo-k mo-smear">barrido</span>
+    <span class="mo-k mo-flash">destello</span><span class="mo-k mo-cut">corte</span>
+    <span class="mo-k mo-pan">paneo</span><span class="mo-k mo-calm">calma</span>
+  </div>
+  <img id="mo-sheet" class="mo-sheet" alt="Hoja de eventos">
+  <video id="mo-video-out" class="ed-video hidden" controls></video>
+  <details class="mo-summary"><summary>Resumen en texto (para Claude)</summary><pre id="mo-summary"></pre></details>
+  <p style="margin-top:12px">
+    <a id="mo-json-btn" class="btn-secondary" download>motion.json</a>
+    <a id="mo-summary-btn" class="btn-secondary" target="_blank">resumen.txt</a>
+    <a id="mo-sheet-btn" class="btn-secondary" target="_blank">Hoja de eventos</a>
+    <a id="mo-download-btn" class="btn-secondary hidden" download>Vista previa</a>
+  </p>
+</div>
+
+<div id="mo-error-wrap" class="card error hidden"><p id="mo-error-msg"></p></div>

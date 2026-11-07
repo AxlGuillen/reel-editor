@@ -1862,6 +1862,24 @@ a:focus:not(:focus-visible) { outline: none; }
 .ed-sec-bridge { background: #6b5aa6; }
 .ed-drop { position: absolute; top: 0; bottom: 0; width: 3px; background: #ffd640; }
 .ed-video { width: 100%; max-height: 520px; border-radius: var(--r-thumb); background: #000; }
+/* Movimiento: el tramo como barra de eventos, la leyenda y la hoja */
+.mo-track { position: relative; height: 54px; margin: 8px 0 6px; border-radius: var(--r-sm); background: #14111a; overflow: hidden; }
+.mo-ev { position: absolute; bottom: 0; width: 2px; height: 100%; opacity: .9; }
+.mo-ev.mo-pan, .mo-ev.mo-calm { height: 8px; min-width: 2px; opacity: .75; }
+.mo-ev.mo-calm { bottom: 10px; }
+.mo-impact { background: var(--accent); }
+.mo-smear { background: #3fd0ff; }
+.mo-flash { background: #fff; }
+.mo-cut { background: #ff9f1a; height: 100%; width: 1px; }
+.mo-pan { background: #b48cff; }
+.mo-calm { background: #7d7d86; }
+.mo-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; margin-bottom: 12px; color: var(--text-muted, inherit); }
+.mo-k { display: inline-flex; align-items: center; gap: 6px; background: none !important; }
+.mo-k::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
+.mo-k.mo-impact { color: var(--accent-strong); } .mo-k.mo-smear { color: #1fa8d6; } .mo-k.mo-flash { color: #9a9aa3; }
+.mo-k.mo-cut { color: #ff9f1a; } .mo-k.mo-pan { color: #8f63e6; } .mo-k.mo-calm { color: #7d7d86; }
+.mo-sheet { width: 100%; border-radius: var(--r-thumb); margin: 6px 0 12px; display: block; }
+.mo-summary pre { white-space: pre-wrap; font-size: 12px; max-height: 320px; overflow: auto; margin: 8px 0 0; }
 .ed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 10px 0 16px; }
 .ed-shot { position: relative; border-radius: var(--r-sm); overflow: hidden; cursor: pointer; border: 3px solid transparent; opacity: .45; transition: opacity var(--dur-fast), border-color var(--dur-fast); }
 .ed-shot img { width: 100%; display: block; aspect-ratio: 16 / 9; object-fit: cover; }

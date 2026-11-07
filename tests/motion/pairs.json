@@ -1,0 +1,28 @@
+{
+  "episode": "[Anku & mutagenb] Black Clover 2nd Season - 05 (175) [1080p rus].mkv",
+  "fps": 23.976023976023978,
+  "note": "Frame numbers of the episode (t = f * 1001 / 24000). Annotated by hand on frame-by-frame sheets decoded with motion.processor.decode_command (exact frames: select on the file timestamps; a plain input seek dropped or duplicated frames on this mkv) (06/11/2026) inside the windows of the v1.0 rules annex. kind=hit: the frame where the blow lands (contact, sparks or impact frame); the detector needs an impact within ±2 frames. kind=pose: the panel is a pose, not a blow; the detector must not report an impact inside the window and, when the window ends on a cut, must find that cut within ±2 frames.",
+  "pairs": [
+    {"n": 1, "panel": "m09_black-bulls-jefe_con-texto", "window": [8956, 8971], "kind": "pose", "frame": 8963, "cut": null,
+     "what": "Black Bulls llegan; un solo plano casi quieto"},
+    {"n": 2, "panel": "m06_dante-demonio-cadena", "window": [12597, 12607], "kind": "pose", "frame": 12605, "cut": 12608,
+     "what": "Dante demonio con el círculo; cadenas cruzando; corta al piso en 12608"},
+    {"n": 3, "panel": "m10_eso-es-todo_con-texto", "window": [13235, 13244], "kind": "pose", "frame": 13240, "cut": null,
+     "what": "Dante sale ileso del fuego; el pelo se mueve, sin golpe"},
+    {"n": 4, "panel": "m07_choque-DAK", "window": [26925, 26928], "kind": "hit", "frame": 26925, "cut": null,
+     "what": "el choque: estallido en X después de 3 cuadros de barrido rojo"},
+    {"n": 5, "panel": "m03_golpe-1", "window": [27037, 27041], "kind": "hit", "frame": 27040, "cut": null,
+     "what": "el puño de Dante llega a la cara de Magna (chispas)"},
+    {"n": 6, "panel": "m04_golpe-2", "window": [27108, 27112], "kind": "hit", "frame": 27114, "cut": null,
+     "what": "el golpe le llega a Magna: estalla el fuego en 27114 (justo después de la ventana)"},
+    {"n": 7, "panel": "m05_golpe-3", "window": [27201, 27224], "kind": "hit", "frame": 27212, "cut": null,
+     "what": "ráfaga: Magna le pega en la cara a Dante; contactos en 27203, 27212 y 27219, el de la cara es 27212",
+     "also": [27203, 27219]},
+    {"n": 8, "panel": "m02_cadena-pecho-dante", "window": [27945, 27968], "kind": "pose", "frame": 27950, "cut": 27955,
+     "what": "Dante con la cadena en el pecho; corta al plano general en 27955"},
+    {"n": 9, "panel": "m08_cierra-la-boca_con-texto", "window": [30174, 30197], "kind": "hit", "frame": 30170, "cut": null,
+     "what": "los dos se pegan a la vez: cuadro de impacto amarillo en 30170, fuego desde 30173"},
+    {"n": 10, "panel": "m01_grito", "window": [31313, 31360], "kind": "pose", "frame": 31340, "cut": 31332,
+     "what": "el grito de Magna; corta al primer plano en 31332"}
+  ]
+}

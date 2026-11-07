@@ -1,6 +1,7 @@
 """Synthetic files for the edit tests (no internet nor copyrighted material):
 a kick + hi-hat song with a known tempo, and videos of colored shots with
 cuts at known seconds."""
+import math
 import os
 import subprocess
 import wave
@@ -98,6 +99,81 @@ def shots_video(path: str, durations: list[float], w: int = 640, h: int = 360,
         cmd += ["-map", f"{n}:a", "-c:a", "aac", "-b:a", "96k"]
     cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p", path]
     subprocess.run(cmd, check=True)
+    return path
+
+
+def _texture(h: int, w: int, rng: np.random.Generator, sigma: float, contrast: float) -> np.ndarray:
+    import cv2
+    noise = rng.random((h, w, 3)).astype(np.float32)
+    tex = cv2.GaussianBlur(noise, (0, 0), sigma)
+    tex = (tex - tex.mean()) / (tex.std() + 1e-6)
+    return np.clip(128 + contrast * tex, 0, 255).astype(np.uint8)
+
+
+def _cel(h: int, w: int, rng: np.random.Generator, shapes: int, outline: int) -> np.ndarray:
+    """Flat colors with dark outlines, like a cel: optical flow needs the hard
+    edges anime has (blurred noise has none at coarse scales, and DIS lost it)."""
+    import cv2
+    img = np.full((h, w, 3), rng.integers(60, 160, 3), np.uint8)
+    for _ in range(shapes):
+        color = tuple(int(c) for c in rng.integers(30, 230, 3))
+        cx, cy = int(rng.integers(0, w)), int(rng.integers(0, h))
+        ax, ay = int(rng.integers(w // 30 + 4, w // 6 + 8)), int(rng.integers(h // 30 + 4, h // 6 + 8))
+        ang = float(rng.integers(0, 180))
+        cv2.ellipse(img, (cx, cy), (ax, ay), ang, 0, 360, color, -1)
+        cv2.ellipse(img, (cx, cy), (ax, ay), ang, 0, 360, (20, 20, 25), outline)
+    return img
+
+
+def motion_video(path: str, angle: float = 30.0, speed: float = 40.0, hit: int = 36, frames: int = 72,
+                 cadence: int = 1, pan: tuple[float, float] = (0.0, 0.0), flash: bool = False,
+                 cut_at: int | None = None, drift: float = 0.0, burst: tuple[int, int] | None = None,
+                 w: int = 640, h: int = 360, fps: int = 24, seed: int = 7) -> str:
+    """A textured disc that winds up and punches: it is still, accelerates over
+    the last 3 drawings (0.25, 0.55, 1 × `speed` px per frame) toward `angle`
+    (0° right, 90° up) and stops dead on frame `hit` (the contact frame, where
+    the biggest displacement shows up). `cadence` 2 = drawn on twos (each
+    drawing held 2 frames; the motion per drawing doubles). `pan` moves the
+    background (camera) every frame; `flash` turns frame `hit` + 1 white;
+    `cut_at` switches to another background from that frame on; `drift`
+    moves the disc slowly (px per frame, drawn on `cadence`) before and after
+    the punch; `burst` = (a, b) replaces frames a…b−1 with an inverted other
+    picture (an impact frame burst)."""
+    rng = np.random.default_rng(seed)
+    bg = _cel(h * 2, w * 2, rng, 90, 2)
+    bg2 = _cel(h * 2, w * 2, np.random.default_rng(seed + 1), 90, 2)[..., ::-1]
+    disc = _cel(240, 240, rng, 14, 3)
+    yy, xx = np.mgrid[0:240, 0:240]
+    mask = ((xx - 120) ** 2 + (yy - 120) ** 2) <= 110 ** 2   # ~16 % of the frame, like a character
+    dx, dy = math.cos(math.radians(angle)), -math.sin(math.radians(angle))
+    steps = {hit - 2 * cadence: 0.25, hit - cadence: 0.55, hit: 1.0}  # drawing frame → speed factor
+    path_len = sum(steps.values()) * speed * cadence
+    x0 = w / 2 - dx * path_len / 2 - 120
+    y0 = h / 2 - dy * path_len / 2 - 120
+    pos = 0.0
+    out = []
+    for k in range(frames):
+        if k in steps:
+            pos += steps[k] * speed * cadence
+        elif drift and k < hit - 2 * cadence and k % cadence == 0:
+            pos += drift * cadence           # a slow drift, drawn on `cadence`
+        elif drift and k > hit and k % cadence == 0:
+            pos += drift * cadence
+        ox, oy = int(round(pan[0] * k)) % w, int(round(pan[1] * k)) % h
+        frame = (bg2 if cut_at is not None and k >= cut_at else bg)[oy:oy + h, ox:ox + w].copy()
+        x = min(max(int(round(x0 + dx * pos)), 0), w - 240)
+        y = min(max(int(round(y0 + dy * pos)), 0), h - 240)
+        region = frame[y:y + 240, x:x + 240]
+        region[mask] = disc[mask]
+        if flash and k == hit + 1:
+            frame[:] = 250
+        if burst and burst[0] <= k < burst[1]:
+            frame = 255 - bg2[:h, :w]            # an impact frame burst: 1–3 frames of something else
+        out.append(frame)
+    raw = np.stack(out).tobytes()
+    subprocess.run([config.FFMPEG_PATH, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                    "-s", f"{w}x{h}", "-r", str(fps), "-i", "-", "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "16", "-pix_fmt", "yuv420p", path], input=raw, check=True)
     return path
 
 

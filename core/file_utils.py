@@ -1,4 +1,5 @@
 """Helpers para manejo de archivos temporales."""
+import hashlib
 import os
 import re
 import uuid
@@ -6,6 +7,19 @@ import uuid
 from werkzeug.utils import secure_filename
 
 import config
+
+
+def quick_fingerprint(path: str) -> str:
+    """Identifies a big video without reading it all: its size plus the first
+    and last MB (the same file re-uploaded or renamed gives the same one)."""
+    size = os.path.getsize(path)
+    h = hashlib.sha256(str(size).encode())
+    with open(path, "rb") as fh:
+        h.update(fh.read(1 << 20))
+        if size > 2 << 20:
+            fh.seek(-(1 << 20), os.SEEK_END)
+            h.update(fh.read())
+    return h.hexdigest()[:20]
 
 
 def ensure_dirs() -> None:

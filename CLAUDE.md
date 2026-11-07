@@ -55,6 +55,7 @@ reel-editor/
 │   ├── competitivo/            ← PIPELINE: highlights de Worlds (solo kills) desde el VOD de Ibai;
 │   │                             edit.py = modo edit (las peleas al ritmo de una canción)
 │   ├── beatmap/                ← Ritmo de una canción: beats, compases, secciones, drop, letra
+│   ├── motion/                 ← Mapa de movimiento de un tramo: golpes, barridos, paneos, calma, cortes
 │   ├── editing/                ← MOTOR de los edits: EDL → render en dos pasadas (sin routes de proceso)
 │   ├── anime_edit/             ← PIPELINE: pelea de anime + canción → variantes de edit (2 fases)
 │   ├── montage/                ← Montaje: capas animadas con alfa sobre un video, por palabra o segundo
@@ -77,7 +78,7 @@ reel-editor/
 ├── tests/                      ← unittest (sin pytest): python -m unittest discover -s tests -t .
 │   ├── synthetic.py            ← canciones y videos sintéticos (tempo y cortes conocidos)
 │   ├── competitivo/            ← detección de peleas (fixture real), layout, sincronía, validación, edit
-│   └── beatmap/ editing/ anime_edit/ montage/ studio/
+│   └── beatmap/ editing/ anime_edit/ montage/ studio/ motion/ (motion/pairs.json: la verdad de las 10 parejas)
 │
 ├── core/
 │   ├── ffmpeg_runner.py        ← Único lugar que ejecuta FFmpeg + helpers ffprobe
@@ -476,6 +477,12 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
 
 **El detalle está en [`docs/edits.md`](docs/edits.md)** (contratos, algoritmos, presets, cómo los opera Claude). Lo esencial:
 
+- **motion** (`/api/motion`, vista **Movimiento** en Edits): el mapa de movimiento de un tramo de video, cuadro por cuadro → `motion.json`, cacheado en `cache/motion/` por huella + tramo + ancho + versión. `motion.processor.get(path, start, end)` es lo que usan los demás.
+  - Señales: cadencia (flujo DIS solo entre dibujos distintos), cámara (homografía), fuerza, ángulo y directograma del personaje, luma, saturación, invertido y centro de la acción.
+  - Eventos: `impact`, `smear`, `pan`, `calm`, `flash`, `cut`.
+  - Salidas: un resumen en texto para Claude, la hoja de eventos (JPG) y la vista previa opcional.
+  - Decodifica **al cuadro exacto** (`select` sobre los timestamps del archivo: el seek solo se saltaba cuadros en el mkv).
+  - Medido: 10/10 parejas de Magna vs Dante (golpes a ±1 cuadro) a ~170 cuadros/s en la CPU.
 - **beatmap** (`/api/beatmap`): beats, primer tiempo de cada compás, energía, secciones (`intro`/`verse`/`chorus`/`bridge`/`outro`), drop, subidas (`buildups`) y la letra palabra por palabra (`words`) → `beatmap.json`, cacheado por huella en `cache/beatmaps/`. `beatmap.processor.get()` es lo que usan los demás. Preview con pitidos para validar la rejilla.
 - **editing** (motor, `/api/editing/options`): una EDL (`Segment` con `Piece` a velocidad, `Event` flash/zoom/shake/rgb/push/hold/whip/black que pueden apuntar a un punto, `Text`, volúmenes automatizados de música y juego, y palabras para subtítulos invertidos) que arman los **planificadores puros** y que `render.py` ejecuta en dos pasadas: por plano (geometría y retime cuadrado al cuadro, intermedios mkv con PCM) y final (LUT/look, glow, acentos, subtítulos, ASS, watermark y música). RIFE / Real-ESRGAN por `core/external.py` si están.
 - **competitivo — modo edit** (`POST /api/competitivo/edit`, job nuevo): con la sesión de la fase 1 y una canción, cada kill cae en un beat, cada pelea arranca en un primer tiempo y la pelea clave cae en el drop. Letreros NOMBRE · CAMPEÓN (el feed guarda el campeón; `kills.kill_authors()`), sin la cámara de Ibai por defecto. Queda como `Edit Mapa N - <titulo>.mp4`. **Por defecto `structure=acts`** (v2) en **orden cronológico** (el cold open es un adelanto de 2–3 s de la pelea clave; `short=1` = solo la clave y la de más puntaje, ~20–25 s; `ambient=1` suma planos de escenario y público sin marcador): cold open y build en tiempo real con la voz de Ibai (subtitulada con el layout invertido), 0.3 s de silencio, el drop al ritmo con una **receta por kill** (`ramp`, `freeze_zoom`, `hard_cut`, `instant_replay` en la clave, `stair_zoom` en multikills) y outro con el nexo; el zoom apunta a la acción (`layout.action_focus`) y el status trae el plan por actos. Desde el feedback del 23/10: sin letreros por defecto (`text=off`), `kill_before_s`/`kill_after_s` (3/2 s), `max_duration_s=0` sin tope, `team=T1`, los **picos de emoción de Ibai** en tiempo real sobre el drop (`voice_peaks`, `competitivo/voice.py`), `last_fight_look=bw` y un render que se puede reintentar. `structure=beat` es el edit anterior, todo al ritmo y sin su voz.
@@ -589,6 +596,8 @@ expr_sum(terms) -> str                    # suma de términos de una expresión 
                                           # en árbol balanceado (ver abajo)
 capture(command) -> bytes                 # corre FFmpeg y devuelve su stdout (frames en
                                           # rawvideo para analizar con numpy)
+stream(command, frame_bytes)              # lo mismo cuadro por cuadro (generador): un tramo
+                                          # largo se analiza sin tenerlo entero en memoria
 ```
 
 **Dos límites de FFmpeg que en la nube no aparecían:**
@@ -627,6 +636,7 @@ THUMBS_FOLDER                      # cache/thumbs/ (miniaturas de la librería)
 COMPETITIVO_FOLDER                 # resúmenes de competitivo, PERSISTENTE (env REELFORGE_COMPETITIVO_FOLDER)
 EDITS_FOLDER                       # edits de anime y de series sin día, PERSISTENTE (env REELFORGE_EDITS_FOLDER)
 BEATMAPS_FOLDER                    # cache/beatmaps/ (análisis de canciones)
+MOTION_FOLDER                      # cache/motion/ (mapas de movimiento por huella + tramo + ancho + versión)
 SESSIONS_FOLDER                    # cache/competitivo/sessions/ (fases 1 de competitivo, sobreviven a un reinicio)
 CALIBRATION_FOLDER                 # casos reales de calibración, fuera de git (env REELFORGE_CALIBRATION_FOLDER)
 ANCHORS_FOLDER                     # cache/competitivo/anchors/: anclas ya medidas por (VOD, partida)
@@ -656,7 +666,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 18 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 19 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
@@ -723,7 +733,7 @@ Desde el 22 de octubre de 2026 **el código nuevo se escribe en inglés**. La do
 | Mensajes de error, `stage` de los jobs y textos de la UI | Español |
 | `CLAUDE.md`, `README` de `assets/` y `docs/` | Español |
 
-- **Ya están en inglés:** `beatmap`, `editing`, `anime_edit`, `montage`, `core/external.py`, el modo edit de competitivo (`competitivo/edit.py`, `EditParams`, `/edit` y lo que suma en `kills.py` y `layout.py`) y sus tests (`tests/synthetic.py`).
+- **Ya están en inglés:** `beatmap`, `motion`, `editing`, `anime_edit`, `montage`, `core/external.py`, el modo edit de competitivo (`competitivo/edit.py`, `EditParams`, `/edit` y lo que suma en `kills.py` y `layout.py`) y sus tests (`tests/synthetic.py`).
 - **El código viejo en español** (competitivo, subtitles, reel_express…) **se migra cuando se toca**, no en un refactor aparte. Al tocarlo, se traduce lo que el cambio toca y se deja el resto como está.
 - **Los contratos públicos no se rompen al traducir.** Un campo del formulario, una clave del status o una ruta que ya consume algo (la UI, Claude, otro repo) se cambia solo junto con quien la consume, en el mismo cambio. Por eso el modo edit sigue aceptando `carpeta_dia`, `partido`, `titulo`, `mapa`, `anchors` y `marca_alto` (los comparte con `/finish`) y su status sigue usando `resultado`, `aviso` y `modo`.
 - Lo que viene de fuera conserva su forma: el `manifest.json` de presentations (`archivo`, `laminas`) y las palabras en español de las transcripciones (los números escritos de `montage/layers.py`).
