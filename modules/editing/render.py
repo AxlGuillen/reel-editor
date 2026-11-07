@@ -28,8 +28,9 @@ from modules.editing import bank2, effects, panels, timing, titles
 from modules.editing.edl import Edl, Piece, Segment
 
 # events drawn as a full-frame RGBA sequence (editing.panels) and overlaid
-SEQUENCE_KINDS = ("panel", "follow", "speedlines")
-_SEQUENCE_DRAW = {"panel": "frames", "follow": "follow_frames", "speedlines": "speedline_frames"}
+SEQUENCE_KINDS = ("panel", "follow", "speedlines", "glints")
+_SEQUENCE_DRAW = {"panel": "frames", "follow": "follow_frames", "speedlines": "speedline_frames",
+                  "glints": "glint_frames"}
 
 INTERMEDIATE_CRF = 14
 PARALLEL = 3
@@ -72,18 +73,19 @@ def vf_split(layout: str, width: int, height: int, fps: float) -> str:
     `diagonal`, the whole frame, cut along the diagonal from the top right to
     the bottom left) with a white seam. Last chain left open, like vf_cover."""
     f = f"fps={fps:.6f},"           # the second source on the first one's clock
+    line_px = max(2, round(SPLIT_LINE * effects.px_scale(width, height) / 2) * 2)
     if layout == "diagonal":
         cover = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=gbrp"
-        line = SPLIT_LINE / (2 * min(width, height))
+        line = line_px / (2 * min(width, height))
         return (f"[0:v]{cover}[sp_a];[1:v]{f}{cover}[sp_b];"
                 f"[sp_a][sp_b]blend=all_expr='if(lt(abs(X/W+Y/H-1),{line:.5f}),255,"
                 f"if(lt(X/W+Y/H,1),A,B))',format=yuv420p")
     if layout == "left_right":
         w, h, stack = width // 2 // 2 * 2, height, "hstack"
-        seam = f"drawbox=x={w - SPLIT_LINE // 2}:y=0:w={SPLIT_LINE}:h=ih:color=white:t=fill"
+        seam = f"drawbox=x={w - line_px // 2}:y=0:w={line_px}:h=ih:color=white:t=fill"
     else:
         w, h, stack = width, height // 2 // 2 * 2, "vstack"
-        seam = f"drawbox=x=0:y={h - SPLIT_LINE // 2}:w=iw:h={SPLIT_LINE}:color=white:t=fill"
+        seam = f"drawbox=x=0:y={h - line_px // 2}:w=iw:h={line_px}:color=white:t=fill"
     cover = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,format=yuv420p"
     return (f"[0:v]{cover}[sp_a];[1:v]{f}{cover}[sp_b];[sp_a][sp_b]{stack}=inputs=2,"
             f"scale={width}:{height},{seam}")
@@ -224,12 +226,12 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
                            effects.flash_mix(edl.events, edl.fps, intensity),
                            effects.strobe(edl.events, edl.fps, intensity),
                            effects.camera(edl.events, W, H, edl.fps, intensity),
-                           effects.whip_blur(edl.events, intensity),
-                           bank2.shake_blur(edl.events, edl.fps, W),
-                           effects.rgb(edl.events, intensity, edl.fps),
+                           effects.whip_blur(edl.events, intensity, effects.px_scale(W, H)),
+                           bank2.shake_blur(edl.events, edl.fps, W, H),
+                           effects.rgb(edl.events, intensity, edl.fps, effects.px_scale(W, H)),
                            effects.invert(edl.events, edl.fps),
                            bank2.impactframe(edl.events, edl.fps),
-                           bank2.glitch_chain(edl.events, edl.fps, intensity),
+                           bank2.glitch_chain(edl.events, edl.fps, intensity, effects.px_scale(W, H)),
                            bank2.satpulse(edl.events, edl.fps, intensity),
                            bank2.grain(edl.events, edl.fps, intensity),
                            effects.blackout(edl.events, edl.fps)) if f]
@@ -288,7 +290,8 @@ def _subtitles(edl: Edl) -> str | None:
     from modules.subtitles import processor as subtitles
     from modules.subtitles.schema import SubtitlesParams
     params = SubtitlesParams(layout="invert", **edl.subtitle_style)
-    words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"])}
+    words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"]),
+              **{k: float(w[k]) for k in ("y", "clear") if w.get(k) is not None}}
              for w in edl.subtitle_words if str(w.get("word") or "").strip()]
     if not words:
         return None

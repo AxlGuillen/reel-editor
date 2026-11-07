@@ -80,6 +80,34 @@ Trece efectos más, todos en `modules/editing/bank2.py` salvo las líneas de vel
 - `eq` con saturación 1 igual remuestrea la croma: el pulso de color lleva `enable` para no tocar el resto del edit.
 - Las líneas de velocidad arrancan visibles: el fundido se mide desde el final del cuadro, con un piso del 45 %.
 
+## Efectos compuestos (`editing/recipes.py`)
+
+Salen de la investigación del 07/11 (`Edits\Investigacion efectos\reporte.md`): lo que repiten los edits de anime más vistos de TikTok. Cada compuesto es una **lista de Events** sobre cuadros exactos (k / fps), así que el planificador los agrega como cualquier efecto y el render no cambia. Nunca mueven un corte.
+
+| Compuesto | Qué apila |
+|---|---|
+| `blur_cuts(cortes, fps, style)` — C2, corte con desenfoque | El último cuadro del plano: zoom radial (`radial`) o desenfoque en el eje del golpe (`directional`) y +1.5 EV (mezcla con blanco al 42 %). El primero del plano siguiente, la mitad. `mix` alterna los dos. Uno de cada `accent_every` cortes (4) suma un cuadro invertido o posterizado. `skip`: cortes que quedan limpios. |
+| `hit(k, fps, angle, x, y, whip, room)` — C1, golpe completo | Destello aditivo de 2 cuadros, congelado de 9 cuadros con acercamiento a 1.12, separación de color de 6 px, sacudida en el ángulo del golpe (14 px, cuadros 1–6), líneas radiales al 60 % y, con `whip`, un barrido al plano siguiente. `room` = cuadros hasta el corte: el congelado nunca tapa el plano siguiente. |
+| `burst(k, fps, x, y, colors)` — C3, ráfaga de impacto | Cuadros k, k+2, k+4 en tinta blanco y negro; k+1, k+3, k+5 en duotono rojo → cian; destellos de estrella en k…k+6, rayos (líneas radiales) en k+4…k+8 y un brillo que cae en k+8…k+20. |
+| `isolate(k, fps, color, similarity)` — C10, aislamiento de color | Un destello, todo en gris menos `color` durante 12 cuadros y el color que vuelve en 6, con brillo. |
+| `words_from_srt` + `lyric_words` — C5, la letra palabra por palabra | Las palabras de un .srt de Axl (una por cue; los marcadores «♪ 001» sin texto se saltan) con los subtítulos `invert`. Cada palabra lleva `y` (en el tercio de abajo, o en el de arriba si el sujeto está abajo: el foco de su toma) y `clear` (el corte siguiente: la frase no pasa al plano nuevo). `_build_invert_ass` acepta las dos claves por palabra. |
+
+**Primitivas nuevas** (las usan los compuestos; también sirven solas):
+
+| Efecto | Qué hace | Parámetros |
+|---|---|---|
+| `freeze` | congela el cuadro de t durante `dur`, en tiempo de salida (lo que sigue se salta, no se atrasa) | `dur` |
+| `duotone` | mapa de gradiente: la luma va de `colors[0]` a `colors[1]` | `colors` (rojo → cian por omisión) |
+| `isolate` | `colorhold`: todo gris menos `colors[0]` (y un 30 % más saturado); el color vuelve en los últimos `fade` s | `colors`, `similarity` 0.25, `fade` |
+| `glints` | destellos de estrella de 4 puntas, nuevos en cada cuadro, alrededor de x/y | `intensity`, `x`, `y`, `seed` |
+| `blur` | desenfoque direccional (horizontal o vertical según `angle`) | `blur` px (de un cuadro de 1080), `angle` |
+
+**Medido y corregido:** `loop=loop=n−1` da n−1 cuadros (no n). `colorhold` entrega RGBA: va un `format` después. La duración de un evento cuenta cuadros (`dur=0.1` a 30 fps son 3).
+
+## 2K y 4K
+
+Los px fijos del banco (desenfoques, separación de color, costuras, grosor de las líneas de velocidad, glitch) crecen con `effects.px_scale(W, H)` = mínimo(W, H) / 1080: 1 a 1080p (vertical u horizontal), 1.33 a 1440 y 2 a 4K. Nunca baja de 1, así que los cuadros más chicos se ven como antes. Los títulos y los subtítulos ya eran relativos (PlayRes). En el preset `manga`, `resolution` = 1080, 1440 o 2160 (el ancho; el alto es 16/9 de eso). Con una fuente de 1080p no gana nitidez: el encuadre A recorta 608 px de ancho y los escala. Para 2K/4K, la fuente tiene que venir en 4K.
+
 ## Seguir al personaje (`follow`, fase 5)
 
 Un `Event("follow", image=…, track=[[t, x, y, w], …], opacity, fade)` en tiempo y píxeles de salida. `editing/panels.follow_frames` dibuja la imagen centrada en el punto de cada cuadro, `w` de ancho y con fundido de entrada y salida. Con el mismo camino de los paneles (PNG RGBA por cuadro + `overlay`), no hace falta `sendcmd` ni expresiones.

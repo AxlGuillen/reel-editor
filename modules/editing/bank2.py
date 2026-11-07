@@ -21,7 +21,7 @@ from core import ffmpeg_runner
 from modules.editing.edl import Event
 from modules.editing.effects import _f, frames_of, whip_axis
 
-WINDOW_KINDS = ("spin", "zoomblur", "echo", "lens", "tilt", "overlay")
+WINDOW_KINDS = ("spin", "zoomblur", "echo", "lens", "tilt", "overlay", "freeze", "duotone", "isolate")
 
 
 def is_window(e: Event) -> bool:
@@ -37,6 +37,10 @@ LENS_K = 0.22                 # barrel distortion at intensity 1
 TILT = 0.10                   # how far the near edge grows (fraction of the frame) at intensity 1
 GLITCH_BANDS = 5
 GLITCH_SHIFT = 0.06           # band offset (fraction of the width) at intensity 1
+DUOTONE = ("#3a0010", "#5ef2ff")   # dark red → light cyan: the impact burst's gradient
+ISOLATE = "#e02020"
+ISOLATE_SAT = 1.3             # the kept color, a bit stronger
+BLUR_PX = 12.0                # a "blur" event's px (in a 1080 frame) when it gives none
 
 
 def _sum(terms: list[str]) -> str:
@@ -45,6 +49,11 @@ def _sum(terms: list[str]) -> str:
 
 def _on(events: list[Event], fps: int) -> str:
     return _sum([f"between(n,{a},{b})" for a, b in (frames_of(e.t, e.dur, fps) for e in events)])
+
+
+def _rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
 def _even(x: float) -> int:
@@ -88,16 +97,17 @@ def satpulse(events: list[Event], fps: int, intensity: float = 1.0) -> str:
     return f"eq=saturation='1+{_sum(terms)}':eval=frame:enable='{_on(ev, fps)}'"
 
 
-def glitch_chain(events: list[Event], fps: int, intensity: float = 1.0) -> str:
+def glitch_chain(events: list[Event], fps: int, intensity: float = 1.0, scale: float = 1.0) -> str:
     """glitch "vhs" (noise, chroma bleed, scanlines, washed color) and
     "flicker" (brightness jumping frame to frame)."""
     out = []
     vhs = [e for e in events if e.kind == "glitch" and e.style == "vhs"]
     if vhs:
         on = _on(vhs, fps)
+        c, line = max(1, round(4 * scale)), max(4, round(4 * scale))
         out.append(f"noise=alls={int(22 * intensity)}:allf=t+u:enable='{on}',"
-                   f"chromashift=cbh=4:crh=-4:cbv=1:enable='{on}',"
-                   f"drawgrid=w=iw:h=4:t=1:c=black@0.35:enable='{on}',"
+                   f"chromashift=cbh={c}:crh=-{c}:cbv=1:enable='{on}',"
+                   f"drawgrid=w=iw:h={line}:t={max(1, round(scale))}:c=black@0.35:enable='{on}',"
                    f"eq=saturation=0.75:contrast=1.08:enable='{on}'")
     flick = [e for e in events if e.kind == "glitch" and e.style == "flicker"]
     if flick:
@@ -111,15 +121,20 @@ def glitch_chain(events: list[Event], fps: int, intensity: float = 1.0) -> str:
     return ",".join(out)
 
 
-def shake_blur(events: list[Event], fps: int, width: int) -> str:
+def shake_blur(events: list[Event], fps: int, width: int, height: int | None = None) -> str:
     """The blur that travels with a shake (Event.blur px of a 1920 frame),
-    along its axis, quantized to horizontal or vertical like the whip's."""
+    along its axis, quantized to horizontal or vertical like the whip's; and
+    the "blur" events (BLUR_PX by default, px of a 1080 frame)."""
     out = []
     for axis in ("h", "v"):
-        ev = [e for e in events if e.kind == "shake" and e.blur > 0 and whip_axis(e) == axis]
+        shakes = [e for e in events if e.kind == "shake" and e.blur > 0 and whip_axis(e) == axis]
+        blurs = [e for e in events if e.kind == "blur" and whip_axis(e) == axis]
+        ev = shakes + blurs
         if not ev:
             continue
-        sigma = _f(max(e.blur for e in ev) * width / 1920 / 2)
+        k = max(1.0, min(width, height or width) / 1080)
+        px = max([e.blur * width / 1920 for e in shakes] + [(e.blur or BLUR_PX) * k for e in blurs])
+        sigma = _f(px / 2)
         size = f"sigma={sigma}:sigmaV=0.01" if axis == "h" else f"sigma=0.01:sigmaV={sigma}"
         out.append(f"gblur={size}:enable='{_on(ev, fps)}'")
     return ",".join(out)
@@ -175,7 +190,8 @@ def _window_chain(src: str, dst: str, e: Event, j: int, a: int, b: int, fps: int
     if e.kind == "glitch":                     # blocks: horizontal bands thrown sideways
         n = GLITCH_BANDS
         h = height // n
-        parts = [f"[{src}]chromashift=cbh=6:crh=-6,split={n + 1}[gb{j}base]"
+        c = max(6, round(6 * min(width, height) / 1080))
+        parts = [f"[{src}]chromashift=cbh={c}:crh=-{c},split={n + 1}[gb{j}base]"
                  + "".join(f"[gb{j}_{i}]" for i in range(n))]
         cur = f"gb{j}base"
         for i in range(n):
@@ -231,6 +247,29 @@ def _window_chain(src: str, dst: str, e: Event, j: int, a: int, b: int, fps: int
             c.update(x0=f"W*{d}", x1=f"W*(1-{d})")
         coords = ":".join(f"{k}='{v}'" for k, v in c.items())
         return [f"[{src}]perspective={coords}:interpolation=linear:eval=frame[{dst}]"]
+    if e.kind == "freeze":
+        # the window's first frame, repeated on every frame of the window
+        n = b - a + 1
+        # loop=n: one more than needed (measured: loop=n−1 gave n−1 frames); the
+        # overlay's enable ends it on the window's last frame anyway
+        return [f"[{src}]trim=end_frame=1,loop=loop={n}:size=1:start=0,"
+                f"setpts=(N+{a})/({fps}*TB)[{dst}]"]
+    if e.kind == "duotone":
+        # gray, then each channel maps luma 0..255 onto dark..light
+        dark, light = (e.colors or list(DUOTONE))[:2]
+        d, l_ = _rgb(dark), _rgb(light)
+        chans = ":".join(f"{c}='{d[i]}+({l_[i] - d[i]})*val/255'" for i, c in enumerate("rgb"))
+        return [f"[{src}]hue=s=0,format=gbrp,lutrgb={chans},format=yuv420p[{dst}]"]
+    if e.kind == "isolate":
+        # colorhold grays every color but the kept one (RGB only); the color
+        # comes back over the last `fade` s: a blend toward the original by T
+        color = (e.colors or [ISOLATE])[0].lstrip("#")
+        back = max(1 / fps, min(e.fade, dur))
+        t1 = (b + 1) / fps - back
+        return [f"[{src}]split[is{j}o][is{j}h]",
+                f"[is{j}h]format=rgb24,colorhold=color=0x{color}:similarity={_f(e.similarity)}:blend=0.12,"
+                f"format=yuv420p,eq=saturation={_f(ISOLATE_SAT)}[is{j}k]",
+                f"[is{j}k][is{j}o]blend=all_expr='A+(B-A)*clip((T-{t1:.6f})/{back:.6f},0,1)'[{dst}]"]
     if e.kind == "overlay":
         mode = {"screen": "screen", "add": "addition", "normal": "normal"}[e.style or "screen"]
         start = a / fps

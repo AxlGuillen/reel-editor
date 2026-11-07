@@ -132,6 +132,11 @@ class FinishParams:
     words: list | None = None
     motion: str = "off"
     blocks: list | None = None
+    blur_cuts: str = "off"
+    composites: list | None = None
+    lyrics_srt: str = ""
+    # the short side of the output: 1080 (1080×1920), 1440 (2K) or 2160 (4K)
+    resolution: int = 1080
 
     @classmethod
     def from_form(cls, form, valid_ids: set[int]) -> "FinishParams":
@@ -236,5 +241,20 @@ class FinishParams:
         if blocks is not None and (not isinstance(blocks, list)
                                    or not all(isinstance(b, dict) and "take" in b and "block" in b for b in blocks)):
             raise ValueError("'blocks' es una lista {\"take\": índice de toma, \"block\": id de blocks.json}.")
+        blur_cuts = str(form.get("blur_cuts") or "off").strip().lower()
+        if blur_cuts not in ("off", "radial", "directional", "mix"):
+            raise ValueError("'blur_cuts' es off, radial, directional o mix.")
+        composites = _json(form, "composites")
+        if composites is not None and (not isinstance(composites, list) or not all(
+                isinstance(c, dict) and c.get("kind") in ("hit", "burst", "isolate") and "at" in c
+                for c in composites)):
+            raise ValueError("'composites' es una lista {\"kind\": hit|burst|isolate, \"at\": segundo del video, …}.")
+        lyrics = str(form.get("lyrics_srt") or "").strip().strip('"')
+        if lyrics and not os.path.isfile(lyrics):
+            raise ValueError(f"No existe el .srt de la letra: {lyrics}")
+        resolution = int(_num(form, "resolution", 1080, 1080, 2160, int))
+        if resolution not in (1080, 1440, 2160):
+            raise ValueError("'resolution' es 1080, 1440 (2K) o 2160 (4K).")
         return {"takes": takes, "panels": panels, "panels_folder": folder, "grid": grid, "flashes": flashes,
-                "phrases": phrases, "music_end": end, "words": words, "motion": motion, "blocks": blocks}
+                "phrases": phrases, "music_end": end, "words": words, "motion": motion, "blocks": blocks,
+                "blur_cuts": blur_cuts, "composites": composites, "lyrics_srt": lyrics, "resolution": resolution}

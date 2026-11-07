@@ -742,6 +742,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if win is None:
                 continue
             end = min(end, win[1])
+        # A word may carry its own block center ("y", px of 1920: away from the
+        # subject) and "clear" (s: the cut where its phrase leaves the screen)
+        cy = round(float(words[0]["y"])) if words[0].get("y") is not None else params.inv_y
+        if words[0].get("clear") is not None:
+            end = min(end, float(words[0]["clear"]))
+            words = [w for w in words if w["start"] < end - 0.05] or words[:1]
+            shown = [w["word"].upper() for w in words]
         # Stacked, one word per line, the block centered on inv_y; too long a
         # word shrinks the whole group (the vertical one has the frame's height).
         widths = [fonts.text_width(font, w, em) for w in shown]

@@ -97,6 +97,14 @@ def color(look: str, lut: str = "") -> str:
     return ",".join(parts)
 
 
+def px_scale(width: int, height: int) -> float:
+    """How much the px constants (blur sigmas, color split, seams) grow with
+    the output: 1 at 1080p (1080×1920 or 1920×1080), 1.33 at 1440p, 2 at 4K.
+    The effects were tuned at 1080p; at 4K the same look needs twice the px.
+    Never below 1: smaller frames keep the 1080p px, as before."""
+    return max(1.0, min(width, height) / 1080)
+
+
 def _f(x: float) -> str:
     return f"{x:.4f}".rstrip("0").rstrip(".") if x else "0"
 
@@ -183,7 +191,7 @@ def panel(src: str, img: str, dst: str, e: Event, fps: int) -> str:
     YUV tv range equals multiplying R, G and B) and the panel goes on top."""
     a, b = frames_of(e.t, e.dur, fps)
     on = f"between(n,{a},{b})"
-    if e.kind in ("follow", "speedlines"):     # the same overlay, no darkening
+    if e.kind in ("follow", "speedlines", "glints"):   # the same overlay, no darkening
         return f"[{src}][{img}]overlay=x=0:y=0:enable='{on}'[{dst}]"
     return (f"[{src}]drawbox=x=0:y=0:w=iw:h=ih:color=black@{_f(1 - e.dim)}:t=fill:enable='{on}'[{img}d];"
             f"[{img}d][{img}]overlay=x=0:y=0:enable='{on}'[{dst}]")   # eof_action=pass dropped the last frame
@@ -271,14 +279,14 @@ def whip_axis(e: Event) -> str:
     return "h" if abs(math.cos(a)) >= abs(math.sin(a)) else "v"
 
 
-def whip_blur(events: list[Event], intensity: float = 1.0) -> str:
+def whip_blur(events: list[Event], intensity: float = 1.0, scale: float = 1.0) -> str:
     """Motion blur around each whip along its axis (empty if there are none)."""
     out = []
     for axis in ("h", "v"):
         ev = [e for e in events if e.kind == "whip" and whip_axis(e) == axis]
         if not ev:
             continue
-        sigma = _f(WHIP_BLUR * intensity * max(e.intensity for e in ev))
+        sigma = _f(WHIP_BLUR * scale * intensity * max(e.intensity for e in ev))
         enable = _sum([f"between(t,{_f(e.t - WHIP_ATTACK)},{_f(e.t + e.dur * 0.6)})" for e in ev])
         size = f"sigma={sigma}:sigmaV=0.01" if axis == "h" else f"sigma=0.01:sigmaV={sigma}"
         out.append(f"gblur={size}:enable='{enable}'")
@@ -328,7 +336,8 @@ def glow_pulse(src: str, dst: str, events: list[Event], width: int, height: int,
     # only inside the pulses (enable). A round trip through RGB to blend all
     # planes moved every frame of the edit ~5 levels (range conversion).
     return (f"[{src}]split[gp_a][gp_b];"
-            f"[gp_b]scale={width // 4}:{height // 4},gblur=sigma={_f(GLOW_SIGMA)},scale={width}:{height},"
+            f"[gp_b]scale={width // 4}:{height // 4},gblur=sigma={_f(GLOW_SIGMA * px_scale(width, height))},"
+            f"scale={width}:{height},"
             f"eq=brightness='min(1,{env})-1':eval=frame[gp_c];"
             f"[gp_a][gp_c]blend=c0_mode=screen:c0_opacity={_f(GLOW_OPACITY)}:c1_mode=normal:c1_opacity=0:"
             f"c2_mode=normal:c2_opacity=0:enable='{on}'[{dst}]")
@@ -380,7 +389,7 @@ def gain(keys: list) -> str:
     return f"volume='{_sum(terms)}':eval=frame"
 
 
-def rgb(events: list[Event], intensity: float = 1.0, fps: int | None = None) -> str:
+def rgb(events: list[Event], intensity: float = 1.0, fps: int | None = None, scale: float = 1.0) -> str:
     """Color split during the "rgb" events (empty if there are none): the
     chroma planes shifted opposite ways, in YUV. rgbashift works in RGB, so
     FFmpeg converted the WHOLE edit to RGB and back even while it was off, and
@@ -388,7 +397,7 @@ def rgb(events: list[Event], intensity: float = 1.0, fps: int | None = None) -> 
     ev = [e for e in events if e.kind == "rgb"]
     if not ev:
         return ""
-    px = max(2, int(round(RGB_PX * intensity * max(e.intensity for e in ev))))
+    px = max(2, int(round(RGB_PX * scale * intensity * max(e.intensity for e in ev))))
     half = max(1, px // 2)                   # chroma is half the width in 4:2:0
     return f"chromashift=crh=-{half}:cbh={half}:enable='{_window(ev, fps)}'"
 
@@ -397,5 +406,6 @@ def glow(src: str, dst: str, amount: float, width: int, height: int) -> str:
     """Soft glow (cheap bloom): the image blurred at 1/4, added in screen mode.
     `src`/`dst` are filter_complex labels."""
     return (f"[{src}]split[gl_a][gl_b];"
-            f"[gl_b]scale={width // 4}:{height // 4},gblur=sigma=6,scale={width}:{height}[gl_c];"
+            f"[gl_b]scale={width // 4}:{height // 4},gblur=sigma={_f(6 * px_scale(width, height))},"
+            f"scale={width}:{height}[gl_c];"
             f"[gl_a][gl_c]blend=all_mode=screen:all_opacity={_f(min(1.0, amount) * 0.45)}[{dst}]")

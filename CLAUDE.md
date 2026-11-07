@@ -500,6 +500,7 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
     - **Banco 2** (`editing/bank2.py`): `speedlines` (radiales o paralelas), `impactframe` (bw / inv / poster), `spin`, `zoomblur`, `glitch` (blocks / vhs / flicker), `echo`, `grain`, `satpulse`, `overlay` (assets de `assets/overlays/`), `lens` (con aberración cromática), `tilt` y `shake` con `blur`.
       - Los caros van en **ventanas**: una rama recortada a sus cuadros y superpuesta de vuelta, así fuera de la ventana el cuadro no se toca.
       - En la toma: curvas de velocidad suaves (`timing.velocity`, `velocity_hit`) y pantalla dividida (`Segment.split`: arriba/abajo, lado a lado o diagonal).
+    - **Compuestos** (`editing/recipes.py`, de la investigación de los edits más vistos de TikTok): corte con desenfoque, golpe completo, ráfaga de impacto, aislamiento de color y la letra palabra por palabra con los subtítulos invertidos. Primitivas nuevas: `freeze`, `duotone`, `isolate`, `glints`, `blur`. En el preset `manga`: `blur_cuts`, `composites` (momentos en segundos del video), `lyrics_srt` y `resolution` (1080/1440/2160; los px del banco crecen con `effects.px_scale`).
     - Los efectos con duración se prenden por número de cuadro.
     - Vista **Efectos** en Edits: galería con cada efecto sobre la misma toma (`POST /api/editing/gallery`).
     - `follow`: una imagen que sigue al personaje.

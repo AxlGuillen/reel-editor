@@ -97,6 +97,7 @@ def speedline_frames(e, width: int, height: int, fps: int, folder: str) -> str:
     cx, cy = e.x * width, e.y * height
     reach = math.hypot(width, height)
     count = max(8, int(SPEEDLINES * min(1.5, e.intensity)))
+    k_px = max(1.0, min(width, height) / 1080)    # line widths tuned at 1080p
     for k in range(n):
         rng = random.Random(e.seed * 100003 + a + k)
         t = (a + k) / fps
@@ -126,7 +127,59 @@ def speedline_frames(e, width: int, height: int, fps: int, folder: str) -> str:
                 length = rng.uniform(0.25, 0.8) * reach / 2
                 mx, my = width / 2 + px_ * off + ux * along, height / 2 + py_ * off + uy * along
                 d.line([(mx - ux * length / 2, my - uy * length / 2), (mx + ux * length / 2, my + uy * length / 2)],
-                       fill=(255, 255, 255, alpha), width=rng.randint(2, 5))
+                       fill=(255, 255, 255, alpha), width=max(1, round(rng.randint(2, 5) * k_px)))
+        canvas.save(os.path.join(sub, f"f_{k:04d}.png"), compress_level=1)
+    return pattern
+
+
+GLINTS = 5                    # sparkles per frame at intensity 1
+
+
+def _star(size: int) -> Image.Image:
+    """A 4-point star sparkle with a soft core, white on transparent."""
+    from PIL import ImageDraw, ImageFilter
+    s = max(8, size)
+    im = Image.new("L", (s, s), 0)
+    d = ImageDraw.Draw(im)
+    c, w = s / 2, max(1.0, s / 22)
+    d.polygon([(c, 0), (c + w, c - w), (s, c), (c + w, c + w), (c, s), (c - w, c + w), (0, c), (c - w, c - w)],
+              fill=255)
+    core = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(core).ellipse([c - s / 7, c - s / 7, c + s / 7, c + s / 7], fill=255)
+    a = Image.composite(Image.new("L", (s, s), 255), im, core.filter(ImageFilter.GaussianBlur(s / 14)))
+    a = a.filter(ImageFilter.GaussianBlur(max(0.6, s / 60)))
+    out = Image.new("RGBA", (s, s), (255, 250, 235, 0))
+    out.putalpha(a)
+    return out
+
+
+def glint_frames(e, width: int, height: int, fps: int, folder: str) -> str:
+    """Star glints (the anime impact sparkle): new ones every frame, scattered
+    around (x, y) — fractions of the frame — 4–12 % of the short side, each
+    lasting one frame. Random from the frame number and the seed."""
+    import random
+    a, b = effects.frames_of(e.t, e.dur, fps)
+    n = b - a + 1
+    key = hashlib.sha1(f"gl|{width}x{height}|{fps}|{a}|{n}|{e.x}|{e.y}|{e.intensity}|{e.seed}".encode()).hexdigest()[:12]
+    sub = os.path.join(folder, f"glints_{key}")
+    pattern = os.path.join(sub, "f_%04d.png")
+    if os.path.isfile(os.path.join(sub, f"f_{n - 1:04d}.png")):
+        return pattern
+    os.makedirs(sub, exist_ok=True)
+    short = min(width, height)
+    count = max(1, round(GLINTS * min(2.0, e.intensity)))
+    stars: dict[int, Image.Image] = {}
+    for k in range(n):
+        rng = random.Random(e.seed * 7919 + a + k)
+        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        for _ in range(count):
+            size = int(short * rng.uniform(0.04, 0.12)) // 2 * 2
+            if size not in stars:
+                stars[size] = _star(size)
+            x = rng.gauss(e.x, 0.22) * width
+            y = rng.gauss(e.y, 0.18) * height
+            st = stars[size]
+            _place(canvas, st, int(x - st.width / 2), int(y - st.height / 2))
         canvas.save(os.path.join(sub, f"f_{k:04d}.png"), compress_level=1)
     return pattern
 

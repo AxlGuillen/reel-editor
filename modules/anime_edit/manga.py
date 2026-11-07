@@ -60,6 +60,17 @@ class MangaOptions:
     # effects on the real hits and hit–beat fit (anime_edit/blocks.py).
     motion: str = "off"
     blocks: list[dict] = field(default_factory=list)  # [{"take": i, "block": id}] chosen by Claude
+    # composites (editing/recipes.py), off by default (the rules v1.0 edit exactly):
+    # blur_cuts = off | radial | directional | mix — C2 on every cut between two takes
+    blur_cuts: str = "off"
+    blur_accent_every: int = 4
+    blur_cuts_from: float = 0.0               # output s: a slow intro keeps its clean cuts
+    # [{"kind": "hit" | "burst" | "isolate", "at": source s (the contact frame),
+    #   + the recipe's own keys: angle, x, y, whip, color, strength}]; Claude picks
+    # the moments in the episode, the code finds their output frame
+    composites: list[dict] = field(default_factory=list)
+    # C5: an .srt of the song with one word per cue (Axl's text), in song s
+    lyrics_srt: str = ""
 
 
 # ---------------------------------------------------------------- the grid
@@ -253,6 +264,7 @@ def plan(video: str, source_size: tuple[int, int], bm: dict, takes: list[dict],
     edl = Edl(segments=segments, fps=fps, width=op.width, height=op.height, events=events,
               music_start=op.music_start, look="neutral", glow=0.0, vignette=False, fade_out=0.0,
               music_fade_in=MUSIC_FADE_IN, video_fade_out=VIDEO_FADE)
+    comp_info = _composites(edl, items, spans, op)
     if op.words:
         edl.subtitle_words = op.words
         edl.subtitle_style = dict(op.word_style)
@@ -276,7 +288,71 @@ def plan(video: str, source_size: tuple[int, int], bm: dict, takes: list[dict],
             "first_downbeat": round(grid.first - op.music_start, 4)}
     if motion_info is not None:
         info["motion"] = motion_info
+    if comp_info:
+        info["composites"] = comp_info
     return edl, info
+
+
+# ---------------------------------------------------------------- composites
+
+COMPOSITE_RECIPES = ("hit", "burst", "isolate")
+
+
+def output_frame(items: list[dict], spans: list[tuple[int, int]], at: float, fps: int) -> int | None:
+    """The output frame showing source second `at` (None if no take shows it)."""
+    for it, (f0, f1) in zip(items, spans):
+        if it["kind"] != "take":
+            continue
+        k = f0 + round((at - it["t"]) / it["speed"] * fps)
+        if f0 <= k < f1:
+            return k
+    return None
+
+
+def _composites(edl: Edl, items: list[dict], spans: list[tuple[int, int]], op: MangaOptions) -> dict:
+    from modules.editing import recipes
+    fps = op.fps
+    info: dict = {}
+    if op.blur_cuts != "off":
+        if op.blur_cuts not in ("radial", "directional", "mix"):
+            raise ValueError("'blur_cuts' es off, radial, directional o mix.")
+        # only between two takes: a panel enters on a held frame, clean
+        cuts = [spans[i][0] for i in range(1, len(items))
+                if items[i]["kind"] == "take" and items[i - 1]["kind"] == "take"
+                and spans[i][0] >= op.blur_cuts_from * fps - 1e-6]
+        edl.events += recipes.blur_cuts(cuts, fps, style=op.blur_cuts, accent_every=op.blur_accent_every)
+        info["blur_cuts"] = len(cuts)
+    placed = []
+    for n, c in enumerate(op.composites):
+        kind = c.get("kind")
+        if kind not in COMPOSITE_RECIPES:
+            raise ValueError(f"Compuesto desconocido: {kind!r}. Opciones: {', '.join(COMPOSITE_RECIPES)}.")
+        k = output_frame(items, spans, float(c["at"]), fps)
+        if k is None:
+            raise ValueError(f"Ninguna toma muestra el segundo {float(c['at']):.2f} del compuesto {kind}.")
+        kw = {key: c[key] for key in ("angle", "x", "y", "whip", "strength") if key in c}
+        if kind == "hit":
+            end = next(f1 for f0, f1 in spans if f0 <= k < f1)
+            edl.events += recipes.hit(k, fps, seed=n, room=end - k, **kw)
+        elif kind == "burst":
+            kw.pop("angle", None), kw.pop("whip", None)
+            edl.events += recipes.burst(k, fps, seed=n, colors=c.get("colors"), **kw)
+        else:
+            edl.events += recipes.isolate(k, fps, color=c.get("color", "#e02020"),
+                                          similarity=float(c.get("similarity", 0.25)),
+                                          strength=float(c.get("strength", 1.0)))
+        placed.append({"kind": kind, "at": float(c["at"]), "frame": k, "t": round(k / fps, 3)})
+    if placed:
+        info["placed"] = placed
+    if op.lyrics_srt:
+        words = [w for w in recipes.words_from_srt(op.lyrics_srt, offset=-op.music_start)
+                 if 0 <= w["start"] < spans[-1][1] / fps]
+        shots = [{"start": f0, "end": f1, "focus": it.get("focus", (0.5, 0.5)) if it["kind"] == "take" else (0.5, 0.5)}
+                 for it, (f0, f1) in zip(items, spans)]
+        op.words = recipes.lyric_words(words, shots, fps)
+        op.word_style = {"inv_words": "1", **op.word_style}
+        info["lyric_words"] = len(op.words)
+    return info
 
 
 # ---------------------------------------------------------------- lyric timing

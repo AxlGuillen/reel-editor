@@ -73,11 +73,12 @@ def variant(effect: dict, source: str, start: float, hints: dict, vf: str = "") 
     if effect["stage"] == "output":
         kind = effect.get("event", effect["id"])
         kw = {k: v for k, v in p.items() if k in ("intensity", "dur", "level", "attack", "decay", "every", "style",
-                                                   "degrees", "ca", "blur", "seed", "fade", "opacity", "angle")}
+                                                   "degrees", "ca", "blur", "seed", "fade", "opacity", "angle",
+                                                   "colors", "similarity")}
         kw.update(effect.get("fixed", {}))
-        if kind in ("zoom", "push", "hold", "speedlines") and hints:
+        if kind in ("zoom", "push", "hold", "speedlines", "glints") and hints:
             kw.update(x=hints["x"], y=hints["y"])
-        if kind in ("shake", "whip", "speedlines") and angle is not None:
+        if kind in ("shake", "whip", "speedlines", "blur") and angle is not None:
             kw["angle"] = angle
         if kind in ("panel", "follow"):
             return None                       # they need an image (and follow a track)

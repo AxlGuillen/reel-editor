@@ -123,5 +123,54 @@ class Params(unittest.TestCase):
         self.assertEqual(fp.music_end, 30)
 
 
+class Composites(unittest.TestCase):
+    """The composites in the manga planner: blur cuts only between takes, the
+    recipes on the output frame of their source second, lyrics placed."""
+
+    BM = {"duration": 10.0, "beats": [0.25 + 0.5 * k for k in range(20)],
+          "downbeats": [0.25 + 2.0 * k for k in range(5)], "words": []}
+
+    def plan(self, **kw):
+        op = manga.MangaOptions(music_start=0.0, music_end=4.0, fps=30, **kw)
+        takes = [{"t": 10, "beats": 2, "frame": "B"}, {"t": 20, "beats": 2, "frame": "A"},
+                 {"t": 30, "beats": None, "frame": "C", "focus": [0.5, 0.8]}]
+        return manga.plan("v.mp4", (1920, 1080), self.BM, takes, op)
+
+    def test_off_by_default(self):
+        edl, info = self.plan()
+        self.assertNotIn("composites", info)
+        self.assertFalse([e for e in edl.events if e.kind in ("zoomblur", "freeze")])
+
+    def test_blur_cuts_and_recipes(self):
+        edl, info = self.plan(blur_cuts="radial", blur_accent_every=0,
+                              composites=[{"kind": "hit", "at": 20.5, "angle": 0},
+                                          {"kind": "isolate", "at": 30.2, "color": "#2040ff"}])
+        cuts = info["cuts"]                                            # [37, 67]
+        blurred = sorted({round(e.t * 30) for e in edl.events if e.kind == "zoomblur"})
+        self.assertEqual(blurred, sorted([c - 1 for c in cuts] + cuts))
+        k_hit = cuts[0] + round(0.5 * 30)                              # 20.5 s into the take at 20
+        self.assertEqual(info["composites"]["placed"][0]["frame"], k_hit)
+        freeze = next(e for e in edl.events if e.kind == "freeze")
+        self.assertEqual(round(freeze.t * 30), k_hit)
+        self.assertLessEqual(k_hit + round(freeze.dur * 30), cuts[1])   # never over the next shot
+        iso = next(e for e in edl.events if e.kind == "isolate")
+        self.assertEqual(iso.colors, ["#2040ff"])
+
+    def test_a_moment_no_take_shows_fails(self):
+        with self.assertRaises(ValueError):
+            self.plan(composites=[{"kind": "burst", "at": 99.0}])
+
+    def test_lyrics_from_srt(self):
+        d = tempfile.mkdtemp(prefix="reelforge-lyr-")
+        p = os.path.join(d, "l.srt")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("1\n00:00:00,500 --> 00:00:00,900\nfirst\n\n2\n00:00:03,000 --> 00:00:03,400\nlast\n")
+        edl, info = self.plan(lyrics_srt=p)
+        self.assertEqual(info["composites"]["lyric_words"], 2)
+        w = edl.subtitle_words
+        self.assertEqual(w[0]["clear"], info["cuts"][0] / 30)          # cleared at the first cut
+        self.assertEqual(w[1]["y"], 560)                                # focus low → the word goes high
+
+
 if __name__ == "__main__":
     unittest.main()

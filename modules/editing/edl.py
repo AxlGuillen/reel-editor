@@ -11,6 +11,7 @@ Units: seconds. The times of `Event` and `Text` are OUTPUT times; those of
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 
 FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen frame
@@ -32,13 +33,22 @@ FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen f
 # (ghost trail of the last frames), grain, satpulse (saturation swell),
 # overlay (a light leak / embers file blended over), lens (barrel distortion
 # + radial chromatic aberration) and tilt (a 3D perspective tilt).
+# Composites (editing/recipes.py) add freeze (the frame at t held for `dur`,
+# in output time: what follows is skipped, not delayed), duotone (the frame as
+# a two-color gradient map, `colors` = [dark, light]), isolate (everything gray
+# but the hue of colors[0], within `similarity`; the color comes back over the
+# last `fade` s), glints (4-point star sparkles, new ones every frame, around
+# x/y) and blur (a directional blur along `angle`, `blur` px of a 1080 frame).
 EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black", "panel",
                "invert", "strobe", "glow", "follow",
                "speedlines", "impactframe", "spin", "zoomblur", "glitch", "echo", "grain", "satpulse",
-               "overlay", "lens", "tilt")
+               "overlay", "lens", "tilt",
+               "freeze", "duotone", "isolate", "glints", "blur")
 EVENT_STYLES = {"speedlines": ("radial", "parallel"), "impactframe": ("bw", "inv", "poster"),
                 "glitch": ("blocks", "vhs", "flicker"), "overlay": ("screen", "add", "normal"),
                 "tilt": ("left", "right", "up", "down")}
+COMPOSITE_KINDS = ("freeze", "duotone", "isolate", "glints", "blur")
+HEX = re.compile(r"#[0-9A-Fa-f]{6}")
 SPLIT_LAYOUTS = ("top_bottom", "left_right", "diagonal")
 FLASH_SHAPES = ("pulse", "mix")   # pulse: brightness that decays · mix: a flat mix toward white
 PANEL_BOX = (1040 / 1080, 1700 / 1920)   # the panel fits in this fraction of the frame (rules v1.0)
@@ -138,6 +148,9 @@ class Event:
     degrees: float = 360.0
     ca: float = 0.0
     seed: int = 0
+    # composites: duotone [dark, light] / isolate [kept color], as #RRGGBB
+    colors: list = field(default_factory=list)
+    similarity: float = 0.25      # isolate: how far from colors[0] still counts (colorhold, 0–1)
 
 
 @dataclass
@@ -224,6 +237,14 @@ class Edl:
                 raise ValueError(f"Evento desconocido: {e.kind!r}.")
             if e.kind == "flash" and e.shape not in FLASH_SHAPES:
                 raise ValueError(f"Forma de destello desconocida: {e.shape!r}.")
+            if e.kind in COMPOSITE_KINDS and e.dur <= 0:
+                raise ValueError(f"El efecto {e.kind} en {e.t:.2f} s no dura nada.")
+            if e.colors and not all(isinstance(c, str) and HEX.fullmatch(c) for c in e.colors):
+                raise ValueError(f"Los colores del efecto {e.kind} en {e.t:.2f} s van como #RRGGBB.")
+            if e.kind == "duotone" and e.colors and len(e.colors) != 2:
+                raise ValueError("Un duotono lleva dos colores: [oscuro, claro].")
+            if e.kind == "isolate" and not 0 < e.similarity <= 1:
+                raise ValueError("La similitud del aislamiento de color va entre 0 y 1.")
             if e.kind in EVENT_STYLES and e.style and e.style not in EVENT_STYLES[e.kind]:
                 raise ValueError(f"Estilo desconocido para {e.kind}: {e.style!r}. "
                                  f"Opciones: {', '.join(EVENT_STYLES[e.kind])}.")
@@ -277,7 +298,9 @@ class Edl:
                         **({"style": e.style} if e.style else {}),
                         **({"dur": round(e.dur, 3)} if e.kind in ("speedlines", "impactframe", "spin", "zoomblur",
                                                                     "glitch", "echo", "grain", "satpulse",
-                                                                    "overlay", "lens", "tilt") else {})}
+                                                                    "overlay", "lens", "tilt") + COMPOSITE_KINDS
+                           else {}),
+                        **({"colors": list(e.colors)} if e.colors else {})}
                        for e in self.events],
             **({"video_fade_out": self.video_fade_out} if self.video_fade_out else {}),
             "music_gain": [[round(t, 3), round(g, 3)] for t, g in self.music_gain],

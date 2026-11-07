@@ -316,6 +316,16 @@ GET /api/anime-edit/presets          → {presets: [{id, description}], formats}
   - En la toma de 1127.95 s el primer cuadro del episodio cae 0.01 s después, y sin esto salía otro cuadro.
   - Solo lo activa `manga`, así los demás módulos no cambian.
 
+### Compuestos en el preset `manga`
+
+Por omisión todo apagado, así el plan sigue siendo el de las reglas v1.0 (`repro.py` sigue dando los cuadros del edit 3). En `/finish`:
+- `blur_cuts` = `off` | `radial` | `directional` | `mix`: el corte con desenfoque en cada corte entre dos tomas (no al entrar a un panel). `blur_cuts_from` (s de salida) deja limpios los cortes de una intro lenta.
+- `composites` = `[{"kind": "hit" | "burst" | "isolate", "at": segundo del VIDEO, …}]`: Claude elige el momento en el episodio (el cuadro del contacto) y el código encuentra su cuadro de salida (`manga.output_frame`). Un momento que ninguna toma muestra da error. Claves de cada receta: `angle`, `x`, `y`, `whip`, `strength`, `color`, `similarity`.
+- `lyrics_srt`: un .srt de la canción con una palabra por cue, con el texto de Axl (`letra_a_srt.py` reparte el texto pegado sobre el .srt de tiempos). Va con los subtítulos invertidos, ubicados lejos del sujeto y borrados en el corte.
+- `resolution` = 1080 | 1440 | 2160.
+
+El status trae `composites`: cuántos cortes con desenfoque, dónde cayó cada compuesto (`frame`, `t`) y cuántas palabras de la letra.
+
 ### `motion: on` — bloques, curva y efectos en los golpes
 
 `/finish` del preset `manga` con `motion=on` (por omisión `off`: las reglas v1.0 tal cual). Con `off` el plan no cambia nada: la misma EDL y los mismos cuadros que la fase 2. `anime_edit/blocks.py` + `blocks.json` + `fit.py`:
