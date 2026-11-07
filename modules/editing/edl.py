@@ -21,7 +21,10 @@ FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen f
 # silence before the drop); panel (a manga panel over the frozen frame: the
 # frame darkens to ×dim and the panel enters from_scale→1 in `enter` s and keeps
 # growing by `drift` until it ends, fitted in PANEL_BOX of the frame).
-EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black", "panel")
+# The effects bank (phase 3) adds invert (the negative for `dur`), strobe
+# (white every `every` frames for `dur`) and glow (a bloom pulse).
+EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black", "panel",
+               "invert", "strobe", "glow")
 FLASH_SHAPES = ("pulse", "mix")   # pulse: brightness that decays · mix: a flat mix toward white
 PANEL_BOX = (1040 / 1080, 1700 / 1920)   # the panel fits in this fraction of the frame (rules v1.0)
 TEXT_STYLES = ("word", "kill", "multikill", "title", "sub")
@@ -63,6 +66,12 @@ class Segment:
     # at 0, which shifts the frame picking of the fps conversion by up to a
     # source frame. The manga edit (edit3.py) used exact time.
     exact_phase: bool = False
+    # Directional motion blur over the whole shot, in source frames:
+    # {"angle": deg (0 right, 90 up), "amount": px of blur in a 1920-wide frame}.
+    mblur: dict | None = None
+    # With RIFE: drop the repeated drawings (anime on twos/threes) before
+    # interpolating, so the invented frames move between real drawings.
+    dedupe: bool = False
 
     @property
     def dur(self) -> float:
@@ -86,6 +95,12 @@ class Event:
     # flash: "pulse" (the default) or "mix" (the frame mixed with white by
     # `intensity` for the whole `dur`: the manga edit's 55 % for 2 frames).
     shape: str = "pulse"
+    # shake / whip: the direction of the hit (0° right, 90° up; motion map's
+    # impact.angle). None = the old behavior (shake in both axes, whip
+    # horizontal). decay: power of the shake's fall (2 = quadratic).
+    angle: float | None = None
+    decay: float = 2.0
+    every: int = 2                # strobe: one white frame every N
     # panel: the image and how it enters (see EVENT_KINDS).
     image: str = ""
     dim: float = 0.62
@@ -160,6 +175,8 @@ class Edl:
                 raise ValueError(f"El plano {i} no tiene piezas.")
             if s.tint not in TINT_KINDS:
                 raise ValueError(f"Tono desconocido en el plano {i}: {s.tint!r}.")
+            if s.mblur is not None and not (isinstance(s.mblur, dict) and 0 < float(s.mblur.get("amount", 0)) <= 200):
+                raise ValueError(f"El desenfoque de movimiento del plano {i} es {{angle, amount (1–200 px)}}.")
             for p in s.pieces:
                 if p.dur <= 0:
                     raise ValueError(f"El plano {i} tiene una pieza sin duración.")
@@ -170,6 +187,10 @@ class Edl:
                 raise ValueError(f"Evento desconocido: {e.kind!r}.")
             if e.kind == "flash" and e.shape not in FLASH_SHAPES:
                 raise ValueError(f"Forma de destello desconocida: {e.shape!r}.")
+            if e.kind == "strobe" and not 2 <= e.every <= 8:
+                raise ValueError("El estrobo va de un cuadro blanco cada 2 a cada 8 ('every').")
+            if e.kind in ("invert", "strobe", "glow") and e.dur <= 0:
+                raise ValueError(f"El evento {e.kind} en {e.t:.2f} s no dura nada.")
             if e.kind == "panel":
                 if not e.image or not os.path.isfile(e.image):
                     raise ValueError(f"No existe la imagen del panel: {e.image or '(vacía)'}")
@@ -198,7 +219,10 @@ class Edl:
                         **({"shape": e.shape, "dur": round(e.dur, 3)} if e.kind == "flash" and e.shape != "pulse"
                            else {}),
                         **({"image": os.path.basename(e.image), "dur": round(e.dur, 3)} if e.kind == "panel"
-                           else {})}
+                           else {}),
+                        **({"angle": round(e.angle, 1)} if e.angle is not None else {}),
+                        **({"dur": round(e.dur, 3)} if e.kind in ("invert", "strobe", "glow") else {}),
+                        **({"every": e.every} if e.kind == "strobe" else {})}
                        for e in self.events],
             **({"video_fade_out": self.video_fade_out} if self.video_fade_out else {}),
             "music_gain": [[round(t, 3), round(g, 3)] for t, g in self.music_gain],

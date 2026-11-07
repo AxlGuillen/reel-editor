@@ -80,6 +80,22 @@ def impact(start: float, end: float, dur: float, freeze: float = 0.05,
     return pieces
 
 
+def hit_ramp(start: float, hit: float, end: float, dur: float, hit_out: float,
+             before: str | list = "constant", after: str | list = "constant") -> list[Piece]:
+    """A shot of `dur` s whose source frame `hit` lands exactly at `hit_out` s
+    of the shot (a hit on a beat): [start, hit] is spread over [0, hit_out]
+    and [hit, end] over [hit_out, dur], each half with its own profile
+    (fast into the hit and slow after it: before="constant",
+    after="breathe"…). With frame-quantized edges the hit stays on its frame:
+    the cut between the halves is where hit_out falls. Speeds are not
+    clamped here: the planner clamps them (clamp_speeds) and checks."""
+    if not 0 < hit_out < dur:
+        raise ValueError("El golpe tiene que caer dentro del plano (0 < hit_out < dur).")
+    if not start <= hit <= end:
+        raise ValueError("El cuadro del golpe tiene que estar dentro del tramo de la fuente.")
+    return ramp(start, hit, hit_out, before) + ramp(hit, end, dur - hit_out, after)
+
+
 def clamp_speeds(pieces: list[Piece], vmin: float = MIN_SPEED, vmax: float = MAX_SPEED) -> list[Piece]:
     """No piece slower than vmin nor faster than vmax: the SOURCE is trimmed
     (not the duration), so the output time — the rhythm — does not change.

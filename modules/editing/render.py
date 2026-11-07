@@ -63,8 +63,9 @@ def _n(dur: float, fps: int) -> int:
 
 
 def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
-                with_audio: bool, source_fps: float) -> list[str]:
-    """Command for one shot: geometry + retimed pieces → .mkv intermediate."""
+                with_audio: bool, source_fps: float, source_size: tuple[int, int] | None = None) -> list[str]:
+    """Command for one shot: geometry + retimed pieces → .mkv intermediate.
+    `source_size` is needed for Segment.mblur (it blurs the source frames)."""
     step = 1.0 / (source_fps or 30)
     a = min(p.start for p in seg.pieces)
     b = max(max(p.end, p.start + 2 * step) for p in seg.pieces)
@@ -75,6 +76,11 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
     # A graph that already names its input ([0:v]…, like competitivo's layout)
     # goes as-is; otherwise the input is prepended. Its last chain must stay
     # open: the retime is appended here.
+    if seg.mblur:
+        if not source_size:
+            raise ValueError("El desenfoque de movimiento necesita el tamaño de la fuente.")
+        blur = effects.mblur(seg.mblur, source_size)
+        geo = (geo.replace("[0:v]", f"[0:v]{blur},", 1) if geo.startswith("[0:v]") else f"{blur},{geo}")
     head = geo if geo.startswith("[") else f"[0:v]{geo}"
     tint = f",{effects.TINTS[seg.tint]}" if seg.tint else ""
     parts = [f"{head}{tint},setsar=1,format=yuv420p,split={k}" + "".join(f"[p{i}]" for i in range(k))]
@@ -155,12 +161,17 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
         parts.append(f"[{k}:v]format=rgba,settb=AVTB,setpts=PTS-STARTPTS+{start:.6f}/TB[pn{j}]")
         parts.append(effects.panel(current, f"pn{j}", f"pv{j}", e, edl.fps))
         current = f"pv{j}"
+    if any(e.kind == "glow" for e in edl.events):
+        parts.append(effects.glow_pulse(current, "glowp", edl.events, W, H, intensity, edl.fps))
+        current = "glowp"
     accents = [f for f in (effects.flash(edl.events, intensity),
                            effects.flash_mix(edl.events, edl.fps, intensity),
+                           effects.strobe(edl.events, edl.fps, intensity),
                            effects.camera(edl.events, W, H, edl.fps, intensity),
                            effects.whip_blur(edl.events, intensity),
-                           effects.rgb(edl.events, intensity),
-                           effects.blackout(edl.events)) if f]
+                           effects.rgb(edl.events, intensity, edl.fps),
+                           effects.invert(edl.events, edl.fps),
+                           effects.blackout(edl.events, edl.fps)) if f]
     if edl.vignette:
         accents.append(effects.VIGNETTE)
     from modules.subtitles.processor import ass_filter
@@ -242,9 +253,9 @@ def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> 
         start, end = 0.0, b - a
     if use_rife:
         factor = 4 if slowest < 0.3 else 2
-        source, _ = external.interpolate(source, start, end, factor, work)
+        source, _ = external.interpolate(source, start, end, factor, work, dedupe=seg.dedupe)
     pieces = [Piece(p.start - a, p.end - a, p.dur) for p in seg.pieces]
-    return Segment(source, pieces, seg.label, seg.vf, False, seg.tint, seg.exact_phase)
+    return Segment(source, pieces, seg.label, seg.vf, False, seg.tint, seg.exact_phase, seg.mblur)
 
 
 def render(edl: Edl, out: str, job_id: str | None, work: str, *,
@@ -277,8 +288,9 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
             source_fps = ffmpeg_runner.probe_fps(ready.source) or 30.0
             with_audio = edl.uses_original and ffmpeg_runner.has_audio_stream(ready.source)
             path = os.path.join(work, f"shot_{i:03d}.mkv")
-            ffmpeg_runner.capture(build_pass1(ready, path, edl.width, edl.height, edl.fps, with_audio, source_fps),
-                                  timeout=1800, cwd=config.BASE_DIR)
+            size = ffmpeg_runner.probe_resolution(ready.source) if ready.mblur else None
+            ffmpeg_runner.capture(build_pass1(ready, path, edl.width, edl.height, edl.fps, with_audio, source_fps,
+                                              size), timeout=1800, cwd=config.BASE_DIR)
             shutil.rmtree(sub, ignore_errors=True)
             return path
 

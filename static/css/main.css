@@ -1880,6 +1880,17 @@ a:focus:not(:focus-visible) { outline: none; }
 .mo-k.mo-cut { color: #ff9f1a; } .mo-k.mo-pan { color: #8f63e6; } .mo-k.mo-calm { color: #7d7d86; }
 .mo-sheet { width: 100%; border-radius: var(--r-thumb); margin: 6px 0 12px; display: block; }
 .mo-summary pre { white-space: pre-wrap; font-size: 12px; max-height: 320px; overflow: auto; margin: 8px 0 0; }
+/* Efectos: selector, grilla de clips y catálogo */
+.fx-pick { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 14px; }
+.fx-chip { margin: 0; font-size: 13px; }
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.fx-tile { margin: 0; }
+.fx-tile video { width: 100%; aspect-ratio: 9 / 16; background: #000; border-radius: var(--r-sm); display: block; }
+.fx-tile figcaption { font-size: 12px; font-weight: 600; margin-top: 4px; }
+.fx-h2 { font-size: 16px; margin: 0 0 10px; }
+.fx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fx-table th, .fx-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, rgba(127,127,127,.2)); vertical-align: top; }
+.fx-table td:first-child { font-weight: 600; white-space: nowrap; }
 .ed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 10px 0 16px; }
 .ed-shot { position: relative; border-radius: var(--r-sm); overflow: hidden; cursor: pointer; border: 3px solid transparent; opacity: .45; transition: opacity var(--dur-fast), border-color var(--dur-fast); }
 .ed-shot img { width: 100%; display: block; aspect-ratio: 16 / 9; object-fit: cover; }

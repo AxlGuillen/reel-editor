@@ -107,6 +107,8 @@ El resumen para Claude es una línea por evento: «toma 13 · golpe fuerte en 12
 
 ## editing — el motor (`modules/editing/`)
 
+> El banco de efectos (todos los eventos, `mblur`, `dedupe`, `hit_ramp`, la galería y lo que se corrigió de `rgb` y `glow`) está en [`efectos.md`](efectos.md).
+
 `edl.py` (modelo), `timing.py` (curvas de velocidad y cuantizado), `effects.py` (filtros), `titles.py` (letreros ASS), `render.py` (dos pasadas). `GET /api/editing/options` lista `looks`, `luts`, `profiles` y qué opcionales están instalados (`rife`, `esrgan`, `beat_this`, `vocal_separation`).
 
 **EDL**: `Segment` (un plano: archivo + `pieces` + `vf` de geometría) → `Piece(start, end, dur)` (fuente a velocidad constante; `start == end` es un congelado), más `Event(t, kind, intensity, dur, level, x, y)` y `Text(start, end, text, style)` en tiempo de la salida, la música (`music`, `music_start`), el look, el LUT, glow, viñeta y watermark.
