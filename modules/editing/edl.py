@@ -10,6 +10,7 @@ Units: seconds. The times of `Event` and `Text` are OUTPUT times; those of
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen frame
@@ -17,8 +18,12 @@ FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen f
 # push (slow push-in to 1+level over `dur`), hold (zoom held at 1+level: one
 # step of a stair zoom), whip (a fast zoom punch with horizontal motion blur:
 # the transition between fights) and black (the frame goes black: the cut of
-# silence before the drop).
-EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black")
+# silence before the drop); panel (a manga panel over the frozen frame: the
+# frame darkens to ×dim and the panel enters from_scale→1 in `enter` s and keeps
+# growing by `drift` until it ends, fitted in PANEL_BOX of the frame).
+EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black", "panel")
+FLASH_SHAPES = ("pulse", "mix")   # pulse: brightness that decays · mix: a flat mix toward white
+PANEL_BOX = (1040 / 1080, 1700 / 1920)   # the panel fits in this fraction of the frame (rules v1.0)
 TEXT_STYLES = ("word", "kill", "multikill", "title", "sub")
 TINT_KINDS = ("", "bw")           # Segment.tint (the filters are in effects.TINTS)
 
@@ -52,6 +57,12 @@ class Segment:
     interpolate: bool = False
     # A look of its own on top of the edit's (effects.TINTS): "" or "bw".
     tint: str = ""
+    # Source time maps to output time exactly (a piece starting at 1127.95 s
+    # puts that instant at its output start, even if the first source frame
+    # is 0.01 s later). By default the first frame at or after the start goes
+    # at 0, which shifts the frame picking of the fps conversion by up to a
+    # source frame. The manga edit (edit3.py) used exact time.
+    exact_phase: bool = False
 
     @property
     def dur(self) -> float:
@@ -72,6 +83,15 @@ class Event:
     y: float = 0.5
     # zoom / hold: it starts moving this long BEFORE t (0 = the default quick attack).
     attack: float = 0.0
+    # flash: "pulse" (the default) or "mix" (the frame mixed with white by
+    # `intensity` for the whole `dur`: the manga edit's 55 % for 2 frames).
+    shape: str = "pulse"
+    # panel: the image and how it enters (see EVENT_KINDS).
+    image: str = ""
+    dim: float = 0.62
+    enter: float = 0.12
+    from_scale: float = 0.93
+    drift: float = 0.035
 
 
 @dataclass
@@ -116,7 +136,9 @@ class Edl:
     vignette: bool = False
     watermark: str | None = None  # watermark PNG
     watermark_height: int = 150
-    fade_out: float = 0.6         # music fade at the end
+    fade_out: float = 0.6         # music fade at the end (0 = the song's own ending)
+    music_fade_in: float = 0.0    # a few ms so the first sample does not click
+    video_fade_out: float = 0.0   # fade to black over the last N s of the picture
 
     @property
     def dur(self) -> float:
@@ -146,6 +168,13 @@ class Edl:
         for e in self.events:
             if e.kind not in EVENT_KINDS:
                 raise ValueError(f"Evento desconocido: {e.kind!r}.")
+            if e.kind == "flash" and e.shape not in FLASH_SHAPES:
+                raise ValueError(f"Forma de destello desconocida: {e.shape!r}.")
+            if e.kind == "panel":
+                if not e.image or not os.path.isfile(e.image):
+                    raise ValueError(f"No existe la imagen del panel: {e.image or '(vacía)'}")
+                if e.dur <= 0 or not 0 < e.from_scale <= 1.5 or not 0 <= e.dim <= 1:
+                    raise ValueError(f"Panel en {e.t:.2f} s con parámetros fuera de rango.")
         for name, keys in (("música", self.music_gain), ("audio original", self.original_gain)):
             if any(b[0] < a[0] for a, b in zip(keys, keys[1:])):
                 raise ValueError(f"La automatización de volumen de la {name} no está en orden.")
@@ -165,8 +194,13 @@ class Edl:
             "events": [{"t": round(e.t, 3), "kind": e.kind, "intensity": round(e.intensity, 2),
                         **({"dur": round(e.dur, 3)} if e.kind in ("push", "hold") else {}),
                         **({"level": round(e.level, 3)} if e.level else {}),
-                        **({"x": round(e.x, 3), "y": round(e.y, 3)} if (e.x, e.y) != (0.5, 0.5) else {})}
+                        **({"x": round(e.x, 3), "y": round(e.y, 3)} if (e.x, e.y) != (0.5, 0.5) else {}),
+                        **({"shape": e.shape, "dur": round(e.dur, 3)} if e.kind == "flash" and e.shape != "pulse"
+                           else {}),
+                        **({"image": os.path.basename(e.image), "dur": round(e.dur, 3)} if e.kind == "panel"
+                           else {})}
                        for e in self.events],
+            **({"video_fade_out": self.video_fade_out} if self.video_fade_out else {}),
             "music_gain": [[round(t, 3), round(g, 3)] for t, g in self.music_gain],
             "original_gain": [[round(t, 3), round(g, 3)] for t, g in self.original_gain],
             "subtitle_words": len(self.subtitle_words),

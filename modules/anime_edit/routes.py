@@ -1,9 +1,11 @@
 """Flask blueprint of anime_edit (/api/anime-edit).
 
 Contract (also so Claude can drive it on its own; see CLAUDE.md):
-    POST /process              → 202 {job_id}  phase 1. Video: `video` (file), `library_clip`
-                                               or `video_url`. Song: `music`, `music_url`
-                                               or `music_from_video=1`. [lyrics, language, engine]
+    POST /process              → 202 {job_id}  phase 1. Video: `video` (file), `library_clip`,
+                                               `video_url` or `video_path` (a local file). Song:
+                                               `music`, `music_url`, `music_path` or
+                                               `music_from_video=1`. [lyrics, language, engine,
+                                               shots=0 (no shot detection: the manga preset)]
     GET  /status/<job_id>      → after phase 1: shots, proposal, hero, sheets, beatmap;
                                  after phase 2: result {folder, variants}
     GET  /sheet/<job_id>/<n>   → JPG with 48 numbered shots (n from 1)
@@ -11,6 +13,8 @@ Contract (also so Claude can drive it on its own; see CLAUDE.md):
     POST /finish               → 202  job_id + [selection, hero, variants, format, duration_s,
                                  music_start, text, look, lut, intensity, fps, interpolate,
                                  upscale, original_volume, watermark, watermark_height, title]
+                                 manga variant: takes, [panels, panels_folder, grid, flashes,
+                                 phrases, music_end, words] (see anime_edit/manga.py)
     GET  /download/<job_id>/<n> → variant n (from 1)
     GET  /presets              → the available variants
 """
@@ -36,16 +40,16 @@ def process():
         library_path = resolve_clip(library) if library else None
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
-    video_path = library_path
-    if not params.video and not library_path:
+    video_path = library_path or params.video_path or None
+    if not params.video and not video_path:
         video = request.files.get("video")
         if not video or not video.filename:
             return jsonify(error="Falta el video: subí 'video', elegí uno de la librería o mandá 'video_url'."), 400
         if not config.allowed_file(video.filename):
             return jsonify(error=f"Video: extensión no permitida. Usar: {sorted(config.ALLOWED_EXTENSIONS)}"), 400
         video_path = file_utils.save_upload(video)
-    music_path = None
-    if not params.music and not params.music_from_video:
+    music_path = params.music_path or None
+    if not params.music and not params.music_from_video and not music_path:
         music = request.files.get("music")
         if not music or not music.filename:
             return jsonify(error="Falta la canción: subí 'music', mandá 'music_url' o usá music_from_video=1."), 400
@@ -54,7 +58,8 @@ def process():
         music_path = file_utils.save_upload(music)
     job_id = job_manager.create_job(video_path or params.video.url, output_path="")
     threading.Thread(target=processor.process, args=(job_id, video_path, music_path, params),
-                     kwargs={"keep_video": library_path is not None}, daemon=True).start()
+                     kwargs={"keep_video": library_path is not None or bool(params.video_path)},
+                     daemon=True).start()
     return jsonify(job_id=job_id), 202
 
 

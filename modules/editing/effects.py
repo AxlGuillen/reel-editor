@@ -13,6 +13,7 @@ Each accent is a pulse: it rises in `attack` s and falls quadratically in `dur` 
 """
 from __future__ import annotations
 
+import math
 import os
 
 import config
@@ -111,11 +112,75 @@ def _sum(terms: list[str]) -> str:
 
 def flash(events: list[Event], intensity: float = 1.0) -> str:
     """eq that whitens on every flash (empty if there are none)."""
-    fl = [e for e in events if e.kind == "flash"]
+    fl = [e for e in events if e.kind == "flash" and e.shape == "pulse"]
     if not fl:
         return ""
     expr = _sum([f"{_f(FLASH_MAX * e.intensity * intensity)}*{_pulse(e.t, e.dur)}" for e in fl])
     return f"eq=brightness='min({_f(FLASH_MAX)},{expr})':eval=frame"
+
+
+def frames_of(t: float, dur: float, fps: int) -> tuple[int, int]:
+    """First and last output frame whose time i/fps falls in [t, t + dur)."""
+    a = math.ceil(t * fps - 1e-6)
+    b = math.ceil((t + dur) * fps - 1e-6) - 1
+    return a, max(a, b)
+
+
+def _frames_enable(windows: list[tuple[int, int]]) -> str:
+    return _sum([f"between(n,{a},{b})" for a, b in windows])
+
+
+def flash_mix(events: list[Event], fps: int, intensity: float = 1.0) -> str:
+    """The "mix" flashes: the frame mixed with white by `intensity` during the
+    whole flash, by frame number (exact, like the manga edit: 55 % for the
+    frames in [t, t + 0.07)). In YUV tv range white is (235, 128, 128) and the
+    mix is linear, so it equals mixing R, G and B toward 255."""
+    fl = [e for e in events if e.kind == "flash" and e.shape == "mix"]
+    groups: dict[float, list[tuple[int, int]]] = {}
+    for e in fl:
+        groups.setdefault(round(min(1.0, e.intensity * intensity), 4), []).append(frames_of(e.t, e.dur, fps))
+    out = []
+    for a, windows in sorted(groups.items()):
+        out.append(f"format=yuv420p,lutyuv=y='val+(235-val)*{_f(a)}':u='val+(128-val)*{_f(a)}':"
+                   f"v='val+(128-val)*{_f(a)}':enable='{_frames_enable(windows)}'")
+    return ",".join(out)
+
+
+def fade_out(dur_total: float, fade: float) -> str:
+    """Linear fade to black over the last `fade` s of the picture."""
+    if fade <= 0:
+        return ""
+    return f"fade=t=out:st={_f(max(0.0, dur_total - fade))}:d={_f(fade)}"
+
+
+PANEL_PRESCALE = 1.1           # editing.panels resizes the panel ×1.1 once (LANCZOS)
+
+
+def panel_size(image_size: tuple[int, int], width: int, height: int) -> tuple[float, float]:
+    """The panel's size at scale 1: fitted inside PANEL_BOX of the frame."""
+    from modules.editing.edl import PANEL_BOX
+    w, h = image_size
+    s = min(PANEL_BOX[0] * width / w, PANEL_BOX[1] * height / h)
+    return w * s, h * s
+
+
+def panel_start(e: Event, fps: int) -> float:
+    """Where the panel input's first frame goes: half a frame before the event,
+    so overlay (which takes the last secondary frame at or before each main
+    frame, with the main timestamps rounded to the ms) never misses frame 0."""
+    return frames_of(e.t, e.dur, fps)[0] / fps - 0.5 / fps
+
+
+def panel(src: str, img: str, dst: str, e: Event, fps: int) -> str:
+    """One manga panel over the frozen frame (filter_complex parts). `img` is
+    the panel's frame sequence (editing.panels.frames: full-frame RGBA, the
+    panel already scaled and centered on each frame), its timestamps at
+    panel_start. The frame darkens to ×dim (black at 1−dim over it, which in
+    YUV tv range equals multiplying R, G and B) and the panel goes on top."""
+    a, b = frames_of(e.t, e.dur, fps)
+    on = f"between(n,{a},{b})"
+    return (f"[{src}]drawbox=x=0:y=0:w=iw:h=ih:color=black@{_f(1 - e.dim)}:t=fill:enable='{on}'[{img}d];"
+            f"[{img}d][{img}]overlay=x=0:y=0:enable='{on}'[{dst}]")   # eof_action=pass dropped the last frame
 
 
 def _push(t0: float, dur: float, var: str = "in_time") -> str:

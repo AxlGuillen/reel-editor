@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 import config
 from core import ffmpeg_runner, file_utils, job_manager
-from modules.anime_edit import plan, shots as shots_mod
+from modules.anime_edit import manga, plan, shots as shots_mod
 from modules.anime_edit.schema import AnimeEditParams, FinishParams
 from modules.beatmap import processor as beatmap
 from modules.competitivo import layout, salida
@@ -71,11 +71,13 @@ def process(job_id: str, video_path: str | None, music_path: str | None,
             raise RuntimeError("No se pudo leer el video.")
         job_manager.update_job(job_id, progress=10)
         bm = beatmap.get(music_path, params.engine, params.lyrics, job_id=job_id)
-        job_manager.update_job(job_id, progress=40, stage="Buscando los planos del video…")
-        shots = shots_mod.detect(video_path)
-        job_manager.update_job(job_id, progress=75, stage="Armando las hojas de cuadros…")
-        shots_mod.thumbnails(video_path, shots, folder)
-        sheets = shots_mod.contact_sheets(folder, len(shots))
+        shots, sheets = [], []
+        if params.shots:
+            job_manager.update_job(job_id, progress=40, stage="Buscando los planos del video…")
+            shots = shots_mod.detect(video_path)
+            job_manager.update_job(job_id, progress=75, stage="Armando las hojas de cuadros…")
+            shots_mod.thumbnails(video_path, shots, folder)
+            sheets = shots_mod.contact_sheets(folder, len(shots))
         ids, hero = proposal(shots)
         _SESSIONS[job_id] = {"video": video_path, "music": music_path, "bm": bm, "shots": shots,
                              "folder": folder, "sheets": sheets, "params": params,
@@ -97,6 +99,18 @@ def _output_folder(fp: FinishParams) -> str:
     return folder
 
 
+def _manga_options(fp: FinishParams) -> manga.MangaOptions:
+    return manga.MangaOptions(music_start=fp.music_start or 0.0, music_end=fp.music_end, fps=fp.fps,
+                              grid=fp.grid, flashes=fp.flashes, phrases=fp.phrases,
+                              panels_folder=fp.panels_folder, panels=fp.panels or [], words=fp.words or [])
+
+
+def _manga_plan(session: dict, fp: FinishParams, res: tuple[int, int]):
+    if fp.format != "vertical":
+        raise ValueError("El preset manga es vertical (1080×1920).")
+    return manga.plan(session["video"], res, session["bm"], fp.takes, _manga_options(fp))
+
+
 def finish(job_id: str, fp: FinishParams) -> None:
     session = _SESSIONS.get(job_id)
     try:
@@ -105,6 +119,8 @@ def finish(job_id: str, fp: FinishParams) -> None:
         by_id = {p["id"]: p for p in session["shots"]}
         ids = fp.selection or job_manager.get_job(job_id).get("proposal") or list(by_id)
         chosen = [by_id[i] for i in ids]
+        if not chosen and any(v != "manga" for v in fp.variants):
+            raise ValueError("Ese análisis no tiene planos (se hizo con shots=0): solo sirve el preset manga.")
         folder = _output_folder(fp)
         base = salida.limpiar(fp.title) or "edit"
         watermark = os.path.join(config.WATERMARKS_FOLDER, fp.watermark) if fp.watermark else None
@@ -115,10 +131,14 @@ def finish(job_id: str, fp: FinishParams) -> None:
             lo, hi = int(100 * k / n), int(100 * (k + 1) / n)
             job_manager.update_job(job_id, status="processing", progress=lo, finished=False,
                                    stage=f"Variante {k + 1}/{n} ({variant}): planeando…")
-            op = plan.PlanOptions(format=fp.format, fps=fp.fps, duration_s=fp.duration_s,
-                                  music_start=fp.music_start, text=fp.text, look=fp.look,
-                                  hero=fp.hero, interpolate=fp.interpolate)
-            edl, info = plan.plan(session["video"], chosen, session["bm"], variant, op)
+            if variant == "manga":
+                edl, info = _manga_plan(session, fp, res)
+                info["srt"] = manga.srt_files(session["bm"], _manga_options(fp), folder, base)
+            else:
+                op = plan.PlanOptions(format=fp.format, fps=fp.fps, duration_s=fp.duration_s,
+                                      music_start=fp.music_start, text=fp.text, look=fp.look,
+                                      hero=fp.hero, interpolate=fp.interpolate)
+                edl, info = plan.plan(session["video"], chosen, session["bm"], variant, op)
             edl.music = session["music"]
             edl.lut = fp.lut
             edl.original_volume = fp.original_volume / 100

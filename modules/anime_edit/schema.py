@@ -43,14 +43,43 @@ def _list(form, name: str):
     return value if isinstance(value, list) else [value]
 
 
+def _json(form, name: str):
+    raw = form.get(name)
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, (list, dict)):
+        return raw
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"'{name}' tiene que ser JSON válido.")
+
+
+def _local_file(form, name: str, allowed) -> str:
+    path = str(form.get(name) or "").strip().strip('"')
+    if not path:
+        return ""
+    if not os.path.isfile(path):
+        raise ValueError(f"No existe el archivo de '{name}': {path}")
+    if not allowed(path):
+        raise ValueError(f"'{name}': extensión no permitida.")
+    return path
+
+
 @dataclass
 class AnimeEditParams:
-    """Phase 1: the video (file, library or link), the song and whether to extract the lyrics."""
+    """Phase 1: the video (file, library, link or local path), the song and
+    whether to extract the lyrics and to detect the shots."""
     video: DownloaderParams | None = None       # video link; None → file or library
     music: DownloaderParams | None = None       # song link; None → file
     music_from_video: bool = False              # the song is the video's own audio
     engine: str = "auto"
     lyrics: LyricsParams = field(default_factory=LyricsParams)
+    # False for the manga preset on a whole episode: its takes are chosen by
+    # second, and 24 min of shot detection and thumbnails are not needed.
+    shots: bool = True
+    video_path: str = ""                        # a file on this machine (not uploaded, kept)
+    music_path: str = ""
 
     @classmethod
     def from_form(cls, form) -> "AnimeEditParams":
@@ -66,7 +95,10 @@ class AnimeEditParams:
             raise ValueError(f"Motor inválido: {engine!r}. Opciones: {', '.join(ENGINES)}.")
         return cls(video=video, music=music_from_form(form),
                    music_from_video=to_bool(form, "music_from_video", False), engine=engine,
-                   lyrics=LyricsParams.from_form(form, lyrics_default=True))
+                   lyrics=LyricsParams.from_form(form, lyrics_default=True),
+                   shots=to_bool(form, "shots", True),
+                   video_path=_local_file(form, "video_path", config.allowed_file),
+                   music_path=_local_file(form, "music_path", config.allowed_audio_file))
 
 
 @dataclass
@@ -89,6 +121,15 @@ class FinishParams:
     watermark: str = ""
     watermark_height: int = 150
     title: str = ""
+    # the manga preset (see anime_edit/manga.py)
+    takes: list | None = None
+    panels: list | None = None
+    panels_folder: str = ""
+    grid: dict | None = None
+    flashes: list | None = None
+    phrases: list | None = None
+    music_end: float | None = None
+    words: list | None = None
 
     @classmethod
     def from_form(cls, form, valid_ids: set[int]) -> "FinishParams":
@@ -143,10 +184,48 @@ class FinishParams:
         if watermark and not os.path.isfile(os.path.join(config.WATERMARKS_FOLDER, watermark)):
             raise ValueError(f"No existe el watermark «{watermark}» en assets/watermarks.")
         title = " ".join(str(form.get("title") or "").split())[:80]
+        manga = cls._manga(form, "manga" in variants)
         return cls(selection=sel, hero=hero, variants=list(dict.fromkeys(variants)), format=fmt,
                    duration_s=_num(form, "duration_s", 30, 5, 180), music_start=start, text=text,
                    look=look, lut=lut, intensity=_num(form, "intensity", 1.0, 0, 1.5),
                    fps=fps, interpolate=to_bool(form, "interpolate", True), upscale=to_bool(form, "upscale", False),
                    original_volume=_num(form, "original_volume", 0, 0, 100, int),
                    watermark=watermark, watermark_height=_num(form, "watermark_height", 150, 60, 400, int),
-                   title=title)
+                   title=title, **manga)
+
+    @staticmethod
+    def _manga(form, needed: bool) -> dict:
+        """The manga preset's inputs: takes (required), panel pairs, grid, flashes…"""
+        if not needed:
+            return {}
+        takes = _json(form, "takes")
+        if not isinstance(takes, list) or not takes:
+            raise ValueError("El preset manga necesita 'takes': la lista de tomas (ver anime_edit/manga.py).")
+        if not all(isinstance(t, dict) for t in takes):
+            raise ValueError("Cada toma de 'takes' es un objeto, p. ej. {\"t\": 372.05, \"beats\": 4}.")
+        panels = _json(form, "panels")
+        if panels is not None and (not isinstance(panels, list)
+                                   or not all(isinstance(p, dict) and "panel" in p and "t" in p for p in panels)):
+            raise ValueError("'panels' es una lista de parejas {\"panel\": …, \"t\": segundo de la escena}.")
+        folder = str(form.get("panels_folder") or "").strip().strip('"')
+        if folder and not os.path.isdir(folder):
+            raise ValueError(f"No existe la carpeta de paneles: {folder}")
+        grid = _json(form, "grid")
+        if grid is not None and not (isinstance(grid, dict) and "bpm" in grid and "phase" in grid):
+            raise ValueError("'grid' es {\"bpm\": 130.75, \"phase\": 0.21}.")
+        flashes = _json(form, "flashes")
+        if flashes is not None:
+            try:
+                flashes = [float(x) for x in flashes]
+            except (TypeError, ValueError):
+                raise ValueError("'flashes' es una lista de segundos de la canción.")
+        phrases = _json(form, "phrases")
+        if phrases is not None and not isinstance(phrases, list):
+            raise ValueError("'phrases' es una lista de frases {a, b, words, flash}.")
+        end = form.get("music_end")
+        end = None if end in (None, "", "auto") else _num(form, "music_end", None, 0.5, 3600)
+        words = _json(form, "words")
+        if words is not None and not isinstance(words, list):
+            raise ValueError("'words' es una lista {word, start, end} en segundos del edit.")
+        return {"takes": takes, "panels": panels, "panels_folder": folder, "grid": grid, "flashes": flashes,
+                "phrases": phrases, "music_end": end, "words": words}

@@ -250,6 +250,59 @@ GET /api/anime-edit/presets          → {presets: [{id, description}], formats}
 
 **Como lo opera Claude:** `/process` → poll → mirar `GET /sheet/<id>/<n>` (y las miniaturas) → `/finish` con la selección, el héroe y 2–4 variantes → poll hasta `finished=true` → `GET /download/<id>/<n>`.
 
+### El preset `manga` (reglas v1.0, edit 3 de Magna vs Dante)
+
+`anime_edit/manga.py` (planificador puro) + `framing.py` (encuadres y color) + `repro.py` (la prueba). No elige planos: recibe **tomas por segundo**, como la lista `P` de `edit3.py`.
+
+- **Fase 1** con `shots=0`: sin detección de planos ni miniaturas (un episodio entero no lo necesita). `video_path` y `music_path` aceptan archivos de esta compu, que no se suben ni se borran.
+- **Fase 2** con `variants=["manga"]` y `takes`:
+
+```json
+{"takes": [{"t": 317.30, "beats": 4, "frame": "B", "focus": [0.5, 0.5], "tone": "cold"},
+           {"t": 372.05, "beats": 4, "frame": "C", "focus": [0.30, 0.45], "tone": "cold"},
+           {"panel": "m09_black-bulls-jefe_con-texto", "beats": 2},
+           {"t": 1263.80, "beats": null, "frame": "C", "speed": 0.85}],
+ "panels_folder": "C:/…/Edit Magna vs Dante/manga",
+ "panels": [{"panel": "m03_golpe-1", "t": 1127.79}],
+ "music_start": 144.70, "music_end": 212.09, "grid": {"bpm": 130.75, "phase": 0.21},
+ "flashes": [174.92, 186.4, 201.18], "phrases": [{"a": 174.92, "b": 182.66, "words": [[174.9, 175.2]], "flash": true}]}
+```
+
+- **Encuadres:**
+  - `B` es el 4:5 sobre el mismo cuadro difuminado (la base).
+  - `C` es el 16:9 completo sobre el difuminado, para las tomas anchas.
+  - `A` es el vertical completo, para los primeros planos.
+  - También se aceptan las letras de `edit3.py` (`z`/`w`/`v`).
+  - El foco horizontal va de `focus[0]` a `focus[1]` durante la toma, medido en el tiempo de salida.
+- **Color por toma:** el grado de las reglas (contraste, saturación, curva en S y brillo en modo pantalla) con balance `cold` o `warm`, más la viñeta. Todo va en el `vf` del plano, en la pasada 1.
+- **Pausa con panel:**
+  - Un ítem `panel` congela el **último cuadro** de la toma anterior, con su encuadre en el foco final.
+  - El evento `panel` de la EDL oscurece el cuadro a ×0.62. El panel entra de 93 % a 100 % en 0.12 s y sigue creciendo 3.5 % hasta el final.
+  - Las parejas `panels` (`{panel, t}`) se insertan después de la toma que contiene `t`, y esa toma se corre para terminar justo en `t`.
+- **Rejilla y cortes:**
+  - La primera toma cubre la entrada hasta el primer compás después de `music_start`.
+  - Cada corte cae `cum` tiempos después, redondeado al cuadro de salida: `round((PH + cum·BEAT)·fps)`, la fórmula de `edit3.py`.
+  - Con `grid` la rejilla es constante (la de `glee/grid.json`). Sin ella se usan los beats medidos del beatmap.
+  - La última toma, con `beats: null`, llena hasta `music_end` (por omisión, el final natural de la canción).
+- **Destellos:** 55 % de blanco durante los cuadros de [t, t + 0.07), con `shape="mix"`. Por omisión van al inicio de cada frase (palabras del beatmap separadas por pausas de ≥ 0.45 s). `flashes` o las frases con `flash: true` los fijan.
+- **Fundido** de video a negro de 1.5 s. La música entra con 30 ms y no se funde: termina sola.
+- **Letra:** dos `.srt` **solo con tiempos**, `<title> - tiempos-letra_frases.srt` y `…_palabra-por-palabra.srt` (cada palabra dura al menos 150 ms). La letra la escribe Axl. Los textos propios van en `words` (`{word, start, end}` en segundos del edit), con el layout `invert`.
+
+**En el motor (`editing`):**
+- Evento `panel` (`image`, `dim`, `enter`, `from_scale`, `drift`).
+  - `editing/panels.py` **dibuja cada cuadro con PIL**, con la cuenta de `edit3.py`: ajusta la imagen a 1040×1700 de 1080×1920, la escala una vez ×1.1 con LANCZOS y, por cuadro, la baja bilineal y la pega centrada. Cada cuadro es un PNG RGBA del tamaño del cuadro, y FFmpeg solo lo superpone.
+  - Antes se probó escalar en FFmpeg y quedó descartado por dos razones. `overlay` no acepta una entrada que cambia de tamaño: FFmpeg mete un reescalado y el panel salía quieto a ×1.1. Además, aun con un lienzo fijo, el bilineal de FFmpeg queda medio píxel corrido del de PIL, y en dibujo lineal eso bajó el SSIM contra el edit 3 a 0.88.
+  - La secuencia entra medio cuadro antes, en base de tiempo de µs (`settb=AVTB`). En su base propia (1/30), el medio cuadro se redondeaba y el panel salía un cuadro adelantado. Con `eof_action=pass` se perdía el último cuadro.
+  - Va antes de los acentos, así un destello lo blanquea también.
+- `Event.shape="mix"` (por número de cuadro, `lutyuv` hacia (235, 128, 128): lo mismo que mezclar R, G y B hacia 255).
+- `Edl.video_fade_out` y `Edl.music_fade_in`. Con `fade_out=0` la música no se funde.
+- `Segment.exact_phase`: el tiempo de la fuente se mapea exacto (`setpts=PTS−inicio/TB`) en vez de poner en 0 el primer cuadro.
+  - Con eso el `fps` elige los mismos cuadros que `edit3.py`.
+  - En la toma de 1127.95 s el primer cuadro del episodio cae 0.01 s después, y sin esto salía otro cuadro.
+  - Solo lo activa `manga`, así los demás módulos no cambian.
+
+**Rearmar el edit 3** (criterio de la fase 2): `python -m modules.anime_edit.repro "<carpeta Edit Magna vs Dante>" "<episodio.mkv>"`. Rearma el edit desde `P`/`MODES`, compara los cortes con la fórmula de `edit3.py`, busca el salto de diferencia en cada corte de los dos videos y mide el SSIM de 5 cuadros de control con una hoja lado a lado (`…-control.jpg`).
+
 ## montage — `/api/montage`
 
 Capas animadas con transparencia (ProRes 4444, VP9 con alfa o PNG) sobre un video vertical terminado, en un encode. Es el diseño de `PKB/…/montaje-automatico-con-animaciones-html.md`.

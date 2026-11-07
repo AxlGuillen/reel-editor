@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import config
 from core import external, ffmpeg_runner, file_utils, job_manager
-from modules.editing import effects, timing, titles
+from modules.editing import effects, panels, timing, titles
 from modules.editing.edl import Edl, Piece, Segment
 
 INTERMEDIATE_CRF = 14
@@ -84,8 +84,9 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
         if p.frozen:
             src = f"trim=start={rel:.4f}:duration={2 * step:.4f},setpts=PTS-STARTPTS"
         else:
+            zero = f"{rel:.6f}/TB" if seg.exact_phase else "STARTPTS"
             src = (f"trim=start={rel:.4f}:end={rel + (p.end - p.start):.4f},"
-                   f"setpts=(PTS-STARTPTS)/{p.speed:.6f}")
+                   f"setpts=(PTS-{zero})/{p.speed:.6f}")
         parts.append(f"[p{i}]{src},fps={fps},tpad=stop_mode=clone:stop_duration={p.dur + 1:.3f},"
                      f"trim=end_frame={n},setpts=PTS-STARTPTS[v{i}]")
     parts.append("".join(f"[v{i}]" for i in range(k)) + f"concat=n={k}:v=1:a=0[vout]")
@@ -115,9 +116,10 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
 
 def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
                 intensity: float = 1.0, watermark_crop: tuple | None = None,
-                subtitles_ass: str | None = None) -> list[str]:
+                subtitles_ass: str | None = None, panels: dict | None = None) -> list[str]:
     """Pass 2: joins the shots and applies color, accents, titles and music.
-    `subtitles_ass`: the "invert" subtitles (edl.subtitle_words), under the titles."""
+    `subtitles_ass`: the "invert" subtitles (edl.subtitle_words), under the titles.
+    `panels`: {id(event): frame pattern} of the panel events (editing.panels.frames)."""
     dur = timing.frame_count(edl) / edl.fps
     cmd = [config.FFMPEG_PATH, "-y", "-f", "concat", "-safe", "0", "-i", concat_list]
     idx = 1
@@ -128,6 +130,12 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if edl.watermark:
         cmd += ["-i", edl.watermark]
         watermark_idx, idx = idx, idx + 1
+    panel_events = [e for e in edl.events if e.kind == "panel"]
+    panel_inputs = []
+    for e in panel_events:
+        cmd += ["-framerate", str(edl.fps), "-start_number", "0", "-i", panels[id(e)]]
+        panel_inputs.append(idx)
+        idx += 1
 
     W, H = edl.width, edl.height
     parts = []
@@ -139,7 +147,16 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if edl.glow > 0:
         parts.append(effects.glow(current, "glowed", edl.glow, W, H))
         current = "glowed"
+    # the panels go over the frozen frame before the accents: a flash whitens them too
+    for j, (e, k) in enumerate(zip(panel_events, panel_inputs)):
+        start = effects.panel_start(e, edl.fps)
+        # in the sequence's own time base (1/fps) half a frame rounds away: the
+        # panel came out a frame early. AVTB (µs) keeps the offset.
+        parts.append(f"[{k}:v]format=rgba,settb=AVTB,setpts=PTS-STARTPTS+{start:.6f}/TB[pn{j}]")
+        parts.append(effects.panel(current, f"pn{j}", f"pv{j}", e, edl.fps))
+        current = f"pv{j}"
     accents = [f for f in (effects.flash(edl.events, intensity),
+                           effects.flash_mix(edl.events, edl.fps, intensity),
                            effects.camera(edl.events, W, H, edl.fps, intensity),
                            effects.whip_blur(edl.events, intensity),
                            effects.rgb(edl.events, intensity),
@@ -151,6 +168,8 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
         accents.append(ass_filter(subtitles_ass))      # a whole chain (difference blend)
     if ass:
         accents.append(ass_filter(ass))
+    if edl.video_fade_out > 0:
+        accents.append(effects.fade_out(dur, edl.video_fade_out))
     parts.append(f"[{current}]" + (",".join(accents) + "," if accents else "") + "setsar=1[pre]")
     if watermark_idx is not None:
         if watermark_crop:
@@ -172,8 +191,9 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if music_idx is not None:
         fade = min(edl.fade_out, dur / 3)
         vol = effects.gain(edl.music_gain) if edl.music_gain else f"volume={edl.music_volume:.3f}"
-        parts.append(f"[{music_idx}:a]{fmt},atrim=0:{dur:.4f},asetpts=PTS-STARTPTS,"
-                     f"afade=t=out:st={max(0.0, dur - fade):.4f}:d={fade:.4f},{vol}[mus]")
+        fades = (f"afade=t=in:d={edl.music_fade_in:.4f}," if edl.music_fade_in > 0 else "") + \
+                (f"afade=t=out:st={max(0.0, dur - fade):.4f}:d={fade:.4f}," if fade > 0 else "")
+        parts.append(f"[{music_idx}:a]{fmt},atrim=0:{dur:.4f},asetpts=PTS-STARTPTS,{fades}{vol}[mus]")
         sources.append("[mus]")
     if not sources:
         parts.append(f"[0:a]{fmt},volume=0[orig]")
@@ -224,7 +244,7 @@ def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> 
         factor = 4 if slowest < 0.3 else 2
         source, _ = external.interpolate(source, start, end, factor, work)
     pieces = [Piece(p.start - a, p.end - a, p.dur) for p in seg.pieces]
-    return Segment(source, pieces, seg.label, seg.vf, False, seg.tint)
+    return Segment(source, pieces, seg.label, seg.vf, False, seg.tint, seg.exact_phase)
 
 
 def render(edl: Edl, out: str, job_id: str | None, work: str, *,
@@ -285,8 +305,10 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
                 fh.write(f"file '{path}'\n")
         ass = titles.write(edl.texts, edl.width, edl.height, text_y, accent)
         subs = _subtitles(edl)
+        prepared = {id(e): panels.frames(e, edl.width, edl.height, edl.fps, os.path.join(work, "panels"))
+                    for e in edl.events if e.kind == "panel"}
         report("Color, acentos y música…", mid)
-        cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop, subs)
+        cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop, subs, prepared)
         if job_id:
             ffmpeg_runner.run(cmd, job_id, total_duration=edl.dur, cwd=config.BASE_DIR,
                               progress_range=(mid, hi))
