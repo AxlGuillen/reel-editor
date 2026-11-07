@@ -21,6 +21,7 @@ from core import external, file_utils, job_manager
 from modules.beatmap import analysis, lyrics
 from modules.editing import effects, gallery, timing
 from modules.library.routes import resolve_clip
+from modules.motion import subject
 from modules.motion.schema import _seconds
 
 bp = Blueprint("editing", __name__, url_prefix="/api/editing")
@@ -32,6 +33,7 @@ def options():
         looks=effects.looks(), luts=effects.luts(), profiles=list(timing.PROFILES),
         rife=external.rife_available(), esrgan=external.esrgan_available(),
         beat_this=analysis.beat_this_available(), vocal_separation=lyrics.separation_available(),
+        subject_tracking=subject.available(),
     )
 
 

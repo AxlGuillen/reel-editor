@@ -65,8 +65,8 @@ def variant(effect: dict, source: str, start: float, hints: dict, vf: str = "") 
             kw.update(x=hints["x"], y=hints["y"])
         if kind in ("shake", "whip") and angle is not None:
             kw["angle"] = angle
-        if kind == "panel":
-            return None
+        if kind in ("panel", "follow"):
+            return None                       # they need an image (and follow a track)
         if kind == "push":
             events.append(Event(0.2, kind, **kw))
         else:

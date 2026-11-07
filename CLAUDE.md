@@ -492,6 +492,10 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
     - En el `Segment`: `mblur` (cualquier ángulo) y `dedupe` (antes de RIFE). `timing.hit_ramp` pone el cuadro del golpe en su tiempo exacto.
     - Los efectos con duración se prenden por número de cuadro.
     - Vista **Efectos** en Edits: galería con cada efecto sobre la misma toma (`POST /api/editing/gallery`).
+    - `follow`: una imagen que sigue al personaje.
+      - La trayectoria sale de `motion.subject.track`, con los detectores de anime de deepghs en ONNX y `onnxruntime`, sin PyTorch.
+      - Los modelos se bajan de Hugging Face a `cache/models/` la primera vez.
+      - `python -m modules.anime_edit.edit4` rearma los logos del pecho del edit 4.
 - **competitivo — modo edit** (`POST /api/competitivo/edit`, job nuevo): con la sesión de la fase 1 y una canción, cada kill cae en un beat, cada pelea arranca en un primer tiempo y la pelea clave cae en el drop. Letreros NOMBRE · CAMPEÓN (el feed guarda el campeón; `kills.kill_authors()`), sin la cámara de Ibai por defecto. Queda como `Edit Mapa N - <titulo>.mp4`. **Por defecto `structure=acts`** (v2) en **orden cronológico** (el cold open es un adelanto de 2–3 s de la pelea clave; `short=1` = solo la clave y la de más puntaje, ~20–25 s; `ambient=1` suma planos de escenario y público sin marcador): cold open y build en tiempo real con la voz de Ibai (subtitulada con el layout invertido), 0.3 s de silencio, el drop al ritmo con una **receta por kill** (`ramp`, `freeze_zoom`, `hard_cut`, `instant_replay` en la clave, `stair_zoom` en multikills) y outro con el nexo; el zoom apunta a la acción (`layout.action_focus`) y el status trae el plan por actos. Desde el feedback del 23/10: sin letreros por defecto (`text=off`), `kill_before_s`/`kill_after_s` (3/2 s), `max_duration_s=0` sin tope, `team=T1`, los **picos de emoción de Ibai** en tiempo real sobre el drop (`voice_peaks`, `competitivo/voice.py`), `last_fight_look=bw` y un render que se puede reintentar. `structure=beat` es el edit anterior, todo al ritmo y sin su voz.
 - **anime_edit** (`/api/anime-edit`, dos fases): fase 1 analiza la canción y detecta los planos (PySceneDetect o `scdet`) con puntaje y **hojas de cuadros numeradas** para que Claude elija; fase 2 renderiza variantes (`impact`, `velocity`, `cinematic`, `lyrics`) con el héroe en el drop. Salida en `EDITS_FOLDER/<title>/`.
   - El preset **`manga`** son las reglas v1.0 (edit 3 de Magna vs Dante).
@@ -706,6 +710,7 @@ Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onD
 - **librosa** (pip) para beatmap y **scenedetect + opencv-python-headless** para los planos de anime_edit (sin scenedetect cae al `scdet` de FFmpeg).
 - **Opcionales** de los edits: `beat-this` (beats con red neuronal), `audio-separator` (voz para la letra), y los binarios `rife-ncnn-vulkan` / `realesrgan-ncnn-vulkan`. `GET /api/editing/options` dice cuáles hay.
 - **Pillow** (pip) para dibujar las tarjetas de jugador (`modules/competitivo/cards.py`).
+- **onnxruntime** (pip, opcional) para seguir personajes (`motion/subject.py`, evento `follow`): los detectores de deepghs se bajan solos de Hugging Face a `cache/models/deepghs/` (~85 MB). Sin él, todo lo demás funciona.
 - **jsonschema** (pip) para validar el `montaje.json` del Estudio contra su contrato.
 - **El servidor local de Presentations** (`node tools/servidor-local.mjs` en ese repo, puerto 3125) para el Estudio: sin él, la vista lo avisa y no lista decks.
 - **faster-whisper** (pip) para subtitles. La 1ª transcripción descarga el modelo (~1.6 GB turbo). En Mac corre en **CPU** (CTranslate2 no usa Metal/GPU); modelos chicos (small/medium) son más livianos.

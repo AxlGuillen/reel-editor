@@ -44,7 +44,24 @@ Todos los efectos de salida con duración (`invert`, `strobe`, `flash` con `shap
 | `mblur` | `Segment.mblur = {angle, amount}` | Desenfoque de movimiento en **cualquier ángulo**: gira el cuadro hasta que el movimiento queda horizontal, desenfoca en horizontal y lo devuelve. `amount` son px en un cuadro de 1920 de ancho. Va en todo el plano (para un tramo, partir el plano) |
 | `dedupe` | `Segment.dedupe = True` | Con RIFE (si está instalado): antes de interpolar, quita los dibujos repetidos del anime (en dos o en tres) con `external.drop_repeats`. RIFE rellena la misma duración solo con dibujos distintos. Sin esto, interpolar entre dos copias del mismo dibujo no inventa nada y después salta |
 
-`follow` (seguir al personaje) llega en la fase 5.
+## Seguir al personaje (`follow`, fase 5)
+
+Un `Event("follow", image=…, track=[[t, x, y, w], …], opacity, fade)` en tiempo y píxeles de salida. `editing/panels.follow_frames` dibuja la imagen centrada en el punto de cada cuadro, `w` de ancho y con fundido de entrada y salida. Con el mismo camino de los paneles (PNG RGBA por cuadro + `overlay`), no hace falta `sendcmd` ni expresiones.
+
+La trayectoria sale de `motion.subject.track(video, inicio, fin, pista)`:
+- **Detección sin PyTorch:** los detectores de anime de deepghs (YOLOv8 en ONNX, persona y cabeza) con `onnxruntime`.
+  - Se bajan de Hugging Face la primera vez (~42 MB cada uno) a `cache/models/deepghs/`.
+  - Sin `onnxruntime` o sin los modelos, `subject.available()` es falso y todo lo demás sigue igual. `GET /api/editing/options` trae `subject_tracking`.
+- **Cuál personaje:** el que tiene el pecho más cerca de la pista (en el edit 4, el punto que se había puesto a mano). Después, cuadro a cuadro, la detección más cercana a donde estaba; un salto de más del 15 % del ancho es otro personaje.
+- **El pecho:** debajo de la cabeza dentro de la caja de la persona (centro de la cabeza, 0.4 alturas de cabeza bajo su borde). En un primer plano sin persona (el demonio llenando el cuadro), la cabeza sola. Sin cabeza, el 35 % de la caja.
+- **Huecos y suavizado:** los cuadros sin detección se interpolan; promedio móvil centrado de 5 cuadros.
+- **Corte:** la trayectoria termina en el primer corte de la fuente dentro del tramo (mapa de movimiento). Si no, el logo quedaba flotando sobre el plano siguiente.
+
+**Medido sobre el edit 4** (`python -m modules.anime_edit.edit4 "<carpeta>" <base del edit 3>`):
+- Las 7 ventanas de logos en el pecho de Magna y Dante, con detección en 213 de 222 cuadros.
+- En los recortes a resolución completa (inicio, mitad y final de cada ventana), el logo va sobre el pecho y lo sigue.
+- La ventana de 6.9 s termina en el cambio de plano de la fuente (7.66 s) en vez de quedar flotando.
+- ~3 s por segundo de video, porque se detecta en cada cuadro.
 
 ## La galería
 

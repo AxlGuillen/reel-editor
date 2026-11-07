@@ -32,7 +32,7 @@ async function loadCatalog() {
     tr.append(cell(e.id), cell(e.stage === "output" ? "salida" : "toma"), cell(e.level),
               cell(e.description), cell([e.trigger.music, e.trigger.video].filter(Boolean).join(" · ")));
     body.appendChild(tr);
-    if (e.id === "panel" || e.id === "dedupe") continue;     // need an image / RIFE
+    if (["panel", "dedupe", "follow"].includes(e.id)) continue;   // need an image / RIFE / a track
     const lab = document.createElement("label");
     lab.className = "control-check fx-chip";
     lab.innerHTML = `<input type="checkbox" value="${e.id}" checked> ${e.id}`;

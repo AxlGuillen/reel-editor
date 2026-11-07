@@ -136,7 +136,7 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if edl.watermark:
         cmd += ["-i", edl.watermark]
         watermark_idx, idx = idx, idx + 1
-    panel_events = [e for e in edl.events if e.kind == "panel"]
+    panel_events = [e for e in edl.events if e.kind in ("panel", "follow")]
     panel_inputs = []
     for e in panel_events:
         cmd += ["-framerate", str(edl.fps), "-start_number", "0", "-i", panels[id(e)]]
@@ -317,8 +317,9 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
                 fh.write(f"file '{path}'\n")
         ass = titles.write(edl.texts, edl.width, edl.height, text_y, accent)
         subs = _subtitles(edl)
-        prepared = {id(e): panels.frames(e, edl.width, edl.height, edl.fps, os.path.join(work, "panels"))
-                    for e in edl.events if e.kind == "panel"}
+        prepared = {id(e): (panels.frames if e.kind == "panel" else panels.follow_frames)(
+                        e, edl.width, edl.height, edl.fps, os.path.join(work, "panels"))
+                    for e in edl.events if e.kind in ("panel", "follow")}
         report("Color, acentos y música…", mid)
         cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop, subs, prepared)
         if job_id:

@@ -23,8 +23,10 @@ FROZEN_EPS = 1e-3             # a piece with less source than this is a frozen f
 # growing by `drift` until it ends, fitted in PANEL_BOX of the frame).
 # The effects bank (phase 3) adds invert (the negative for `dur`), strobe
 # (white every `every` frames for `dur`) and glow (a bloom pulse).
+# follow (phase 5): an image that follows a tracked point (motion.subject),
+# `track` = [[t, x, y, w], …] in output seconds and px.
 EVENT_KINDS = ("flash", "zoom", "shake", "rgb", "push", "hold", "whip", "black", "panel",
-               "invert", "strobe", "glow")
+               "invert", "strobe", "glow", "follow")
 FLASH_SHAPES = ("pulse", "mix")   # pulse: brightness that decays · mix: a flat mix toward white
 PANEL_BOX = (1040 / 1080, 1700 / 1920)   # the panel fits in this fraction of the frame (rules v1.0)
 TEXT_STYLES = ("word", "kill", "multikill", "title", "sub")
@@ -107,6 +109,10 @@ class Event:
     enter: float = 0.12
     from_scale: float = 0.93
     drift: float = 0.035
+    # follow: the path (output s, px) and how it shows
+    track: list = field(default_factory=list)
+    opacity: float = 0.93
+    fade: float = 0.12
 
 
 @dataclass
@@ -191,6 +197,11 @@ class Edl:
                 raise ValueError("El estrobo va de un cuadro blanco cada 2 a cada 8 ('every').")
             if e.kind in ("invert", "strobe", "glow") and e.dur <= 0:
                 raise ValueError(f"El evento {e.kind} en {e.t:.2f} s no dura nada.")
+            if e.kind == "follow":
+                if not e.image or not os.path.isfile(e.image):
+                    raise ValueError(f"No existe la imagen que sigue al personaje: {e.image or '(vacía)'}")
+                if len(e.track) < 1 or any(len(p) != 4 for p in e.track) or e.dur <= 0:
+                    raise ValueError(f"El seguimiento en {e.t:.2f} s necesita track [[t, x, y, w], …] y duración.")
             if e.kind == "panel":
                 if not e.image or not os.path.isfile(e.image):
                     raise ValueError(f"No existe la imagen del panel: {e.image or '(vacía)'}")
@@ -218,8 +229,9 @@ class Edl:
                         **({"x": round(e.x, 3), "y": round(e.y, 3)} if (e.x, e.y) != (0.5, 0.5) else {}),
                         **({"shape": e.shape, "dur": round(e.dur, 3)} if e.kind == "flash" and e.shape != "pulse"
                            else {}),
-                        **({"image": os.path.basename(e.image), "dur": round(e.dur, 3)} if e.kind == "panel"
-                           else {}),
+                        **({"image": os.path.basename(e.image), "dur": round(e.dur, 3)}
+                           if e.kind in ("panel", "follow") else {}),
+                        **({"track_points": len(e.track)} if e.kind == "follow" else {}),
                         **({"angle": round(e.angle, 1)} if e.angle is not None else {}),
                         **({"dur": round(e.dur, 3)} if e.kind in ("invert", "strobe", "glow") else {}),
                         **({"every": e.every} if e.kind == "strobe" else {})}

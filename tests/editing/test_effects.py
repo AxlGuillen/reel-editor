@@ -220,7 +220,7 @@ class Gallery(unittest.TestCase):
             self.assertIsNotNone(hints.get("angle"))
             for e in gallery.catalog()["effects"]:
                 edl = gallery.variant(e, video, 0.0, hints)
-                if e["id"] in ("panel", "dedupe"):
+                if e["id"] in ("panel", "dedupe", "follow"):
                     self.assertIsNone(edl)
                     continue
                 edl.validate()
