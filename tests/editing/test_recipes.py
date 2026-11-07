@@ -221,5 +221,16 @@ class Resolution(unittest.TestCase):
             S.remove(tmp)
 
 
+class ShotWindows(unittest.TestCase):
+    def test_windows_go_to_their_shot_split_at_the_cut(self):
+        segs = [Segment("a.mp4", [Piece(0, 1, 1)]), Segment("b.mp4", [Piece(0, 1, 1)])]
+        edl = Edl(segs, fps=30, events=[Event(0.9, "spin", dur=0.2), Event(1.5, "zoomblur", dur=1 / 30),
+                                        Event(0.2, "flash")])
+        w = R.shot_windows(edl)
+        self.assertEqual([(e.kind, effects.frames_of(e.t, e.dur, 30)) for e in w[0]], [("spin", (27, 29))])
+        self.assertEqual([(e.kind, effects.frames_of(e.t, e.dur, 30)) for e in w[1]],
+                         [("spin", (0, 2)), ("zoomblur", (15, 15))])
+
+
 if __name__ == "__main__":
     unittest.main()

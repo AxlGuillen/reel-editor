@@ -96,9 +96,12 @@ def _n(dur: float, fps: int) -> int:
 
 
 def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
-                with_audio: bool, source_fps: float, source_size: tuple[int, int] | None = None) -> list[str]:
+                with_audio: bool, source_fps: float, source_size: tuple[int, int] | None = None,
+                windows: list | None = None, intensity: float = 1.0) -> list[str]:
     """Command for one shot: geometry + retimed pieces → .mkv intermediate.
-    `source_size` is needed for Segment.mblur (it blurs the source frames)."""
+    `source_size` is needed for Segment.mblur (it blurs the source frames).
+    `windows`: the window effects (bank2) that fall in this shot, with times
+    relative to its start (render.shot_windows)."""
     step = 1.0 / (source_fps or 30)
     a = min(p.start for p in seg.pieces)
     b = max(max(p.end, p.start + 2 * step) for p in seg.pieces)
@@ -139,7 +142,19 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
                    f"setpts=(PTS-{zero})/{p.speed:.6f}")
         parts.append(f"[p{i}]{src},fps={fps},tpad=stop_mode=clone:stop_duration={p.dur + 1:.3f},"
                      f"trim=end_frame={n},setpts=PTS-STARTPTS[v{i}]")
-    parts.append("".join(f"[v{i}]" for i in range(k)) + f"concat=n={k}:v=1:a=0[vout]")
+    parts.append("".join(f"[v{i}]" for i in range(k)) + f"concat=n={k}:v=1:a=0[vcat]")
+    vlab = "vcat"
+    for j, e in enumerate(windows or []):
+        asset = None
+        if e.kind == "overlay":
+            if os.path.splitext(e.image)[1].lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                cmd += ["-loop", "1", "-framerate", str(fps), "-t", f"{e.dur + 1:.3f}", "-i", e.image]
+            else:
+                cmd += ["-stream_loop", "-1", "-t", f"{e.dur + 1:.3f}", "-i", e.image]
+            asset = inputs
+            inputs += 1
+        parts.append(bank2.window(vlab, f"wv{j}", e, j, fps, width, height, intensity, asset))
+        vlab = f"wv{j}"
     if with_audio:
         parts.append("[0:a]aresample=48000,aformat=channel_layouts=stereo,asplit="
                      f"{k}" + "".join(f"[q{i}]" for i in range(k)))
@@ -159,7 +174,7 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
         total = sum(_n(p.dur, fps) for p in seg.pieces) / fps
         cmd += ["-f", "lavfi", "-t", f"{total:.4f}", "-i", "anullsrc=r=48000:cl=stereo"]
         amap = f"{inputs}:a"
-    cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", amap,
+    cmd += ["-filter_complex", ";".join(parts), "-map", f"[{vlab}]", "-map", amap,
             *ffmpeg_runner.video_encode_flags(INTERMEDIATE_CRF), "-c:a", "pcm_s16le", out]
     return cmd
 
@@ -186,16 +201,6 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
         cmd += ["-framerate", str(edl.fps), "-start_number", "0", "-i", panels[id(e)]]
         panel_inputs.append(idx)
         idx += 1
-    window_events = sorted((e for e in edl.events if bank2.is_window(e)), key=lambda e: e.t)
-    asset_inputs = {}
-    for e in window_events:
-        if e.kind == "overlay":
-            if os.path.splitext(e.image)[1].lower() in (".png", ".jpg", ".jpeg", ".webp"):
-                cmd += ["-loop", "1", "-framerate", str(edl.fps), "-t", f"{e.dur + 1:.3f}", "-i", e.image]
-            else:
-                cmd += ["-stream_loop", "-1", "-t", f"{e.dur + 1:.3f}", "-i", e.image]
-            asset_inputs[id(e)] = idx
-            idx += 1
 
     W, H = edl.width, edl.height
     parts = []
@@ -218,10 +223,10 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if any(e.kind == "glow" for e in edl.events):
         parts.append(effects.glow_pulse(current, "glowp", edl.events, W, H, intensity, edl.fps))
         current = "glowp"
-    # effects bank 2 windows: each one a branch trimmed to its frames, overlaid back
-    for j, e in enumerate(window_events):
-        parts.append(bank2.window(current, f"wv{j}", e, j, edl.fps, W, H, intensity, asset_inputs.get(id(e))))
-        current = f"wv{j}"
+    # the window effects (bank2) are not here: they run in each shot's pass 1
+    # (shot_windows). Here, a branch split from the whole edit made the
+    # overlay wait for its first frame: FFmpeg held every frame before each
+    # window and a 3.5-min edit with ~100 windows never got going.
     accents = [f for f in (effects.flash(edl.events, intensity),
                            effects.flash_mix(edl.events, edl.fps, intensity),
                            effects.strobe(edl.events, edl.fps, intensity),
@@ -299,6 +304,26 @@ def _subtitles(edl: Edl) -> str | None:
                                                             windows=edl.subtitle_windows or None))
 
 
+def shot_windows(edl: Edl) -> list[list]:
+    """The window effects (bank2) of each shot, with times relative to the
+    shot's first frame. A window across a cut is split at the cut."""
+    fps = edl.fps
+    starts, f = [], 0
+    for seg in edl.segments:
+        starts.append(f)
+        f += sum(_n(p.dur, fps) for p in seg.pieces)
+    starts.append(f)
+    out: list[list] = [[] for _ in edl.segments]
+    for e in sorted((e for e in edl.events if bank2.is_window(e)), key=lambda e: e.t):
+        a, b = effects.frames_of(e.t, e.dur, fps)
+        for i in range(len(edl.segments)):
+            s0, s1 = starts[i], starts[i + 1]
+            lo, hi = max(a, s0), min(b, s1 - 1)
+            if lo <= hi:
+                out[i].append(dataclasses.replace(e, t=(lo - s0) / fps, dur=(hi - lo + 1) / fps))
+    return out
+
+
 def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> Segment:
     """RIFE / Real-ESRGAN over the shot's span, when they apply and are installed.
     Returns the shot pointing at the processed file (times from 0)."""
@@ -343,6 +368,8 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
     done = 0
     ass = subs = None
     try:
+        windows = shot_windows(edl)
+
         def one(i: int) -> str:
             seg = edl.segments[i]
             sub = os.path.join(work, f"pre_{i:03d}")
@@ -354,7 +381,7 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
             path = os.path.join(work, f"shot_{i:03d}.mkv")
             size = ffmpeg_runner.probe_resolution(ready.source) if ready.mblur else None
             ffmpeg_runner.capture(build_pass1(ready, path, edl.width, edl.height, edl.fps, with_audio, source_fps,
-                                              size), timeout=1800, cwd=config.BASE_DIR)
+                                              size, windows[i], intensity), timeout=1800, cwd=config.BASE_DIR)
             shutil.rmtree(sub, ignore_errors=True)
             return path
 
