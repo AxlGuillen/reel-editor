@@ -326,54 +326,20 @@ Por omisión todo apagado, así el plan sigue siendo el de las reglas v1.0 (`rep
 
 El status trae `composites`: cuántos cortes con desenfoque, dónde cayó cada compuesto (`frame`, `t`) y cuántas palabras de la letra.
 
-### Edit largo de Magna vs Dante (07/11/2026)
+### Edit largo (`anime_edit/edit_long.py`)
 
-El primer edit largo: **3:32, la canción entera** («I Will Survive», versión de Glee) sobre el **episodio 175 completo**, con las reglas v1.0, los compuestos y la letra. A Axl le gustó como quedó. Se rehace con `modules/anime_edit/edit_long.py`.
-
-**Resultado** (en `EDITS_FOLDER/Magna vs Dante - edit largo/`):
-- `Magna vs Dante - edit largo v1.mp4` (sin letra) y `… v1 (con letra).mp4`, en 1080×1920 a 30 fps.
-- Las copias livianas en 720p (menos de 30 MB: lo máximo que se puede mandar por el chat).
-- `… - plan.json` (cortes, paneles, dónde cayó cada compuesto), `… - letra palabra por palabra.srt` y los `.srt` solo con tiempos.
-
-**Cómo se hizo**
-1. **Otra instancia de ReelForge.** Axl estaba haciendo videos con la suya (el modo debug se reinicia cuando cambia el código), así que se trabajó en un worktree aparte (`Proyectos GIT\reel-editor-composites`, rama `feat/composites`) con el venv del principal. Los modelos se compartieron con un enlace de `cache\models`. Su servidor no se tocó.
-2. **La rejilla, medida en la canción.** El tracker de beats dio 127.66 BPM. La coherencia de fase de los beats después del drop (buscar el BPM y la fase que alinean todos) dio **128.00 BPM exactos**, fase 0.05 s, coherencia 0.994. Los downbeats caen en los beats múltiplos de 4 y el drop en el beat 96 (0:45). Va como `grid` constante: `{"bpm": 128, "phase": 0.05}`.
-3. **Las palabras cantadas.** El beatmap (Whisper con su filtro de voz) oyó 33 palabras; sin el filtro (`vad_filter=False`), 444. Salen las frases (destellos de las reglas), la estructura y los tiempos de la letra.
-4. **Los planos del episodio.** `anime_edit.shots` separó 659 planos e hizo 14 hojas numeradas. De ahí salió la historia y 131 tomas:
-   - **0:00–0:45, intro lenta:** la amenaza de Dante y el entrenamiento con Zora («medio año antes», cálido). Tomas de 4 a 8 beats.
-   - **0:45, el drop:** fuego y cadenas, tomas de 2 a 4 beats.
-   - **1:41, el corte de la canción:** los recuerdos luminosos de los Black Bulls.
-   - **1:53:** la pelea a muerte, cada vez más sangrienta. Ahí van los paneles del edit 3 (`m07`, `m03`, `m04`, `m05`, `m02`).
-   - **2:53, el hueco de la voz:** Dante duda (aislamiento de color en rojo magenta).
-   - **3:00:** el golpe final con las cadenas naranjas.
-   - **Cierre:** Magna cae y Zora lo sostiene, con fundido.
-   - Cada sección se declara con sus beats y el script comprueba que sumen (96, 120, 24, 128, 16, 56).
-5. **Las reglas v1.0 tal cual** (`motion` off, lo que Axl eligió en el clímax del A/B): encuadres A/B/C, tonos fríos y cálidos, los 10 paneles de manga y un destello al empezar cada frase.
-6. **Los compuestos:** corte con desenfoque `mix` en cada corte desde el drop (la intro queda limpia: `blur_cuts_from`), golpe completo en 0:45, 1:33 y 3:12, ráfaga de impacto en 1:54 y 3:03, aislamiento de color en 2:55. Se revisaron cuadro por cuadro en el video final.
-7. **La letra.** La escribe Axl. La primera que pasó era la original de «I Will Survive»: coincidió con el 38 % de lo cantado, porque la versión de Glee es un **mashup con «Survivor»** (Destiny's Child), que va casi entera de 0:55 a 2:55. La segunda (la de Glee) coincidió con el 89 %.
-   - Se alinea el texto contra las palabras cantadas (`editing.lyrics_align`). Cada palabra toma el tiempo de la que oyó Whisper y las mal oídas se reparten entre sus vecinas. Los coros entre paréntesis («(what?)») ayudan a ubicar pero no se muestran.
-   - El reporte avisa qué tramos cantados no tiene el texto. Así apareció el tercer estribillo de «Survivor», que se canta dos veces seguidas (2:38–2:54) y en el texto estaba una vez: se repitieron esas mismas líneas (`CHORUS_TWICE`).
-   - Quedaron 443 palabras con su tiempo.
-8. **El estilo de la letra** (pedido de Axl): el invertido («translúcido»), una palabra a la vez, **en el centro y mediana**: Montserrat ExtraBold, `inv_size` 104 (el de siempre es 150), `inv_y` 960. Sin borrarse en los cortes: con una palabra a la vez, cada una queda hasta la siguiente.
-
-**Lo que aprendimos**
-- **Un edit largo puede sostener una historia:** intro narrativa lenta, drop, respiro con recuerdos, clímax y cierre. Hace falta el episodio entero, no 10 recortes: 131 tomas para 3:32.
-- **Medir la rejilla, no confiar en el tracker.** Un 2.4 % de diferencia (127.66 contra 128) son 5 beats de error al final de la canción.
-- **Whisper sin el filtro de voz para canciones.** Con el filtro se pierde casi toda la voz cantada.
-- **Revisar la letra contra el audio antes de quemarla.** Una versión de una canción puede ser un mashup o repetir un estribillo. La alineación lo dice sola (`uncovered`).
-- **Los efectos de ventana van dentro de cada plano.** En la pasada final, cada uno era una rama del edit entero, y FFmpeg guardaba todos los cuadros anteriores a cada ventana. Con ~100 ventanas, el edit de 3:32 estuvo 26 minutos sin escribir un cuadro. Ahora cada plano lleva las suyas (`render.shot_windows`) y la pasada final tarda ~2 minutos.
-- **1080p de fuente no da un edit en 4K.** El encuadre A recorta 608 px de ancho y los escala: por eso se ve más blando que los edits de TikTok en 4K. Con la fuente en 4K, `resolution` 1440 o 2160.
-- **Para mandar por el chat:** una copia de 720p a ~900 kb/s (27 MB para 3:32).
-
-**Cómo repetirlo**
+Script que rearma el edit largo de Magna vs Dante del 07/11 (3:32, la canción entera sobre el episodio 175): las tomas por secciones con sus beats comprobados, la rejilla medida (`{"bpm": 128, "phase": 0.05}`), las reglas v1.0 con los paneles del edit 3, los compuestos y, con `--lyrics`, la letra de Axl alineada con `editing/lyrics_align.py`.
 
 ```
-python -m modules.anime_edit.edit_long "<carpeta de salida>" --episode "<Black Clover 175.mkv>" ^
-       --song "<Glee Cast - Survivor - I Will Survive.mp3>" --panels "<Edit Magna vs Dante>\manga" ^
-       [--lyrics letra.txt] [--plan-only]
+python -m modules.anime_edit.edit_long "<carpeta de salida>" --episode "<ep175.mkv>" --song "<canción.mp3>" ^
+       --panels "<Edit Magna vs Dante>\manga" [--lyrics letra.txt] [--plan-only]
 ```
 
-Las palabras cantadas quedan en `palabras cantadas.json` dentro de la carpeta (la segunda vez no se transcribe). Para otro edit largo: copiar `edit_long.py`, cambiar las secciones (tomas en segundos del episodio y beats por sección), los compuestos y, si la canción repite partes que el texto no tiene, `CHORUS_TWICE`.
+- `lyrics_align.sung_words` transcribe la canción **sin el filtro de voz de Whisper** (con él, en esta canción salían 33 palabras de 444) y la guarda en `palabras cantadas.json`.
+- `lyrics_align.align` da a cada palabra del texto el tiempo de la cantada con la que coincide (difflib) y reparte las mal oídas entre sus vecinas. Los coros entre paréntesis ayudan a ubicar pero no se muestran. El reporte (`uncovered`) dice qué tramos cantados no tiene el texto.
+- `CHORUS_TWICE` repite líneas del texto que la canción canta dos veces seguidas.
+
+**Cómo se hizo y qué se aprendió** (conocimiento, no código): en el PKB, `redes-sociales/creador-de-contenido-axelsine/worlds-2026/edit-largo-magna-vs-dante.md`.
 
 ### `motion: on` — bloques, curva y efectos en los golpes
 

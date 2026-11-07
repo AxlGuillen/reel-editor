@@ -4,7 +4,7 @@ Rules v1.0 (the manga preset: takes in beats, framings A/B/C, cold/warm
 tones, the edit 3 manga panels, a flash on every phrase) plus the composites
 (blur cuts from the drop, full hits, impact bursts, color isolation) and the
 lyrics with the invert subtitles. How it was made and what was learned:
-docs/edits.md, «Edit largo de Magna vs Dante».
+docs/edits.md (usage) and the PKB note worlds-2026/edit-largo-magna-vs-dante.md (how).
 
     python -m modules.anime_edit.edit_long <out folder> --episode <ep175.mkv> --song <I Will Survive (Glee).mp3>
            --panels "<Edit Magna vs Dante>/manga" [--lyrics letra.txt] [--plan-only]
