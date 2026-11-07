@@ -326,20 +326,23 @@ Por omisión todo apagado, así el plan sigue siendo el de las reglas v1.0 (`rep
 
 El status trae `composites`: cuántos cortes con desenfoque, dónde cayó cada compuesto (`frame`, `t`) y cuántas palabras de la letra.
 
-### Edit largo (`anime_edit/edit_long.py`)
+### Edit largo (`anime_edit/long_edit.py`)
 
-Script que rearma el edit largo de Magna vs Dante del 07/11 (3:32, la canción entera sobre el episodio 175): las tomas por secciones con sus beats comprobados, la rejilla medida (`{"bpm": 128, "phase": 0.05}`), las reglas v1.0 con los paneles del edit 3, los compuestos y, con `--lyrics`, la letra de Axl alineada con `editing/lyrics_align.py`.
+El motor del tipo de video «edit largo de anime» (1–4 min, la canción entera). Cada video es un **plan en JSON**, no un script. Plantilla con un ejemplo real: `anime_edit/examples/long_edit_magna_vs_dante.json` (07/11: Glee «I Will Survive» entera sobre el episodio 175 de Black Clover, 121 tomas y 10 paneles).
 
 ```
-python -m modules.anime_edit.edit_long "<carpeta de salida>" --episode "<ep175.mkv>" --song "<canción.mp3>" ^
-       --panels "<Edit Magna vs Dante>\manga" [--lyrics letra.txt] [--plan-only]
+python -m modules.anime_edit.long_edit <plan.json> "<carpeta de salida>" --episode "<video>" --song "<canción>" ^
+       --panels "<carpeta de paneles>" [--lyrics letra.txt] [--plan-only]
 ```
 
-- `lyrics_align.sung_words` transcribe la canción **sin el filtro de voz de Whisper** (con él, en esta canción salían 33 palabras de 444) y la guarda en `palabras cantadas.json`.
-- `lyrics_align.align` da a cada palabra del texto el tiempo de la cantada con la que coincide (difflib) y reparte las mal oídas entre sus vecinas. Los coros entre paréntesis ayudan a ubicar pero no se muestran. El reporte (`uncovered`) dice qué tramos cantados no tiene el texto.
-- `CHORUS_TWICE` repite líneas del texto que la canción canta dos veces seguidas.
+- **El plan:** `grid` (medida en la canción, no la del tracker), `sections` (cada una con sus `beats` y sus tomas o paneles; el runner comprueba que sumen), `composites`, `blur_cuts`, `word_style` y `repeat_lines`.
+- **`lyrics_align.sung_words`** transcribe la canción **sin el filtro de voz de Whisper** (con él, en esta canción salían 33 palabras de 444). La guarda en `palabras cantadas.json`.
+- **`lyrics_align.align`** da a cada palabra del texto el tiempo de la cantada con la que coincide (difflib) y reparte las mal oídas entre sus vecinas.
+  - Los coros entre paréntesis ayudan a ubicar pero no se muestran.
+  - El reporte (`uncovered`) dice qué tramos cantados no tiene el texto.
+- **`repeat_lines`** repite bloques de la letra que la canción canta dos veces seguidas.
 
-**Cómo se hizo y qué se aprendió** (conocimiento, no código): en el PKB, `redes-sociales/creador-de-contenido-axelsine/worlds-2026/edit-largo-magna-vs-dante.md`.
+La receta (cómo elegir las tomas, medir la rejilla, revisar la letra, lo que se aprendió) está en el PKB: `worlds-2026/receta-edit-largo-anime.md`.
 
 ### `motion: on` — bloques, curva y efectos en los golpes
 
@@ -371,6 +374,20 @@ python -m modules.anime_edit.edit_long "<carpeta de salida>" --episode "<ep175.m
 `blocks.check(info["motion"], fps)` verifica el criterio de la fase 4 sobre el plan: desfase máximo efecto–golpe, intensidad del drop contra la subida y variedad de transiciones. El status trae `motion: {blocks, locked, transitions, intensity}`.
 
 **Rearmar el edit 3** (criterio de la fase 2): `python -m modules.anime_edit.repro "<carpeta Edit Magna vs Dante>" "<episodio.mkv>"`. Rearma el edit desde `P`/`MODES`, compara los cortes con la fórmula de `edit3.py`, busca el salto de diferencia en cada corte de los dos videos y mide el SSIM de 5 cuadros de control con una hoja lado a lado (`…-control.jpg`).
+
+## tf_explained — «La TF explicada» (motor, sin rutas)
+
+El tipo de video que detiene una pelea del competitivo para explicarla con voz narrada. La receta está en el PKB (`worlds-2026/receta-la-tf-explicada.md`); aquí, las piezas y cómo se usan desde un script:
+
+| Pieza | Para qué |
+|---|---|
+| `dossier.fight(game_id, clock0_utc, desde, hasta)` | El feed oficial alrededor de la pelea, en el reloj del marcador (con pausas): vida, oro, K/D/A y CS de cada jugador; objetos, wards y daño cada 5 s. **El feed no tiene posiciones** |
+| `dossier.timeline(d)` | El estado al empezar, cada muerte con su asesino y asistencias, y la vida de los 10 una vez por segundo |
+| `vod.download(url, {nombre: (desde, hasta)}, offset, carpeta)` | Los tramos del VOD por reloj: segundo del VOD = reloj + offset (el que mide el ancla de competitivo) |
+| `sheets.crop_sheets` / `sheets.fight_sheets` | Hojas para leer la pelea cuadro a cuadro: un recorte del broadcast (el casillero del jugador: R, Cleanse, Flash; la barra va 1–1.5 s atrasada) o el cuadro + su minimapa + la vida de los 10 |
+| `layout.layout(x0, y0, w, h, minimap, fit)` | El `vf` del plano: marcador arriba, gameplay 1080×850, fila de subtítulos, banda con el minimapa real. `layout.to_output` lleva un punto del broadcast a la salida (donde el deck dibuja el anillo) |
+| `plan.Span(video, offset)` | `run(desde, hasta, dur)`, `freeze(en, dur)` y `shot(vf, …)`: las piezas de la EDL en reloj del marcador, cada una con lo que dura en la voz |
+| `montage.run(base, segmentos_de_la_voz, desk, deck, nombre)` | El montaje por el Estudio: subtítulos con la ortografía del guion (`screen_words`), láminas colocadas por el guion marcado, render de Presentations y montage con subtítulos |
 
 ## montage — `/api/montage`
 

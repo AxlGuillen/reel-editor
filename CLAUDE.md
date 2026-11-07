@@ -60,7 +60,9 @@ reel-editor/
 │   ├── editing/                ← MOTOR de los edits: EDL → render en dos pasadas (sin routes de proceso)
 │   ├── anime_edit/             ← PIPELINE: pelea de anime + canción → variantes de edit (2 fases)
 │   ├── montage/                ← Montaje: capas animadas con alfa sobre un video, por palabra o segundo
-│   └── studio/                 ← Estudio: las láminas de un deck de Presentations sobre el video, en vivo
+│   ├── studio/                 ← Estudio: las láminas de un deck de Presentations sobre el video, en vivo
+│   ├── tf_explained/           ← MOTOR de «La TF explicada»: expediente del feed, tramos del VOD, hojas, layout de análisis, montaje
+│   └── research/               ← investigación de referencias (TikTok sin descargar: perfiles, vistas, menciones)
 │
 │   Cada módulo que procesa video tiene los mismos tres archivos:
 │       routes.py      ← Blueprint Flask con sus endpoints
@@ -515,7 +517,7 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
     - Salen además dos `.srt` solo con tiempos.
     - En la fase 1, `shots=0` evita detectar planos en un episodio entero, y `video_path`/`music_path` toman archivos locales.
     - `python -m modules.anime_edit.repro` rearma el edit 3 y lo compara con el original.
-    - `python -m modules.anime_edit.edit_long` rearma el edit largo de Magna (3:32, la canción entera, con letra alineada por `editing/lyrics_align.py`). El uso, en `docs/edits.md`; cómo se hizo y qué se aprendió, en el PKB (`worlds-2026/edit-largo-magna-vs-dante.md`).
+    - `python -m modules.anime_edit.long_edit <plan.json>`: el edit largo (la canción entera) desde un plan; plantilla en `anime_edit/examples/`. La letra se alinea con `editing/lyrics_align.py`. El uso, en `docs/edits.md`; la receta, en el PKB (`worlds-2026/receta-edit-largo-anime.md`).
     - Con **`motion=on`** (por omisión `off`, idéntico a las reglas v1.0), cada toma recibe un bloque de `anime_edit/blocks.json` según la curva de la canción y su mapa de movimiento.
       - Los efectos caen en el cuadro de salida de cada golpe real (`fit.out_frame`).
       - `rampa` pone el golpe en el beat.
@@ -755,6 +757,13 @@ una. Para llevar el proyecto, `git clone` o `git archive` (nunca un zip de la
 carpeta entera: arrastraría `venv/` y, peor, `cookies/`).
 
 ---
+
+## Dónde va cada cosa (decisión de Axl, 07/11/2026)
+
+- **En este repo, el motor y los recursos de cada TIPO de video**, no de cada video: un módulo por tipo (`tf_explained`, `anime_edit` con `long_edit`, `competitivo`…) y lo que reutiliza en `assets/`. Un video concreto es un archivo de datos (un plan JSON, un guion), nunca un script propio. Si hay que escribir un script para un video, lo que sirva para el siguiente se sube al módulo de su tipo.
+- **En el PKB, el conocimiento**: la receta de cada tipo de video (cómo se hace, qué se aprendió, los errores) en `redes-sociales/creador-de-contenido-axelsine/worlds-2026/receta-*.md`. Aquí, en `docs/`, solo cómo se usa el código.
+- **Fuera de git**: los videos, audios y episodios (pesan y tienen derechos). Las salidas van a `EDITS_FOLDER` / `COMPETITIVO_FOLDER`.
+- **Las láminas** siguen en el repo de Presentations: el Estudio las lee de ahí.
 
 ## Idioma del código
 
