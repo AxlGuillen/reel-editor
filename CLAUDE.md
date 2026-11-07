@@ -37,6 +37,7 @@ reel-editor/
 │   │                             Archivo Black, Montserrat ExtraBold/Black); SOLO archivos de fuente
 │   ├── font_licenses/          ← licencias OFL de las fuentes (fuera de fonts/ a propósito)
 │   ├── luts/                   ← LUTs .cube para la gradación de los edits (opcionales)
+│   ├── overlays/               ← light leaks, brasas, texturas para el efecto `overlay` (los pone Axl)
 │   └── vocab.json              ← correcciones de nombres en los subtítulos de Ibai (mal oído → correcto)
 │
 ├── modules/                    ← Cada feature es un módulo independiente
@@ -496,6 +497,9 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
     - Eventos nuevos: `panel`, `invert`, `strobe` y `glow`, más el destello `shape="mix"`.
     - `shake` y `whip` toman `angle` (el del golpe del mapa de movimiento).
     - En el `Segment`: `mblur` (cualquier ángulo) y `dedupe` (antes de RIFE). `timing.hit_ramp` pone el cuadro del golpe en su tiempo exacto.
+    - **Banco 2** (`editing/bank2.py`): `speedlines` (radiales o paralelas), `impactframe` (bw / inv / poster), `spin`, `zoomblur`, `glitch` (blocks / vhs / flicker), `echo`, `grain`, `satpulse`, `overlay` (assets de `assets/overlays/`), `lens` (con aberración cromática), `tilt` y `shake` con `blur`.
+      - Los caros van en **ventanas**: una rama recortada a sus cuadros y superpuesta de vuelta, así fuera de la ventana el cuadro no se toca.
+      - En la toma: curvas de velocidad suaves (`timing.velocity`, `velocity_hit`) y pantalla dividida (`Segment.split`: arriba/abajo, lado a lado o diagonal).
     - Los efectos con duración se prenden por número de cuadro.
     - Vista **Efectos** en Edits: galería con cada efecto sobre la misma toma (`POST /api/editing/gallery`).
     - `follow`: una imagen que sigue al personaje.

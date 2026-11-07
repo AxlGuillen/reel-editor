@@ -44,6 +44,42 @@ Todos los efectos de salida con duración (`invert`, `strobe`, `flash` con `shap
 | `mblur` | `Segment.mblur = {angle, amount}` | Desenfoque de movimiento en **cualquier ángulo**: gira el cuadro hasta que el movimiento queda horizontal, desenfoca en horizontal y lo devuelve. `amount` son px en un cuadro de 1920 de ancho. Va en todo el plano (para un tramo, partir el plano) |
 | `dedupe` | `Segment.dedupe = True` | Con RIFE (si está instalado): antes de interpolar, quita los dibujos repetidos del anime (en dos o en tres) con `external.drop_repeats`. RIFE rellena la misma duración solo con dibujos distintos. Sin esto, interpolar entre dos copias del mismo dibujo no inventa nada y después salta |
 
+## Banco 2 (noviembre)
+
+Trece efectos más, todos en `modules/editing/bank2.py` salvo las líneas de velocidad (`panels.speedline_frames`), las curvas de velocidad (`timing`) y la pantalla dividida (`render.vf_split`). Se arman de tres formas:
+- **Cadenas** en la pasada 2, prendidas por número de cuadro: `impactframe`, `grain`, `satpulse`, `glitch` `vhs`/`flicker` y el desenfoque de `shake` con `blur`.
+- **Ventanas:** una rama del edit recortada a los cuadros del evento (`trim=start_frame`, conserva los tiempos), procesada y superpuesta de vuelta con `enable='between(n,a,b)'`. Fuera de la ventana el cuadro no se toca, y lo caro (rotar, mezclar copias, perspectiva) corre solo ahí. Son `spin`, `zoomblur`, `glitch` `blocks`, `echo`, `lens`, `tilt` y `overlay`.
+- **Secuencias de PNG** con alfa, como `panel` y `follow`: `speedlines`.
+
+| Efecto | Qué hace | Parámetros (por omisión) | Cuadros típicos |
+|---|---|---|---|
+| `speedlines` | líneas de velocidad de anime, redibujadas en cada cuadro. `radial`: cuñas hacia (`x`, `y`) con un círculo limpio. `parallel`: trazos en `angle` | `style` radial, `dur` 0.3, `x`, `y`, `angle`, `fade` 0.12, `seed` | 6–30 |
+| `impactframe` | cuadro de impacto sin color: `bw` (tinta sobre papel, umbral de luma 110), `inv` (al revés) o `poster` (grises planos cada 55) | `style` bw, `dur` 0.07 | 1–4 |
+| `spin` | giro con aceleración y frenado suaves y bordes espejados (sin esquinas negras) | `dur` 0.3, `degrees` 360 (negativo = antihorario) | 6–15 |
+| `zoomblur` | zoom radial: 6 copias escaladas hasta +16 % mezcladas | `intensity` 1, `dur` 0.2 | 3–8 |
+| `glitch` | `blocks`: 5 franjas corridas de lado y croma separada. `vhs`: ruido, croma corrida, líneas y color lavado. `flicker`: el brillo salta más claro y más oscuro | `style` blocks, `dur` 0.2, `seed` | 3–30 |
+| `echo` | estela: cada cuadro con los 4 anteriores (solo se ve con movimiento) | `dur` 0.3 | 6–20 |
+| `grain` | grano de película | `intensity` 1, `dur` 0.5 | 15–300 |
+| `satpulse` | la saturación sube hasta +60 % y baja en seno | `intensity` 1, `dur` 0.3 | 6–15 |
+| `shake` + `blur` | la sacudida más un desenfoque en su eje (cuantizado a horizontal o vertical, como `whip`) | `blur` 6 px | 6–12 |
+| `overlay` | un asset de `assets/overlays/` (imagen o video) en modo `screen`, `add` o `normal` | `image`, `style` screen, `opacity` 0.93, `dur` 0.8 | 15–60 |
+| `lens` | lente de ojo de pez: barril con zoom de vuelta (el centro se abomba, sin esquinas negras) y aberración cromática radial opcional (`ca`) | `intensity` 1 (negativo = cojín), `dur` 0.25, `ca` 0 | 4–15 |
+| `tilt` | inclinación 3D: un borde se acerca y vuelve (perspectiva, pulso en seno) | `style` left/right/up/down, `intensity` 1, `dur` 0.4 | 8–20 |
+
+**De la toma:**
+- **Curvas de velocidad suaves:** `timing.velocity(start, end, dur, shape, steps=8, low=0.35, high=1.8)`. Formas: `rise`, `fall`, `dip` y `bump`. Sin escalones: la curva se muestrea en 8 piezas y la fuente entra justa en la duración. `timing.velocity_hit(start, hit, end, dur, hit_out)` es el velocity edit: acelera hacia el golpe y queda lento justo después. Cada mitad se normaliza por separado, así el cuadro del golpe cae exacto en `hit_out`, como en `hit_ramp`.
+- **Pantalla dividida:** `Segment.split = {source, start, layout}`.
+  - `start` es el segundo de la segunda fuente que se ve al empezar el plano. Las dos corren con el mismo reloj y a la velocidad del plano.
+  - `layout`: `top_bottom`, `left_right` o `diagonal` (de arriba a la derecha hacia abajo a la izquierda), con una costura blanca de 6 px.
+  - Reemplaza la geometría del plano (`vf`).
+
+**Lo que se midió y se corrigió:**
+- Cada efecto empieza en el primer cuadro de su ventana y termina en el último (`tests/editing/test_effects2.py`). En el giro, la inclinación y el pulso de color, la curva vale 1/(n+1) en el primer cuadro y n/(n+1) en el último: nunca 0 dentro de la ventana. Un giro de 360° vuelve al original recién en el cuadro siguiente.
+- `perspective` cuenta `in` desde **1** en el primer cuadro de la rama (medido), no desde 0.
+- `extractplanes` entrega sus salidas en orden r, g, b aunque se pidan en otro orden. Con `g+b+r` la lente cambiaba el azul por el verde. `mergeplanes` además exige el mismo SAR en las tres entradas.
+- `eq` con saturación 1 igual remuestrea la croma: el pulso de color lleva `enable` para no tocar el resto del edit.
+- Las líneas de velocidad arrancan visibles: el fundido se mide desde el final del cuadro, con un piso del 45 %.
+
 ## Seguir al personaje (`follow`, fase 5)
 
 Un `Event("follow", image=…, track=[[t, x, y, w], …], opacity, fade)` en tiempo y píxeles de salida. `editing/panels.follow_frames` dibuja la imagen centrada en el punto de cada cuadro, `w` de ancho y con fundido de entrada y salida. Con el mismo camino de los paneles (PNG RGBA por cuadro + `overlay`), no hace falta `sendcmd` ni expresiones.
@@ -68,7 +104,8 @@ La trayectoria sale de `motion.subject.track(video, inicio, fin, pista)`:
 `POST /api/editing/gallery` con `path` (o `video`, `library_clip`, `job_id`), `start` y `effects` (ids; por omisión, todos):
 - Renderiza 2.4 s de la toma por efecto, con el efecto en el segundo 1, a 540×960 y 30 fps, más un clip **sin efecto** para comparar.
 - Antes lee el mapa de movimiento de ese tramo: los efectos con dirección toman el ángulo del golpe más cercano y el zoom apunta al centro de la acción.
-- La hoja (`/gallery/sheet/<id>`) muestra un cuadro por efecto, dos cuadros después de que empieza; en `push` y `ramp` son 20.
-- `panel` (necesita una imagen) y `dedupe` (necesita RIFE) no salen en la galería.
+- La hoja (`/gallery/sheet/<id>`) muestra un cuadro por efecto, dos cuadros después de que empieza; en `push`, `ramp`, `velocity`, `velocity_hit` y `split` son 20.
+- `panel` (necesita una imagen), `follow` (una trayectoria) y `dedupe` (RIFE) no salen en la galería; `overlay` sale con el primer asset de `assets/overlays/` si hay alguno.
+- `split` muestra la misma toma 0.6 s después en la otra mitad.
 
 Medido sobre la toma 09 de Magna vs Dante desde 20:49.2: el golpe de 1250.21 s da 327° y centro (0.50, 0.15). Son 15 clips en ~40 s.
