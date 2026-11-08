@@ -1,0 +1,1937 @@
+{
+ "_doc": "Edit largo de ejemplo (anime_edit/long_edit.py), 08/11/2026: «Monster» de Skillet entera sobre el episodio 59 de Jujutsu Kaisen, con 14 paneles de los capítulos 175–180. Rejilla medida con beatmap.analysis.measure_grid (135.00 BPM, downbeat 1.0378 s); estribillo en el beat 96, drop final en el 312. `shot` es el número de plano de anime_edit.shots (informativo); `t` es el segundo del episodio. La sección «soft» es la expansión de dominio de los tres antes del drop.",
+ "base_name": "Yuta vs Sendai - Monster v2",
+ "fps": 30,
+ "grid": {
+  "bpm": 135.0,
+  "phase": 1.0378
+ },
+ "blur_cuts": "mix",
+ "blur_cuts_from": 43.7,
+ "blur_accent_every": 4,
+ "word_style": {
+  "font": "Montserrat-ExtraBold.ttf",
+  "inv_size": 104,
+  "inv_y": 960,
+  "inv_words": "1"
+ },
+ "repeat_lines": [],
+ "sections": [
+  {
+   "name": "intro",
+   "beats": 44,
+   "items": [
+    {
+     "t": 3.29,
+     "beats": 8,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 1
+    },
+    {
+     "t": 12.75,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 2
+    },
+    {
+     "t": 17.18,
+     "beats": 8,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 3
+    },
+    {
+     "t": 21.44,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 9
+    },
+    {
+     "t": 34.2,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 15
+    },
+    {
+     "t": 38.86,
+     "beats": 4,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 17
+    },
+    {
+     "t": 44.04,
+     "beats": 8,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 18
+    },
+    {
+     "t": 144.56,
+     "beats": 4,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 63
+    }
+   ]
+  },
+  {
+   "name": "verse1",
+   "beats": 52,
+   "items": [
+    {
+     "t": 93.38,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 28
+    },
+    {
+     "t": 95.18,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 30
+    },
+    {
+     "t": 96.09,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 31
+    },
+    {
+     "t": 97.64,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 32
+    },
+    {
+     "t": 98.55,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 33
+    },
+    {
+     "t": 99.46,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 35
+    },
+    {
+     "panel": "m01_yuta-corta-cucarachas",
+     "beats": 2
+    },
+    {
+     "t": 101.48,
+     "beats": 4,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 38
+    },
+    {
+     "t": 103.87,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 39
+    },
+    {
+     "t": 105.6,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 40
+    },
+    {
+     "t": 106.61,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 41
+    },
+    {
+     "t": 108.91,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 43
+    },
+    {
+     "t": 111.82,
+     "beats": 2,
+     "frame": "A",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 44
+    },
+    {
+     "t": 113.57,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 45
+    },
+    {
+     "t": 114.53,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 46
+    },
+    {
+     "t": 116.99,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 48
+    },
+    {
+     "t": 118.12,
+     "beats": 4,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 49
+    },
+    {
+     "t": 120.41,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 50
+    },
+    {
+     "t": 122.22,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 51
+    }
+   ]
+  },
+  {
+   "name": "chorus1",
+   "beats": 32,
+   "items": [
+    {
+     "t": 124.0,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 54
+    },
+    {
+     "t": 124.92,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 55
+    },
+    {
+     "t": 125.83,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 56
+    },
+    {
+     "t": 126.74,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 58
+    },
+    {
+     "t": 127.96,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 59
+    },
+    {
+     "t": 149.77,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 65
+    },
+    {
+     "t": 154.28,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 70
+    },
+    {
+     "panel": "m02_espada-kurourushi",
+     "beats": 2
+    },
+    {
+     "t": 155.19,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 71
+    },
+    {
+     "t": 156.1,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 72
+    },
+    {
+     "t": 157.07,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 74
+    },
+    {
+     "t": 159.41,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 79
+    },
+    {
+     "t": 165.91,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 85
+    },
+    {
+     "t": 174.79,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 89
+    },
+    {
+     "t": 193.9,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 93
+    },
+    {
+     "t": 194.81,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 94
+    }
+   ]
+  },
+  {
+   "name": "post1",
+   "beats": 16,
+   "items": [
+    {
+     "t": 200.36,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 98
+    },
+    {
+     "t": 208.58,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 105
+    },
+    {
+     "t": 209.49,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 106
+    },
+    {
+     "t": 215.05,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 111
+    },
+    {
+     "t": 220.09,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 115
+    },
+    {
+     "t": 222.39,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 116
+    },
+    {
+     "t": 223.72,
+     "beats": 2,
+     "frame": "C",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 118
+    }
+   ]
+  },
+  {
+   "name": "calm1",
+   "beats": 16,
+   "items": [
+    {
+     "t": 227.18,
+     "beats": 4,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 121
+    },
+    {
+     "t": 237.03,
+     "beats": 4,
+     "frame": "C",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 129
+    },
+    {
+     "t": 241.28,
+     "beats": 4,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 131
+    },
+    {
+     "t": 243.53,
+     "beats": 4,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 133
+    }
+   ]
+  },
+  {
+   "name": "verse2",
+   "beats": 36,
+   "items": [
+    {
+     "t": 247.33,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 136
+    },
+    {
+     "t": 248.24,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 137
+    },
+    {
+     "t": 249.15,
+     "beats": 4,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 138
+    },
+    {
+     "t": 250.95,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 141
+    },
+    {
+     "panel": "m03_yuta-espada-en-alto",
+     "beats": 2
+    },
+    {
+     "t": 252.96,
+     "beats": 2,
+     "frame": "A",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 143
+    },
+    {
+     "t": 263.64,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 149
+    },
+    {
+     "t": 264.68,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 150
+    },
+    {
+     "t": 273.27,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 153
+    },
+    {
+     "t": 275.06,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 155
+    },
+    {
+     "t": 277.9,
+     "beats": 2,
+     "frame": "A",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 159
+    },
+    {
+     "t": 278.81,
+     "beats": 2,
+     "frame": "A",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 160
+    },
+    {
+     "t": 280.07,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 163
+    },
+    {
+     "panel": "m04_kurourushi-boca",
+     "beats": 2
+    },
+    {
+     "t": 287.2,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 167
+    },
+    {
+     "t": 296.38,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 169
+    },
+    {
+     "t": 298.5,
+     "beats": 2,
+     "frame": "C",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 170
+    }
+   ]
+  },
+  {
+   "name": "chorus2",
+   "beats": 48,
+   "items": [
+    {
+     "t": 329.95,
+     "beats": 4,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 188
+    },
+    {
+     "t": 338.13,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 193
+    },
+    {
+     "t": 360.32,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 197
+    },
+    {
+     "t": 375.79,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 200
+    },
+    {
+     "t": 413.8,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 207
+    },
+    {
+     "t": 416.04,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 208
+    },
+    {
+     "t": 420.04,
+     "beats": 2,
+     "frame": "B",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 211
+    },
+    {
+     "t": 427.84,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 214
+    },
+    {
+     "t": 428.75,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 215
+    },
+    {
+     "t": 429.66,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 217
+    },
+    {
+     "panel": "m05_uro-yuta-aire",
+     "beats": 2
+    },
+    {
+     "t": 431.01,
+     "beats": 2,
+     "frame": "A",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 218
+    },
+    {
+     "t": 432.47,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 219
+    },
+    {
+     "t": 433.93,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 220
+    },
+    {
+     "t": 434.84,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 221
+    },
+    {
+     "t": 435.75,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 222
+    },
+    {
+     "panel": "m06_uro-cielo_con-texto",
+     "beats": 2
+    },
+    {
+     "t": 436.89,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 224
+    },
+    {
+     "t": 437.8,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 225
+    },
+    {
+     "t": 448.63,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 228
+    },
+    {
+     "t": 463.23,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 232
+    },
+    {
+     "t": 476.76,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 235
+    },
+    {
+     "t": 482.61,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 237
+    }
+   ]
+  },
+  {
+   "name": "post2",
+   "beats": 16,
+   "items": [
+    {
+     "t": 594.93,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 289
+    },
+    {
+     "t": 597.3,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 292
+    },
+    {
+     "t": 611.15,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 300
+    },
+    {
+     "t": 612.58,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 303
+    },
+    {
+     "panel": "m07_yuta-golpe-ishigori",
+     "beats": 2
+    },
+    {
+     "t": 614.57,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 305
+    },
+    {
+     "t": 621.12,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 313
+    },
+    {
+     "t": 626.0,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 316
+    }
+   ]
+  },
+  {
+   "name": "bridge",
+   "beats": 32,
+   "items": [
+    {
+     "t": 820.15,
+     "beats": 4,
+     "frame": "C",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 434
+    },
+    {
+     "t": 821.95,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 436
+    },
+    {
+     "t": 822.86,
+     "beats": 4,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 437
+    },
+    {
+     "t": 825.12,
+     "beats": 4,
+     "frame": "C",
+     "tone": "warm",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 444
+    },
+    {
+     "t": 827.69,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 446
+    },
+    {
+     "panel": "m08_ven-rika_con-texto",
+     "beats": 2
+    },
+    {
+     "t": 832.62,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 449
+    },
+    {
+     "t": 845.38,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 456
+    },
+    {
+     "panel": "m09_rika_con-texto",
+     "beats": 2
+    },
+    {
+     "t": 1036.08,
+     "beats": 4,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 596
+    }
+   ]
+  },
+  {
+   "name": "soft",
+   "beats": 20,
+   "items": [
+    {
+     "t": 1085.46,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 626
+    },
+    {
+     "t": 1087.5,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 627
+    },
+    {
+     "panel": "m10_ojos-expansion_con-texto",
+     "beats": 2
+    },
+    {
+     "t": 1094.22,
+     "beats": 4,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 632
+    },
+    {
+     "t": 1099.43,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 637
+    },
+    {
+     "t": 1101.24,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 638
+    },
+    {
+     "panel": "m11_tres-expansiones_con-texto",
+     "beats": 4
+    }
+   ]
+  },
+  {
+   "name": "drop",
+   "beats": 44,
+   "items": [
+    {
+     "t": 1102.81,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 639
+    },
+    {
+     "t": 1110.98,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 645
+    },
+    {
+     "t": 1117.37,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 647
+    },
+    {
+     "t": 1119.24,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 648
+    },
+    {
+     "t": 1127.0,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 657
+    },
+    {
+     "t": 1144.62,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 668
+    },
+    {
+     "t": 1188.43,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 691
+    },
+    {
+     "t": 1217.17,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 707
+    },
+    {
+     "t": 1218.67,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 709
+    },
+    {
+     "t": 1247.07,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 717
+    },
+    {
+     "t": 1273.04,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 722
+    },
+    {
+     "t": 1275.02,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 723
+    },
+    {
+     "t": 1275.93,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 724
+    },
+    {
+     "t": 1279.52,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 725
+    },
+    {
+     "t": 1284.26,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 726
+    },
+    {
+     "t": 1293.62,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 729
+    },
+    {
+     "t": 1308.56,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 736
+    },
+    {
+     "t": 1318.85,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 743
+    },
+    {
+     "t": 1329.24,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 747
+    },
+    {
+     "t": 1336.08,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 750
+    },
+    {
+     "t": 1352.12,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 759
+    },
+    {
+     "t": 1362.9,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 764
+    }
+   ]
+  },
+  {
+   "name": "punches",
+   "beats": 28,
+   "items": [
+    {
+     "t": 1371.49,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 771
+    },
+    {
+     "t": 1373.0,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 773
+    },
+    {
+     "t": 1378.79,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 777
+    },
+    {
+     "t": 1382.34,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 780
+    },
+    {
+     "t": 1386.63,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 783
+    },
+    {
+     "t": 1394.23,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 787
+    },
+    {
+     "t": 1402.44,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 795
+    },
+    {
+     "t": 1409.41,
+     "beats": 2,
+     "frame": "A",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 804
+    },
+    {
+     "t": 1411.24,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 806
+    },
+    {
+     "t": 1412.83,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 809
+    },
+    {
+     "t": 1435.68,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 828
+    },
+    {
+     "panel": "m12_el-postre_con-texto",
+     "beats": 2
+    },
+    {
+     "t": 1447.24,
+     "beats": 2,
+     "frame": "A",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 836
+    },
+    {
+     "t": 1450.82,
+     "beats": 2,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 842
+    }
+   ]
+  },
+  {
+   "name": "outro",
+   "beats": null,
+   "items": [
+    {
+     "t": 1480.24,
+     "beats": 4,
+     "frame": "C",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 852
+    },
+    {
+     "panel": "m13_ishigori-derrotado",
+     "beats": 2
+    },
+    {
+     "t": 1489.67,
+     "beats": 2,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 854
+    },
+    {
+     "panel": "m14_gracias-lleno_con-texto",
+     "beats": 2
+    },
+    {
+     "t": 1491.53,
+     "beats": null,
+     "frame": "B",
+     "tone": "cold",
+     "focus": [
+      0.5,
+      0.5
+     ],
+     "speed": 1.0,
+     "shot": 855
+    }
+   ]
+  }
+ ],
+ "composites": [
+  {
+   "kind": "hit",
+   "at": 124.27,
+   "whip": false
+  },
+  {
+   "kind": "burst",
+   "at": 222.66
+  },
+  {
+   "kind": "isolate",
+   "at": 1036.97,
+   "color": "#c01010",
+   "similarity": 0.3
+  },
+  {
+   "kind": "hit",
+   "at": 1103.08
+  },
+  {
+   "kind": "burst",
+   "at": 1319.12
+  },
+  {
+   "kind": "hit",
+   "at": 1451.09,
+   "angle": 180
+  }
+ ]
+}

@@ -328,7 +328,7 @@ El status trae `composites`: cuántos cortes con desenfoque, dónde cayó cada c
 
 ### Edit largo (`anime_edit/long_edit.py`)
 
-El motor del tipo de video «edit largo de anime» (1–4 min, la canción entera). Cada video es un **plan en JSON**, no un script. Plantilla con un ejemplo real: `anime_edit/examples/long_edit_magna_vs_dante.json` (07/11: Glee «I Will Survive» entera sobre el episodio 175 de Black Clover, 121 tomas y 10 paneles).
+El motor del tipo de video «edit largo de anime» (1–4 min, la canción entera). Cada video es un **plan en JSON**, no un script. Plantillas con ejemplos reales: `anime_edit/examples/long_edit_magna_vs_dante.json` (07/11: Glee «I Will Survive» entera sobre el episodio 175 de Black Clover, 121 tomas y 10 paneles) y `long_edit_yuta_vs_sendai.json` (08/11: «Monster» de Skillet sobre el episodio 59 de Jujutsu Kaisen, 160 tomas y 14 paneles).
 
 ```
 python -m modules.anime_edit.long_edit <plan.json> "<carpeta de salida>" --episode "<video>" --song "<canción>" ^
