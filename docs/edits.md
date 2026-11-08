@@ -335,6 +335,7 @@ python -m modules.anime_edit.long_edit <plan.json> "<carpeta de salida>" --episo
        --panels "<carpeta de paneles>" [--lyrics letra.txt] [--plan-only]
 ```
 
+- **La rejilla:** `beatmap.analysis.measure_grid(y, bpm_hint=bm["bpm"], downbeats=bm["downbeats"])` busca el BPM y la fase que alinean **todos** los ataques (coherencia de fase, ±4 % del tracker, a 0.001 BPM) y elige como fase el downbeat más cercano a los del tracker. Devuelve `{bpm, phase, coherence, tracker_bpm}`; `start`/`end` miden un tramo, para comprobar que la fase no derive. En «Monster» (Skillet), el tracker dio 136 y lo medido fue 135.00, con la fase estable (±7 ms) de punta a punta.
 - **El plan:** `grid` (medida en la canción, no la del tracker), `sections` (cada una con sus `beats` y sus tomas o paneles; el runner comprueba que sumen), `composites`, `blur_cuts`, `word_style` y `repeat_lines`.
 - **`lyrics_align.sung_words`** transcribe la canción **sin el filtro de voz de Whisper** (con él, en esta canción salían 33 palabras de 444). La guarda en `palabras cantadas.json`.
 - **`lyrics_align.align`** da a cada palabra del texto el tiempo de la cantada con la que coincide (difflib) y reparte las mal oídas entre sus vecinas.

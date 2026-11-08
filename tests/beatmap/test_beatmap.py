@@ -105,6 +105,27 @@ class Analysis(unittest.TestCase):
                 lyrics.words("x.wav")
 
 
+class ConstantGrid(unittest.TestCase):
+    def test_measures_bpm_and_downbeat_phase(self):
+        # A tempo the tracker rounds (133.37 → hint 136, 2 % off), first beat at 0.31 s.
+        bpm, first = 133.37, 0.31
+        y = S.signal(bpm=bpm, dur=60, loud_from=0, first_beat=first)
+        per = 60 / bpm
+        kicks = [first + 4 * k * per for k in range(int(55 / (4 * per)))]
+        g = A.measure_grid(y, sr=S.SR, bpm_hint=136.0, downbeats=kicks)
+        self.assertAlmostEqual(g["bpm"], bpm, delta=0.02)
+        off = (g["phase"] - first) % (4 * per)
+        self.assertLess(min(off, 4 * per - off), 0.025)          # a downbeat (a kick), within the tracker test's 25 ms
+        self.assertGreater(g["coherence"], 0.5)
+
+    def test_coherence_prefers_the_right_tempo(self):
+        y = S.signal(bpm=128, dur=40, loud_from=0)
+        import librosa
+        on = librosa.onset.onset_strength(y=y, sr=S.SR, hop_length=A.HOP_BEAT)
+        fs = A.HOP_BEAT / S.SR
+        self.assertGreater(A.coherence(on, fs, 128.0)[0], A.coherence(on, fs, 125.0)[0])
+
+
 class Window(unittest.TestCase):
     BM = {
         "beats": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0], "downbeats": [0.0, 2.0],
