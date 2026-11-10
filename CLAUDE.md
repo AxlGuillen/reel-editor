@@ -58,7 +58,9 @@ reel-editor/
 │   ├── editing/                ← MOTOR de los edits: EDL → render en dos pasadas (sin routes de proceso)
 │   ├── anime_edit/             ← PIPELINE: pelea de anime + canción → variantes de edit (2 fases)
 │   ├── montage/                ← Montaje: capas animadas con alfa sobre un video, por palabra o segundo
-│   └── studio/                 ← Estudio: las láminas de un deck de Presentations sobre el video, en vivo
+│   ├── studio/                 ← Estudio: las láminas de un deck de Presentations sobre el video, en vivo
+│   └── pasarela/               ← PIPELINE: video narrado de punta a punta (banda del deck + gameplay vertical
+│                                 + clips), operado por Claude con JSON; highlights de Insights Capture
 │
 │   Cada módulo que procesa video tiene los mismos tres archivos:
 │       routes.py      ← Blueprint Flask con sus endpoints
@@ -77,7 +79,7 @@ reel-editor/
 ├── tests/                      ← unittest (sin pytest): python -m unittest discover -s tests -t .
 │   ├── synthetic.py            ← canciones y videos sintéticos (tempo y cortes conocidos)
 │   ├── competitivo/            ← detección de peleas (fixture real), layout, sincronía, validación, edit
-│   └── beatmap/ editing/ anime_edit/ montage/ studio/
+│   └── beatmap/ editing/ anime_edit/ montage/ studio/ pasarela/
 │
 ├── core/
 │   ├── ffmpeg_runner.py        ← Único lugar que ejecuta FFmpeg + helpers ffprobe
@@ -515,6 +517,76 @@ POST /api/studio/save      (JSON)     studio_id, montaje, [manifest] → {path}
 
 **`montaje.json` v1** (`docs/contratos/montaje.schema.json`, JSON Schema 2020-12; `schema.validate_montaje` lo valida con `jsonschema` al colocar y al guardar, más lo que el schema no sabe: que la lámina exista en el deck y no se repita). Claves en español: es el contrato del brief, compartido con Presentations. `base` (`job_id` | `library_clip` | `archivo`, + `huella`, `duracion`), `deck` (`desk`, `deck`, `servidor`), `caja` (opcional: la caja por omisión de todas las capas, pisa la del manifest; LeBlanc usa la de Cumplelolero, 706 px a 14 px del borde; un deck con banda inferior trae la suya), `reposo` (bool, por omisión true), `capas` (`lamina` + `ancla {palabra, n}` **o** `desde`; `hasta` palabra, segundos u omitido; `caja` propia o `"banda"`), `subtitulos`, `render` (`formato`, `fps`).
 
+### 13. pasarela — `/api/pasarela` (pipeline, lo opera Claude)
+
+Un video narrado de punta a punta, como «El draft de Tom» (10/11/2026): gameplay vertical arriba, las láminas de un deck de Presentations en una **banda** de 1080×680, la voz y clips encima. Sin uploads ni UI (la UI es opcional y va después): **JSON con rutas locales**. Reúne lo que ya existe sin duplicarlo: la alineación del guion marcado, el `initial_prompt` y la regla del reposo de **studio**; las reglas de las capas de **montage** (`layers.resolve`); el grafo de **vertical_convert** (HUD y `main_clip_offset`); el contrato **montaje.json**.
+
+```
+gameplay (archivo │ highlight de Insights) ─vertical (caché por huella)─┐
+voz ─Whisper (caché) + guion marcado → línea de tiempo ─────────────────┼─ encode final → mp4 + reporte
+láminas + reposo ─banda aplanada (en paralelo con la base) ─────────────┘
+clips ({clip:id} del guion) ─ la voz se pausa y suenan completos
+```
+
+| Archivo | Qué hace |
+|---|---|
+| `plan.py` | La línea de tiempo, **pura**: dónde entra cada lámina (studio + montage), dónde se pausa la voz y cuánto dura el video |
+| `render.py` | Los comandos de FFmpeg (constructores puros): base, tramos de banda, pase final, geometría de la banda y del watermark |
+| `insights.py` | La base de Insights Capture (copia, solo lectura), las grabaciones y las ventanas del highlight |
+| `schema.py` / `processor.py` / `routes.py` | El pedido, la orquestación con cachés, tiempos por fase y reporte, y la API |
+
+**El pedido (`POST /process`, JSON):**
+
+| Campo | Default | Notas |
+|---|---|---|
+| `gameplay` | — | `{archivo}` o `{insights: {grabacion, antes: 8, despues: 3, eventos: ["kill","assist"]}}` (`grabacion`: el nombre del archivo o el uuid) |
+| `voz` | — | el audio ya con su velocidad final |
+| `deck` | — | `presentacion-diego/creator/<deck>`: lee `video-out/laminas/` (o `laminas-arriba/` con la banda arriba) con su `manifest.json`, `guion-marcado.txt` y las entradas `tipo: "clip"` |
+| `banda` | `abajo` | `abajo` (y=1240) · `arriba` (y=0); alto 680 |
+| `watermark` | null | ruta de la imagen |
+| `subtitulos` | false | `true` o un objeto con el estilo de `SubtitlesParams` (`position_y` por omisión: 1200 abajo / 1660 arriba) |
+| `salida` | — | ruta del mp4 final (se escribe en `.part.mp4` y se renombra al terminar) |
+| `clips` | {} | `{id: ruta}` o `{id: {archivo, modo: "pausa" \| "encima"}}`: pisa o completa los clips del manifest (los de Caedrel de Tom no estaban en él) |
+| `volumen_gameplay` | 0 | % del audio del gameplay |
+| `pista_whisper` | false | los nombres del guion como `initial_prompt` (ver «Lo medido»); encenderla cuando lleva subtítulos, donde se ven los nombres |
+
+**Las reglas (el estándar aprobado; no se cambian sin avisar):**
+- **Láminas:** entran 0,1 s antes de su palabra; duran hasta la siguiente, con tope de 12 s, y se pegan a ella si después del tope faltan menos de 2,5 s; fundido de entrada 0,25 s y de salida 0,2 s; pegadas, la anterior queda debajo mientras entra la nueva (todo eso es `montage.layers.resolve`). La portada entra en el 0. El reposo está **debajo de toda la banda** desde el 0 (se anima una vez y queda en su último cuadro): llena cada hueco. La última lámina se queda hasta el final sin fundido.
+- **Clips (`{clip:id}` en el guion):** por omisión **la voz se pausa** en la mitad del silencio entre la última palabra antes de la marca y la siguiente; el clip entra entero con 0,15 s de respiro a cada lado y todo lo que sigue se corre. Un clip sin marca con `despues` en el manifest va antes de la lámina que sigue a esa. 16:9 → dentro de la banda (1080×608, centrado en sus 680); 9:16 → pantalla completa, sin banda ni watermark. La lámina anterior a un clip termina donde empieza el clip (sin estirarse debajo). Volumen: ganancia = LUFS de la voz − LUFS del clip. `modo: "encima"`: el clip sobre la voz, sin pausa, con su audio igualado y al 22 %.
+- **Duración:** la voz + las pausas + 0,3 s (Tom: 166,10 + 18,80 + 0,30 = 185,20).
+- **Base:** banda abajo → `main_clip_offset` −10 (el gameplay de 297 a 1239, la placa del HUD encima; la banda empieza en 1240). Banda arriba → el espejo, **calculado**: el offset que deja la placa del HUD 2 px bajo la banda (`render.vertical_params`; +13,5 % con una fuente 1920×1080: placa 682–763, gameplay 748–1690). El audio del gameplay va en silencio.
+- **Watermark:** 150 px de alto, centrado; y=70 con la banda abajo, y=1700 (70 px del borde de abajo) con la banda arriba.
+- **Audio final:** mezcla sin normalizar y `alimiter` a −1 dBFS.
+
+**Rendimiento (Tom, RTX 5070 / Ryzen 5 9600X):**
+- **Base en una sola pasada** desde Insights: cada ventana es su propia entrada con `-ss`/`-t` (solo se decodifican los cortes, con NVDEC) y el concat alimenta el grafo de vertical_convert. **78 s** contra 115 s del highlight + 76 s de la conversión vertical por separado. Caché por huella del archivo + ventanas + parámetros: montar otra vez con otra voz no la rehace.
+- **Banda aplanada:** un FFmpeg chico por tramo (el reposo, la lámina anterior mientras entra la nueva y la nueva con sus fundidos), 4 a la vez, sin pérdida, unidos con el demuxer concat. Ningún filtro tiene las ~30 láminas a la vez. Láminas opacas (`alfa: false`, lo que exporta Presentations desde el 10/11) → **H.264 NVENC sin pérdida**; con alfa → FFV1. Corre **en paralelo con la base**.
+- **NVDEC donde conviene:** la base de 1080×1920 en el pase final (60 s: 2,3 s contra 3,1 s en la CPU). Las láminas opacas se leen en la CPU **a propósito**: cada tramo es un FFmpeg corto y abrir CUDA cuesta más que decodificar 1080×680 (28 tramos: 11,2 s con NVDEC, 10,0 s sin).
+- **Un solo encode final:** h264_nvenc p7, cq 16, AAC 256k.
+- **Medido:** en frío **131 s** (base 78 ∥ banda 17, Whisper 13, final 38) contra ~233 s de máquina del método a mano (highlight 115 + vertical 76 + Whisper 8 + pase final 34 con las mp4 de hoy; con las webm con alfa era más); con la base en caché, **49 s**. El pase final está limitado por NVENC p7 en los dos casos.
+
+**El reporte (`GET /report/<job>`, también en `cache/pasarela/reports/<job>.json`):** `alineacion` (palabras del guion, alineadas, %), `capas` (id, tipo, inicio, fin, `debajo_hasta` si va pegada, fundidos), `clips` (modo, pantalla, inicio, fin, voz_en, LUFS, ganancia), `pausas` (clip, voz_en, video_en, duración), `reposo` (huecos ≥ 0,3 s), **`sin_colocar`** (láminas y clips sin lugar: nunca en silencio) y `marcas_desconocidas`, `audio` (LUFS de la voz y del final, pico), `base` (fuente, ventanas, offset, si salió de la caché), `transcripcion` (prompt, `palabras_corregidas`), `banda_pista` (tramos y códec), `tiempos` (segundos por fase y total), `avisos` y `montaje` (las láminas como **montaje.json v1**, en segundos del video final, validado con `studio.schema.validate_montaje`).
+
+**Lo medido sobre Tom (10/11):**
+- Con `pista_whisper: false` la transcripción es **idéntica palabra por palabra** a la del video aprobado y las 31 capas coinciden con las de CapCut al centésimo (duración 185,20). La imagen difiere en ≤ 1 cuadro a 60 fps en la entrada de los clips (entran en el primer cuadro después de su segundo; en CapCut, uno después) y el audio es el mismo (desfase 0 ms).
+- Con la pista (la regla de studio; **apagada por omisión** desde el 10/11, decisión de Axl), Whisper corre algunas palabras: 22 capas quedan a ±0,05 s y 9 se mueven hasta 0,2 s. En una de esas el video aprobado era el equivocado: «Y el puto titular» suena en 154,78 y la transcripción vieja decía 154,56.
+- **Pausas tragadas** (`plan.snap_starts`): con la pista, Whisper estiró «Al» de 27,34 a 28,18 cuando la voz vuelve en 27,98, y «Y» desde 100,50 cuando vuelve en 101,12 (dos láminas entraban 0,6 s antes). Si en los primeros 0,4 s de una palabra hay ≥ 0,25 s de silencio real (< −55 dBFS: la voz de TTS tiene silencio digital entre frases), la palabra empieza donde vuelve el sonido (−40 dBFS, la inhalación, que es donde Whisper empieza las palabras normalmente). Sobre la transcripción del video aprobado no mueve ninguna.
+
+```
+POST /api/pasarela/process      JSON (arriba)                    → 202 {job_id}
+GET  /api/pasarela/status/<id>  → {status, progress, stage, error, duration, report_ready}
+GET  /api/pasarela/report/<id>  → el reporte (409 mientras procesa)
+GET  /api/pasarela/download/<id> → el mp4 (ya está en `salida`)
+GET  /api/pasarela/recordings   → [{uuid, nombre, archivo, existe, duracion, campeon, kda, resultado,
+                                    multikills, eventos}] de Insights Capture, más nuevas primero
+POST /api/pasarela/highlight    JSON {grabacion, antes, despues, eventos, [salida]} → 202 {job_id}:
+                                    el highlight 16:9 suelto (por omisión en HIGHLIGHTS_FOLDER)
+```
+
+**Insights Capture:** la base (`%APPDATA%\Insights Capture\db.sqlite3`) se lee **siempre sobre una copia** (el archivo con su `-wal` y `-shm`, en una carpeta temporal que se borra) y nunca se escribe: la app la tiene abierta. Tablas: `video` (`type='recording'`), `video_game_event` (`timestamp` en segundos de la grabación; `kill`, `assist`, `death`, `victory`, `defeat`) y `video_game_info_update` (`champion`, `kills`, `deaths`, `assists`, `doubleKills`…). Ventanas `[t − antes, t + despues]`, recortadas a la grabación; las que se tocan o se enciman se unen (una doble kill es UN corte). Tom: 18 cortes, 241,4 s. El highlight suelto (`/highlight`) lee solo los cortes (`-ss`/`-t` por ventana, con NVDEC): **26 s** contra 115 s del script a mano, que pasaba la grabación entera de 29 min por `trim`.
+
+**Cómo lo opera Claude:** `GET /recordings` para elegir la partida → `POST /process` con el deck exportado (`node tools/laminas.mjs creator/<deck>`, y `--banda=arriba` si va arriba) → poll de `/status` → leer el `/report` (sobre todo `sin_colocar`, `avisos` y `alineacion`) y revisar cuadros sueltos. Tests: `tests/pasarela/` (alineado, pausas, ventanas, base de Insights sin escribir, tramos de banda, geometría y una corrida entera sobre archivos sintéticos con Whisper simulado).
+
 ### assets — blueprint de assets persistentes
 
 No procesa video: gestiona la **librería de watermarks** y la **fuente**.
@@ -556,7 +628,7 @@ POST /api/<modulo>/process       → 202 { job_id }   (corre en thread)
 GET  /api/<modulo>/status/<id>   → { status, progress, error, [stage], [segments], [title] }
 GET  /api/<modulo>/download/<id> → archivo (mimetype correcto, as_attachment)
 ```
-`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express`, `hook_reel`, `competitivo` y `anime_edit` usan `/process` + `/finish` (competitivo suma `/edit`, que abre un job nuevo). `studio` no procesa: abre sesiones (`/open`), coloca (`/place`) y guarda (`/save`); su render es el de montage. Global: `POST /api/cleanup` vacía las carpetas temporales.
+`status` ∈ `pending | processing | done | error`. **Excepciones de dos fases:** `subtitles` usa `/transcribe` + `/render`; `reel_express`, `hook_reel`, `competitivo` y `anime_edit` usan `/process` + `/finish` (competitivo suma `/edit`, que abre un job nuevo). `studio` no procesa: abre sesiones (`/open`), coloca (`/place`) y guarda (`/save`); su render es el de montage. `pasarela` recibe JSON (no un form) y suma `/report`, `/recordings` y `/highlight`. Global: `POST /api/cleanup` vacía las carpetas temporales.
 
 ---
 
@@ -637,6 +709,9 @@ LAYERS_FOLDER                      # raíz de las carpetas de capas del montaje 
 STUDIO_FOLDER                      # EDITS_FOLDER/Estudio: montaje.json + transcripcion.json por video, PERSISTENTE
 STUDIO_SESSIONS_FOLDER             # cache/studio/: las sesiones abiertas del estudio (sobreviven a un reinicio)
 PRESENTATIONS_URL                  # el servidor local de Presentations (env REELFORGE_PRESENTATIONS_URL, default http://localhost:3125)
+PASARELA_CACHE                     # cache/pasarela/: bases verticales por huella, transcripciones, tramos de banda, reportes
+INSIGHTS_DB                        # la base de Insights Capture, SOLO lectura y sobre una copia (env REELFORGE_INSIGHTS_DB)
+HIGHLIGHTS_FOLDER                  # los highlights sueltos, PERSISTENTE (env REELFORGE_HIGHLIGHTS_FOLDER, ~/Videos/ReelForge/Highlights)
 RIFE_PATH / REALESRGAN_PATH        # binarios opcionales (env REELFORGE_RIFE / REELFORGE_REALESRGAN o el PATH)
 MAX_UPLOAD_SIZE_MB = 2000
 FFMPEG_PATH   = os.environ.get("FFMPEG_PATH")  or _resolve_ffmpeg()
@@ -656,7 +731,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 18 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 19 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
