@@ -91,6 +91,18 @@ STUDIO_SESSIONS_FOLDER = os.path.join(BASE_DIR, "cache", "studio")
 # Override: REELFORGE_PRESENTATIONS_URL.
 PRESENTATIONS_URL = (os.environ.get("REELFORGE_PRESENTATIONS_URL") or "http://localhost:3125").rstrip("/")
 
+# Pasarela (narrated video: deck band + vertical gameplay + clips). Its cache
+# (vertical bases by fingerprint, transcripts, band pieces, reports) is
+# temporary; the highlights generated from Insights Capture are not.
+PASARELA_CACHE = os.path.join(BASE_DIR, "cache", "pasarela")
+# Insights Capture's database: ONLY read, always on a copy (modules/pasarela/insights.py).
+# Override: REELFORGE_INSIGHTS_DB.
+INSIGHTS_DB = os.environ.get("REELFORGE_INSIGHTS_DB") or os.path.join(
+    os.environ.get("APPDATA") or os.path.expanduser("~"), "Insights Capture", "db.sqlite3")
+# Where a highlight generated on its own goes. Override: REELFORGE_HIGHLIGHTS_FOLDER.
+HIGHLIGHTS_FOLDER = os.environ.get("REELFORGE_HIGHLIGHTS_FOLDER") or os.path.join(
+    os.path.expanduser("~"), "Videos", "ReelForge", "Highlights")
+
 # OPTIONAL external binaries (ncnn-vulkan: run on NVIDIA, AMD, Intel and Mac).
 # Without them the edits still work: slow motion repeats frames and small
 # sources are scaled with lanczos. Override with the full path.
