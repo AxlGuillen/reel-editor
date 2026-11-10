@@ -63,6 +63,7 @@ reel-editor/
 │   ├── studio/                 ← Estudio: las láminas de un deck de Presentations sobre el video, en vivo
 │   ├── tf_explained/           ← MOTOR de «La TF explicada»: expediente del feed, tramos del VOD, hojas, layout de análisis, montaje
 │   ├── research/               ← investigación de referencias (TikTok sin descargar: perfiles, vistas, menciones)
+│   ├── xcapture/               ← tuits de x.com como tarjetas PNG transparentes (CLI; el uso en los videos está por definir)
 │   └── pasarela/               ← PIPELINE: video narrado de punta a punta (banda del deck + gameplay vertical
 │                                 + clips), operado por Claude con JSON; highlights de Insights Capture
 │
@@ -663,6 +664,21 @@ No procesa nada ni toca archivos: corre `git log` sobre el propio repo y devuelv
 GET /api/timeline → { available, entries:[{hash,date,type,kind,scopes,title,detail}], stats }
 ```
 `kind` ∈ `feat | fix | perf | otro` (lo que la UI colorea) y `detail` es una lista de bloques `{type:"p",text}` / `{type:"ul",items}`. Sin git (o sin repo) responde `available:false` con el motivo, no un error. **UI:** KPIs, chips de filtro por tipo, buscador (título, scope, hash y cuerpo) y línea del tiempo agrupada por mes. Al leerse de git se mantiene sola: cada commit nuevo aparece sin tocar código.
+
+### xcapture — tuits como tarjetas PNG (CLI, sin blueprint)
+
+Para usar tuits como assets en los videos (reacciones, avances). **Cómo se usa en los videos está por definir** (Axl, 10/11): por ahora es solo la herramienta.
+
+```
+python -m modules.xcapture <url|id> [<url|id> …] --out <carpeta>   [--file lista.txt: una URL por renglón]
+```
+
+Por cada tuit:
+- lee los datos públicos del embed de X (`cdn.syndication.twimg.com/tweet-result`, sin login, de a uno);
+- dibuja la tarjeta con el tema oscuro de X en Edge o Chrome sin interfaz, para que emojis, fuentes e imágenes salgan bien;
+- la recorta por su canal alfa con Pillow y la guarda como PNG transparente (600 px de ancho, a 2×).
+
+En la misma carpeta deja una `galeria.html` para elegir cuáles quedan. Un tuit borrado o de una cuenta protegida da un error claro y la corrida sigue con los demás. No necesita FFmpeg.
 
 ### Endpoints (contrato común)
 

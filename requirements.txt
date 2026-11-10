@@ -20,6 +20,8 @@ opencv-python-headless>=4.8
 Pillow>=10
 # Validates montaje.json against its contract (docs/contratos/montaje.schema.json): modules/studio.
 jsonschema>=4.20
+# Tweet data from X's public embed endpoint (modules/xcapture); it also comes with faster-whisper.
+requests>=2.31
 # Optional (the edits work without them; /api/editing/options lists what is there):
 #   pip install beat-this          beats and downbeats with a neural network (more accurate)
 #   pip install audio-separator    isolate the vocals to transcribe the lyrics
