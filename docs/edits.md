@@ -336,12 +336,19 @@ python -m modules.anime_edit.long_edit <plan.json> "<carpeta de salida>" --episo
 ```
 
 - **La rejilla:** `beatmap.analysis.measure_grid(y, bpm_hint=bm["bpm"], downbeats=bm["downbeats"])` busca el BPM y la fase que alinean **todos** los ataques (coherencia de fase, ±4 % del tracker, a 0.001 BPM) y elige como fase el downbeat más cercano a los del tracker. Devuelve `{bpm, phase, coherence, tracker_bpm}`; `start`/`end` miden un tramo, para comprobar que la fase no derive. En «Monster» (Skillet), el tracker dio 136 y lo medido fue 135.00, con la fase estable (±7 ms) de punta a punta.
-- **El plan:** `grid` (medida en la canción, no la del tracker), `sections` (cada una con sus `beats` y sus tomas o paneles; el runner comprueba que sumen), `composites`, `blur_cuts`, `word_style` y `repeat_lines`.
+- **Canciones con tempo que deriva:** si la coherencia de `measure_grid` sale baja (< 0.15), no hay rejilla fija que sirva. `beatmap.analysis.track_drifting(y, bpm_hint=<tempo entero>)` sigue los beats con programación dinámica y un `tightness` alto (400), así el tempo se mueve despacio en vez de saltar. El `bpm_hint` es el tempo completo: el tracker suele dar la mitad.
+  - Devuelve `{beats, bpm, bpm_from, bpm_to}`. Los beats llevan el mismo retraso fijo de ~15 ms de la envolvente de ataques que el tracker; entre beats no hay saltos (desvío < 5 ms).
+  - Esos beats van en el plan como `beat_times`, en lugar de `grid`; el beat 0 es un downbeat.
+  - En «Monster» (Nightcore, versión femenina) acelera de 163 a 167 BPM en 3:38, una toma en vivo. Con una rejilla fija la coherencia era de 0.13.
+- **El plan:** `grid` (medida en la canción, no la del tracker) o `beat_times`; `sections` (cada una con sus `beats` y sus tomas o paneles; el runner comprueba que sumen); `composites`, `blur_cuts`, `word_style`, `repeat_lines` y `lyrics_windows`. También `music_end`, para cortar el silencio final de una descarga, y `video_fade_out`: va en 0 cuando el ending del cuarto cierra el video.
 - **`lyrics_align.sung_words`** transcribe la canción **sin el filtro de voz de Whisper** (con él, en esta canción salían 33 palabras de 444). La guarda en `palabras cantadas.json`.
 - **`lyrics_align.align`** da a cada palabra del texto el tiempo de la cantada con la que coincide (difflib) y reparte las mal oídas entre sus vecinas.
   - Los coros entre paréntesis ayudan a ubicar pero no se muestran.
   - El reporte (`uncovered`) dice qué tramos cantados no tiene el texto.
 - **`repeat_lines`** repite bloques de la letra que la canción canta dos veces seguidas.
+- **`lyrics_windows`** (`lyrics_align.align_windows`) va cuando los estribillos repetidos arrastran la alineación global al estribillo equivocado.
+  - Cada bloque de la letra (los separa una línea vacía) se alinea solo con las palabras cantadas dentro de su tramo `[a, b)` de la canción. Hay una ventana por bloque.
+  - En «Monster» (versión femenina), la alineación global dejaba sin letra del segundo estribillo al puente (62 %). Por bloques llegó al 86 %.
 
 La receta (cómo elegir las tomas, medir la rejilla, revisar la letra, lo que se aprendió) está en el PKB: `worlds-2026/receta-edit-largo-anime.md`.
 

@@ -11,6 +11,8 @@ is in the PKB: worlds-2026/receta-edit-largo-anime.md.
 
 Plan keys:
   base_name, fps, grid {bpm, phase}   the grid MEASURED on the song (not the tracker's BPM)
+  beat_times [s…]                     instead of grid, for a song whose tempo drifts: the beats measured
+                                      with beatmap.analysis.track_drifting; beat 0 is a downbeat
   sections [{name, beats, items}]     items = manga takes ({t, beats, frame, tone, focus, speed})
                                       or panels ({panel, beats}); `beats` checks the section's sum
                                       (null on the last section: it fills to the end of the song)
@@ -18,6 +20,12 @@ Plan keys:
   blur_cuts, blur_cuts_from, blur_accent_every
   word_style                          the invert subtitles (font, inv_size, inv_y, inv_words)
   repeat_lines [[a, b]]               non-empty lyric lines sung twice in a row (repeated in the text)
+  lyrics_windows [[a, b]…]            one song span (s) per block of the lyrics (blank-line separated):
+                                      each block aligns only against the words sung there
+  music_end                           s of the song where the edit ends (default: the file's end); for a
+                                      download that trails into silence
+  video_fade_out                      s of the closing fade to black (default: the manga preset's 1.5);
+                                      0 when an ending sequence closes the video (the room's TV turning off)
 """
 from __future__ import annotations
 
@@ -58,7 +66,9 @@ def with_repeats(text: str, repeats: list) -> str:
 
 
 def options(plan: dict, panels: str) -> manga.MangaOptions:
-    return manga.MangaOptions(music_start=0.0, music_end=None, fps=int(plan.get("fps", 30)), grid=plan.get("grid"),
+    end = plan.get("music_end")
+    return manga.MangaOptions(music_start=0.0, music_end=float(end) if end is not None else None,
+                              fps=int(plan.get("fps", 30)), grid=plan.get("grid"),
                               panels_folder=panels, blur_cuts=plan.get("blur_cuts", "off"),
                               blur_cuts_from=float(plan.get("blur_cuts_from", 0.0)),
                               blur_accent_every=int(plan.get("blur_accent_every", 4)),
@@ -80,17 +90,30 @@ def main():
     sung = lyrics_align.sung_words(args.song, os.path.join(args.out, "palabras cantadas.json"))
     bm = {"duration": ffmpeg_runner.probe_duration(args.song),
           "words": [{"start": w["start"], "end": w["end"]} for w in sung]}
+    if plan.get("beat_times"):
+        if plan.get("grid"):
+            raise ValueError("El plan trae «grid» y «beat_times»: va uno de los dos.")
+        bm["beats"] = [float(b) for b in plan["beat_times"]]
+        bm["downbeats"] = bm["beats"][::4]
     op = options(plan, args.panels)
     base = name = plan.get("base_name", "edit largo")
     if args.lyrics:
         with open(args.lyrics, encoding="utf-8-sig") as fh:
-            words, report = lyrics_align.align(with_repeats(fh.read(), plan.get("repeat_lines")), sung)
+            text = with_repeats(fh.read(), plan.get("repeat_lines"))
+        if plan.get("lyrics_windows"):
+            words, report = lyrics_align.align_windows(text, sung, plan["lyrics_windows"])
+        else:
+            words, report = lyrics_align.align(text, sung)
         print("letra:", report)
+        if op.music_end is not None:
+            words = [w for w in words if w["start"] < op.music_end]
         op.words, op.word_style = words, dict(plan.get("word_style", {}))
         name += " (con letra)"
         lyrics_align.srt(words, os.path.join(args.out, f"{base} - letra palabra por palabra.srt"))
     edl, info = manga.plan(args.episode, ffmpeg_runner.probe_resolution(args.episode) or (1920, 1080), bm,
                            takes(plan), op)
+    if plan.get("video_fade_out") is not None:
+        edl.video_fade_out = float(plan["video_fade_out"])
     info["srt"] = manga.srt_files(bm, op, args.out, base)
     with open(os.path.join(args.out, f"{name} - plan.json"), "w", encoding="utf-8") as fh:
         json.dump(info, fh, indent=1)

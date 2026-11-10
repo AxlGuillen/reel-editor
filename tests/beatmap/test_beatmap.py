@@ -254,3 +254,26 @@ class Api(unittest.TestCase):
             self.assertEqual(client.post("/api/beatmap/process", data={}).status_code, 400)
         finally:
             S.remove(tmp)
+
+
+class DriftingTempo(unittest.TestCase):
+    def test_follows_a_drummer_speeding_up(self):
+        # 160 → 168 BPM over 60 s (a live take): no constant grid fits, the tracker follows it.
+        import numpy as np
+        y = np.zeros(int(S.SR * 62), np.float32)
+        tt = np.arange(int(S.SR * 0.08)) / S.SR
+        click = (np.sin(2 * np.pi * 60 * tt) * np.exp(-tt * 40)).astype(np.float32)
+        truth, t, k = [], 0.5, 0
+        while t < 60:
+            truth.append(t)
+            i = int(t * S.SR)
+            y[i:i + len(click)] += click * (1.0 if k % 4 == 0 else 0.5)
+            t += 60 / (160 + 8 * t / 60)
+            k += 1
+        r = A.track_drifting(y, sr=S.SR, bpm_hint=164)
+        b = np.asarray(r["beats"])
+        inner = [x for x in truth if 2 < x < 58]
+        err = np.asarray([b[np.argmin(np.abs(b - x))] - x for x in inner])
+        self.assertLess(abs(np.median(err)), 0.025)            # the onset envelope's lag (~15 ms), as in the tracker test
+        self.assertLess(err.std(), 0.005)                      # and steady: no beat jumps
+        self.assertLess(r["bpm_from"], r["bpm_to"])

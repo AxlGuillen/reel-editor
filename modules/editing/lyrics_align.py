@@ -115,3 +115,26 @@ def srt(words: list[dict], path: str) -> str:
         for i, w in enumerate(words, 1):
             fh.write(f"{i}\n{ts(w['start'])} --> {ts(max(w['end'], w['start'] + 0.15))}\n{w['word']}\n\n")
     return path
+
+
+def align_windows(text: str, sung: list[dict], windows: list) -> tuple[list[dict], dict]:
+    """align() block by block: the text's blocks (separated by a blank line)
+    each against the sung words that START inside its window [a, b) (song s).
+    For songs whose repeated choruses pull the global alignment onto the wrong
+    repeat (Monster, female version: 62 % → 86 % covered)."""
+    blocks = [b for b in re.split(r"\n\s*\n", text) if b.strip()]
+    if len(blocks) != len(windows):
+        raise ValueError(f"La letra tiene {len(blocks)} bloques y hay {len(windows)} ventanas: "
+                         "tiene que haber una ventana por bloque (separados por una línea vacía).")
+    out, used, uncovered, report = [], 0, [], {"lyric_words": 0, "matched": 0}
+    for block, (a, b) in zip(blocks, windows):
+        sub = [w for w in sung if float(a) <= w["start"] < float(b)]
+        words, rep = align(block, sub)
+        out += words
+        used += round(rep["sung_covered"] * len(sub))
+        uncovered += rep["uncovered"]
+        report["lyric_words"] += rep["lyric_words"]
+        report["matched"] += rep["matched"]
+    report.update({"sung_words": len(sung), "sung_covered": round(used / max(1, len(sung)), 3),
+                   "timed": len(out), "uncovered": uncovered})
+    return out, report

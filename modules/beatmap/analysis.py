@@ -403,3 +403,27 @@ def measure_grid(y: np.ndarray, sr: int = SR, bpm_hint: float | None = None,
                 best, bar_phase = m, p
     phase = (phase + bar_phase * beat) % (4 * beat)
     return {"bpm": bpm, "phase": round(phase, 4), "coherence": round(coh, 4), "tracker_bpm": round(hint, 3)}
+
+
+DRIFT_TIGHTNESS = 400         # librosa's DP: high = the tempo moves slowly (a drummer speeding up, not jumps)
+
+
+def track_drifting(y: np.ndarray, sr: int = SR, bpm_hint: float = 120.0,
+                   tightness: float = DRIFT_TIGHTNESS) -> dict:
+    """The beats of a song whose tempo DRIFTS (a live drummer: Nightcore of a
+    band cover, 163 → 167 BPM over 3:38), where no constant grid fits
+    (measure_grid's coherence < 0.15). Dynamic programming with a tempo prior
+    at `bpm_hint` (the full-time tempo: the tracker often reports half) and a
+    high tightness, so the tempo follows the song slowly instead of jumping.
+    → {"beats" [s], "bpm" (median), "bpm_from", "bpm_to" (first / last 32 beats)}."""
+    import librosa
+    onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP_BEAT)
+    _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT,
+                                        start_bpm=bpm_hint, tightness=tightness, units="frames")
+    beats = np.asarray(frames, dtype=float) * HOP_BEAT / sr
+    if len(beats) < 8:
+        raise ValueError("No se encontraron beats suficientes en la canción.")
+    ibi = np.diff(beats)
+    head, tail = ibi[:32], ibi[-32:]
+    return {"beats": [round(float(b), 4) for b in beats], "bpm": round(60 / float(np.median(ibi)), 2),
+            "bpm_from": round(60 / float(np.mean(head)), 2), "bpm_to": round(60 / float(np.mean(tail)), 2)}

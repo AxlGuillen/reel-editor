@@ -36,3 +36,16 @@ class Align(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Windows(unittest.TestCase):
+    def test_each_block_only_against_its_window(self):
+        # The same chorus twice: block 2 must take the SECOND sung one.
+        heard = sung(("deep", 1.0), ("within", 1.5), ("verse", 5.0), ("deep", 9.0), ("within", 9.5))
+        words, rep = L.align_windows("deep within\n\nverse\n\ndeep within", heard, [[0, 4], [4, 8], [8, 12]])
+        self.assertEqual([w["start"] for w in words], [1.0, 1.5, 5.0, 9.0, 9.5])
+        self.assertEqual(rep["sung_covered"], 1.0)
+
+    def test_one_window_per_block(self):
+        with self.assertRaises(ValueError):
+            L.align_windows("a\n\nb", sung(("a", 1.0)), [[0, 4]])
