@@ -28,6 +28,7 @@ from modules.editing.routes import bp as editing_bp
 from modules.anime_edit.routes import bp as anime_edit_bp
 from modules.montage.routes import bp as montage_bp
 from modules.studio.routes import bp as studio_bp
+from modules.motion.routes import bp as motion_bp
 from modules.pasarela.routes import bp as pasarela_bp
 
 
@@ -59,6 +60,7 @@ def create_app() -> Flask:
     app.register_blueprint(anime_edit_bp)
     app.register_blueprint(montage_bp)
     app.register_blueprint(studio_bp)
+    app.register_blueprint(motion_bp)
     app.register_blueprint(pasarela_bp)
 
     @app.route("/")

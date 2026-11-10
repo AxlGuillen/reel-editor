@@ -57,7 +57,70 @@ GET  /api/beatmap/status/<id>   → {status, progress, stage, error, summary, be
 GET  /api/beatmap/download/<id> → preview.mp4 ·  GET /api/beatmap/json/<id> → beatmap.json
 ```
 
+## motion — `/api/motion` (mapa de movimiento)
+
+`modules/motion/analysis.py` (puro sobre los cuadros) + `processor.py` (`get()`, con caché) + `sheet.py` (hoja de eventos, hoja de parejas y vista previa) + `bench.py` (mide contra la verdad anotada). Como beatmap: describe el video y no decide nada. Lo usan los planificadores con `motion.processor.get(path, start, end)`, `hits(m)` y `focus_at(m, t)`.
+
+**Una sola decodificación por tramo**, a 480 px y en BGR, que comparten el flujo óptico, el color y el detector de cortes (`shots.FrameCuts`: el mismo AdaptiveDetector de `shots.cuts()`, alimentado con esos cuadros). **Cuadro exacto:** el seek de entrada de FFmpeg solo, sobre el mkv de Black Clover, a veces se saltaba el primer cuadro y el modo CFR duplicaba o tiraba cuadros a mitad del tramo (las primeras hojas de anotación estaban corridas sin regla fija). `decode_command` busca 1 s antes y `select='gte(t,…)'` con `-copyts` y `-fps_mode passthrough` toma los cuadros por los timestamps del archivo. Lo comprueba un test con un video cuyo cuadro k tiene brillo 3k.
+
+| Señal (por cuadro, en `frames`) | Cómo sale |
+|---|---|
+| `held`, `drawing` | cadencia: un cuadro repite el dibujo si su diferencia media de luma es < max(1.0, 35 % de la mediana de los últimos 8) **o** si el flujo apenas se movió (p97 < 1 px). El flujo corre solo entre dibujos distintos y se divide entre los cuadros que tardó; ese valor llena los cuadros del cambio (sin peine) |
+| `cam_dx`, `cam_dy`, `cam_zoom` | homografía RANSAC sobre una malla de puntos cada 20 px del flujo (300 iteraciones: las 2000 por omisión eran el 70 % del tiempo) |
+| `force`, `angle`, `dirgram` | el flujo menos la cámara: percentil 90 (px por cuadro en unidades de 1920 de ancho), ángulo ponderado (0° derecha, 90° arriba) y directograma de 8 direcciones |
+| `luma`, `sat`, `inverted`, `bw` | brillo y saturación; invertido = el cuadro se parece más al negativo del anterior |
+| `cx`, `cy` | centro de la mancha conectada de movimiento con más movimiento adentro, suavizado por toma (EMA 0.4) |
+| `shot`, `err` | toma; `err` = cuánto del cambio NO explica el flujo (alto en un barrido o en un corte) |
+
+| Evento | Regla |
+|---|---|
+| `impact` | pico de fuerza de un dibujo, frenazo en los 4 cuadros siguientes (≤ 60 %) y **prominencia** (fuerza / mediana de ±12 cuadros) ≥ 6, o ≥ 2.5 si frena fuerte (≤ 30 %: la ráfaga, donde todo se mueve) o ≥ 2 si lo marca un destello o un cuadro de impacto. El cuadro es el del pico (el contacto); se corre a la ráfaga de impacto o al destello si arrancan ahí. Un destello sobre movimiento fuerte (≥ 1.5×) también es golpe (la explosión de fuego no frena). Uno por momento: el más fuerte en 5 cuadros |
+| `smear` | un dibujo rápido (≥ percentil 90) que el flujo no explica (`err` ≥ 0.75) |
+| `pan` | la cámara se mueve ≥ 4 px/cuadro en una dirección (±35°) durante 6 cuadros o más; la dirección es la de la cámara |
+| `calm` | fuerza < 2.5 durante 2 s (o lo que pida `calm_s`, p. ej. un compás) |
+| `flash` | la luma sube más de 25 en un cuadro (que no es corte) |
+| `cut` | corte de PySceneDetect que no es: un destello que vuelve a bajar, un cuadro invertido, una ráfaga de 1–3 cuadros tras la que vuelve la imagen de antes (miniaturas de 32×18: `min_scene_len` esconde el segundo corte) ni un cambio que el flujo explica |
+
+**Medido (6/11):**
+- Las 10 parejas del anexo de las reglas v1.0, con el cuadro exacto anotado a mano en hojas de la decodificación exacta (`tests/motion/pairs.json`). Cinco son golpes y cinco son poses o cortes, porque el anexo marca ventanas de hasta 2 s:
+  - **10/10 y golpes 5/5**, con deltas de −1, 0, 0, 0 y 0 cuadros.
+  - La pareja 7 es una ráfaga y pasa por su contacto 27219, anotado como alternativa antes de medir; el contacto de la cara, 27212, no tiene pico propio (prominencia 1.6).
+- **Ojo:** los umbrales se ajustaron con esas mismas 10 parejas (no hay un set aparte).
+- En la toma 09 (1240–1258 s), unos 20 de los 24 eventos más fuertes son golpes o barridos reales. Los dudosos son caras con poco movimiento.
+- Densidad: 1–2 golpes por segundo en las peleas y 0.2–0.9 fuera de ellas.
+- **~170 cuadros/s** a 480 px en la CPU, con la decodificación de 1080p incluida.
+
+**Límite conocido:** DIS (preset FAST) pierde desplazamientos de más de ~24 px por eje a 480 px (~100 px/cuadro a 1920). Un movimiento así sale como un barrido (`err` alto) con fuerza subestimada. Se probó un paso grueso a media resolución: arreglaba ese caso pero empeoró las parejas reales (8/10), así que se descartó. Los sintéticos usan texturas tipo cel (bordes duros), porque con ruido difuminado DIS falla incluso en desplazamientos chicos.
+
+**Caché** en `cache/motion/<huella>-<f0>-<cuadros>-w<ancho>-v<versión>.json`. La huella es tamaño + primer y último MB (`file_utils.quick_fingerprint`): un episodio de 1.4 GB no se lee entero.
+
+```
+POST /api/motion/process   video (archivo) | library_clip | job_id | path (archivo local)
+                           [start, end (s o m:ss), width=480 (160–1280), preview]
+GET  /api/motion/status/<id>   → {status, progress, stage, error, summary, motion, has_preview}
+GET  /api/motion/json/<id> · /summary/<id> (texto) · /sheet/<id> (JPG) · /download/<id> (preview.mp4)
+python -m modules.motion.bench pairs <episodio> [--sheet carpeta] [--refresh]   # las 10 parejas
+python -m modules.motion.bench speed <video> [inicio fin]
+```
+
+El resumen para Claude es una línea por evento: «toma 13 · golpe fuerte en 1249.16 s (cuadro 29950), hacia la izquierda, centro (0.78, 0.51)».
+
+**Analizar un edit terminado** (`python -m modules.motion.reference <edit.mp4> [--out carpeta]`): mapa de movimiento + beatmap de su audio. Mide:
+- **Cortes y efectos:** destellos, invertidos y, desde la cámara, golpes de zoom (cambio rápido de zoom) y sacudidas (la cámara invierte la dirección varias veces en pocos cuadros). De cada uno, cuántos caen en un beat, en el 1 del compás y en un golpe del anime.
+- **Rejilla:** si los cortes siguen alguna (la mejor rejilla constante contra lo que daría el azar).
+- **Densidad por sección.**
+- En un edit estilizado, el mapa toma por cortes algunos golpes de zoom. Si la cámara hace zoom fuerte y los colores se mantienen (histograma HSV), cuenta como zoom.
+- Los *whips* y negros todavía no se distinguen de un corte.
+
+Medido en el edit de asen (TikTok 7703346653037710610, 46 s):
+- 243 cortes, plano mediano de 0.1 s.
+- **No corta en una rejilla:** 29 % de los cortes en la mejor, contra 22 % al azar.
+- Los efectos sí van **sobre los golpes del anime:** 11 de 13 destellos y 51 de 102 zooms.
+- La densidad sube de 0.27 efectos/s en la intro a 2.8 en el coro y 3.6 al final.
+
 ## editing — el motor (`modules/editing/`)
+
+> El banco de efectos (todos los eventos, `mblur`, `dedupe`, `hit_ramp`, la galería y lo que se corrigió de `rgb` y `glow`) está en [`efectos.md`](efectos.md).
 
 `edl.py` (modelo), `timing.py` (curvas de velocidad y cuantizado), `effects.py` (filtros), `titles.py` (letreros ASS), `render.py` (dos pasadas). `GET /api/editing/options` lista `looks`, `luts`, `profiles` y qué opcionales están instalados (`rife`, `esrgan`, `beat_this`, `vocal_separation`).
 
@@ -202,6 +265,138 @@ GET /api/anime-edit/presets          → {presets: [{id, description}], formats}
 
 **Como lo opera Claude:** `/process` → poll → mirar `GET /sheet/<id>/<n>` (y las miniaturas) → `/finish` con la selección, el héroe y 2–4 variantes → poll hasta `finished=true` → `GET /download/<id>/<n>`.
 
+### El preset `manga` (reglas v1.0, edit 3 de Magna vs Dante)
+
+`anime_edit/manga.py` (planificador puro) + `framing.py` (encuadres y color) + `repro.py` (la prueba). No elige planos: recibe **tomas por segundo**, como la lista `P` de `edit3.py`.
+
+- **Fase 1** con `shots=0`: sin detección de planos ni miniaturas (un episodio entero no lo necesita). `video_path` y `music_path` aceptan archivos de esta compu, que no se suben ni se borran.
+- **Fase 2** con `variants=["manga"]` y `takes`:
+
+```json
+{"takes": [{"t": 317.30, "beats": 4, "frame": "B", "focus": [0.5, 0.5], "tone": "cold"},
+           {"t": 372.05, "beats": 4, "frame": "C", "focus": [0.30, 0.45], "tone": "cold"},
+           {"panel": "m09_black-bulls-jefe_con-texto", "beats": 2},
+           {"t": 1263.80, "beats": null, "frame": "C", "speed": 0.85}],
+ "panels_folder": "C:/…/Edit Magna vs Dante/manga",
+ "panels": [{"panel": "m03_golpe-1", "t": 1127.79}],
+ "music_start": 144.70, "music_end": 212.09, "grid": {"bpm": 130.75, "phase": 0.21},
+ "flashes": [174.92, 186.4, 201.18], "phrases": [{"a": 174.92, "b": 182.66, "words": [[174.9, 175.2]], "flash": true}]}
+```
+
+- **Encuadres:**
+  - `B` es el 4:5 sobre el mismo cuadro difuminado (la base).
+  - `C` es el 16:9 completo sobre el difuminado, para las tomas anchas.
+  - `A` es el vertical completo, para los primeros planos.
+  - También se aceptan las letras de `edit3.py` (`z`/`w`/`v`).
+  - El foco horizontal va de `focus[0]` a `focus[1]` durante la toma, medido en el tiempo de salida.
+- **Color por toma:** el grado de las reglas (contraste, saturación, curva en S y brillo en modo pantalla) con balance `cold` o `warm`, más la viñeta. Todo va en el `vf` del plano, en la pasada 1.
+- **Pausa con panel:**
+  - Un ítem `panel` congela el **último cuadro** de la toma anterior, con su encuadre en el foco final.
+  - El evento `panel` de la EDL oscurece el cuadro a ×0.62. El panel entra de 93 % a 100 % en 0.12 s y sigue creciendo 3.5 % hasta el final.
+  - Las parejas `panels` (`{panel, t}`) se insertan después de la toma que contiene `t`, y esa toma se corre para terminar justo en `t`.
+- **Rejilla y cortes:**
+  - La primera toma cubre la entrada hasta el primer compás después de `music_start`.
+  - Cada corte cae `cum` tiempos después, redondeado al cuadro de salida: `round((PH + cum·BEAT)·fps)`, la fórmula de `edit3.py`.
+  - Con `grid` la rejilla es constante (la de `glee/grid.json`). Sin ella se usan los beats medidos del beatmap.
+  - La última toma, con `beats: null`, llena hasta `music_end` (por omisión, el final natural de la canción).
+- **Destellos:** 55 % de blanco durante los cuadros de [t, t + 0.07), con `shape="mix"`. Por omisión van al inicio de cada frase (palabras del beatmap separadas por pausas de ≥ 0.45 s). `flashes` o las frases con `flash: true` los fijan.
+- **Fundido** de video a negro de 1.5 s. La música entra con 30 ms y no se funde: termina sola.
+- **Letra:** dos `.srt` **solo con tiempos**, `<title> - tiempos-letra_frases.srt` y `…_palabra-por-palabra.srt` (cada palabra dura al menos 150 ms). La letra la escribe Axl. Los textos propios van en `words` (`{word, start, end}` en segundos del edit), con el layout `invert`.
+
+**En el motor (`editing`):**
+- Evento `panel` (`image`, `dim`, `enter`, `from_scale`, `drift`).
+  - `editing/panels.py` **dibuja cada cuadro con PIL**, con la cuenta de `edit3.py`: ajusta la imagen a 1040×1700 de 1080×1920, la escala una vez ×1.1 con LANCZOS y, por cuadro, la baja bilineal y la pega centrada. Cada cuadro es un PNG RGBA del tamaño del cuadro, y FFmpeg solo lo superpone.
+  - Antes se probó escalar en FFmpeg y quedó descartado por dos razones. `overlay` no acepta una entrada que cambia de tamaño: FFmpeg mete un reescalado y el panel salía quieto a ×1.1. Además, aun con un lienzo fijo, el bilineal de FFmpeg queda medio píxel corrido del de PIL, y en dibujo lineal eso bajó el SSIM contra el edit 3 a 0.88.
+  - La secuencia entra medio cuadro antes, en base de tiempo de µs (`settb=AVTB`). En su base propia (1/30), el medio cuadro se redondeaba y el panel salía un cuadro adelantado. Con `eof_action=pass` se perdía el último cuadro.
+  - Va antes de los acentos, así un destello lo blanquea también.
+- `Event.shape="mix"` (por número de cuadro, `lutyuv` hacia (235, 128, 128): lo mismo que mezclar R, G y B hacia 255).
+- `Edl.video_fade_out` y `Edl.music_fade_in`. Con `fade_out=0` la música no se funde.
+- `Segment.exact_phase`: el tiempo de la fuente se mapea exacto (`setpts=PTS−inicio/TB`) en vez de poner en 0 el primer cuadro.
+  - Con eso el `fps` elige los mismos cuadros que `edit3.py`.
+  - En la toma de 1127.95 s el primer cuadro del episodio cae 0.01 s después, y sin esto salía otro cuadro.
+  - Solo lo activa `manga`, así los demás módulos no cambian.
+
+### Compuestos en el preset `manga`
+
+Por omisión todo apagado, así el plan sigue siendo el de las reglas v1.0 (`repro.py` sigue dando los cuadros del edit 3). En `/finish`:
+- `blur_cuts` = `off` | `radial` | `directional` | `mix`: el corte con desenfoque en cada corte entre dos tomas (no al entrar a un panel). `blur_cuts_from` (s de salida) deja limpios los cortes de una intro lenta.
+- `composites` = `[{"kind": "hit" | "burst" | "isolate", "at": segundo del VIDEO, …}]`: Claude elige el momento en el episodio (el cuadro del contacto) y el código encuentra su cuadro de salida (`manga.output_frame`). Un momento que ninguna toma muestra da error. Claves de cada receta: `angle`, `x`, `y`, `whip`, `strength`, `color`, `similarity`.
+- `lyrics_srt`: un .srt de la canción con una palabra por cue, con el texto de Axl (`letra_a_srt.py` reparte el texto pegado sobre el .srt de tiempos). Va con los subtítulos invertidos, ubicados lejos del sujeto y borrados en el corte.
+- `resolution` = 1080 | 1440 | 2160.
+
+El status trae `composites`: cuántos cortes con desenfoque, dónde cayó cada compuesto (`frame`, `t`) y cuántas palabras de la letra.
+
+### Edit largo (`anime_edit/long_edit.py`)
+
+El motor del tipo de video «edit largo de anime» (1–4 min, la canción entera). Cada video es un **plan en JSON**, no un script. Plantillas con ejemplos reales: `anime_edit/examples/long_edit_magna_vs_dante.json` (07/11: Glee «I Will Survive» entera sobre el episodio 175 de Black Clover, 121 tomas y 10 paneles) y `long_edit_yuta_vs_sendai.json` (08/11: «Monster» de Skillet sobre el episodio 59 de Jujutsu Kaisen, 160 tomas y 14 paneles).
+
+```
+python -m modules.anime_edit.long_edit <plan.json> "<carpeta de salida>" --episode "<video>" --song "<canción>" ^
+       --panels "<carpeta de paneles>" [--lyrics letra.txt] [--plan-only]
+```
+
+- **La rejilla:** `beatmap.analysis.measure_grid(y, bpm_hint=bm["bpm"], downbeats=bm["downbeats"])` busca el BPM y la fase que alinean **todos** los ataques (coherencia de fase, ±4 % del tracker, a 0.001 BPM) y elige como fase el downbeat más cercano a los del tracker. Devuelve `{bpm, phase, coherence, tracker_bpm}`; `start`/`end` miden un tramo, para comprobar que la fase no derive. En «Monster» (Skillet), el tracker dio 136 y lo medido fue 135.00, con la fase estable (±7 ms) de punta a punta.
+- **Canciones con tempo que deriva:** si la coherencia de `measure_grid` sale baja (< 0.15), no hay rejilla fija que sirva. `beatmap.analysis.track_drifting(y, bpm_hint=<tempo entero>)` sigue los beats con programación dinámica y un `tightness` alto (400), así el tempo se mueve despacio en vez de saltar. El `bpm_hint` es el tempo completo: el tracker suele dar la mitad.
+  - Devuelve `{beats, bpm, bpm_from, bpm_to}`. Los beats llevan el mismo retraso fijo de ~15 ms de la envolvente de ataques que el tracker; entre beats no hay saltos (desvío < 5 ms).
+  - Esos beats van en el plan como `beat_times`, en lugar de `grid`; el beat 0 es un downbeat.
+  - En «Monster» (Nightcore, versión femenina) acelera de 163 a 167 BPM en 3:38, una toma en vivo. Con una rejilla fija la coherencia era de 0.13.
+- **El plan:** `grid` (medida en la canción, no la del tracker) o `beat_times`; `sections` (cada una con sus `beats` y sus tomas o paneles; el runner comprueba que sumen); `composites`, `blur_cuts`, `word_style`, `repeat_lines` y `lyrics_windows`. También `music_end`, para cortar el silencio final de una descarga, y `video_fade_out`: va en 0 cuando el ending del cuarto cierra el video.
+- **`lyrics_align.sung_words`** transcribe la canción **sin el filtro de voz de Whisper** (con él, en esta canción salían 33 palabras de 444). La guarda en `palabras cantadas.json`.
+- **`lyrics_align.align`** da a cada palabra del texto el tiempo de la cantada con la que coincide (difflib) y reparte las mal oídas entre sus vecinas.
+  - Los coros entre paréntesis ayudan a ubicar pero no se muestran.
+  - El reporte (`uncovered`) dice qué tramos cantados no tiene el texto.
+- **`repeat_lines`** repite bloques de la letra que la canción canta dos veces seguidas.
+- **`lyrics_windows`** (`lyrics_align.align_windows`) va cuando los estribillos repetidos arrastran la alineación global al estribillo equivocado.
+  - Cada bloque de la letra (los separa una línea vacía) se alinea solo con las palabras cantadas dentro de su tramo `[a, b)` de la canción. Hay una ventana por bloque.
+  - En «Monster» (versión femenina), la alineación global dejaba sin letra del segundo estribillo al puente (62 %). Por bloques llegó al 86 %.
+
+La receta (cómo elegir las tomas, medir la rejilla, revisar la letra, lo que se aprendió) está en el PKB: `worlds-2026/receta-edit-largo-anime.md`.
+
+### `motion: on` — bloques, curva y efectos en los golpes
+
+`/finish` del preset `manga` con `motion=on` (por omisión `off`: las reglas v1.0 tal cual). Con `off` el plan no cambia nada: la misma EDL y los mismos cuadros que la fase 2. `anime_edit/blocks.py` + `blocks.json` + `fit.py`:
+
+1. **Curva:** la sección de la canción bajo cada toma (beatmap: `intro`, `verse`, `chorus`, `bridge`, `outro`, la subida antes de cada coro y el drop) da una intensidad objetivo. Por omisión `{intro 1, verse 2, bridge 1, outro 1, chorus 4, buildup 3, drop 5}`.
+2. **Bloque:** el más intenso con intensidad ≤ objetivo cuyos requisitos cumple el mapa de movimiento de la toma. En un empate gana el bloque propio de la sección. Claude puede fijarlos con `blocks=[{"take": i, "block": id}]`.
+
+   | Bloque | Int. | Qué pone | Necesita |
+   |---|---|---|---|
+   | `calma` / `texto` | 1 | acercamiento lento al centro de la acción | — |
+   | `panel` | 2 | la pausa del preset | — |
+   | `camara_lenta` | 2 | la toma a 0.6× (RIFE y `dedupe` si está), zoom en su golpe | 1 golpe |
+   | `rampa` | 3 | rápido hacia el golpe más fuerte y lento después, **con el golpe en el beat** (`fit.fit_hit`); destello y sacudida en su dirección | 1 golpe |
+   | `rafaga_zooms` | 4 | zoom en escalera, un escalón por beat, al centro de la acción | — |
+   | `estrobo` | 4 | estrobo cada 2 cuadros (solo en la subida) | — |
+   | `rafaga_golpes` | 5 | cada golpe con su acento (destello / sacudida / zoom), el más fuerte invierte un cuadro | 3 golpes |
+   | `pantalla_dividida` | 3 | **no disponible**: necesita un plano con dos fuentes | — |
+
+3. **Efectos en el golpe:** cada efecto va en el cuadro de salida donde aparece el cuadro de su golpe, `fit.out_frame`.
+   - El filtro `fps` cuenta desde el **primer cuadro de la fuente** de cada pieza, no desde su inicio. Una pieza que empieza entre dos cuadros se corre `round(desfase · fps / velocidad)`. Medido contra un render real de una fuente de 23.976 fps numerada cuadro a cuadro: sin esa corrección el golpe caía un cuadro antes.
+   - El plan guarda cada efecto clavado (`locked`: `{kind, frame, hit_frame}`). El `hit_frame` se recalcula al final desde las piezas definitivas de la toma.
+4. **Encaje golpe–beat** (`rampa`):
+   - [inicio, golpe] va en [0, beat] y [golpe, fin] en el resto, con velocidades entre 0.4× y 2.5×.
+   - La mitad que entra al golpe se limita moviendo su **inicio** y la de después recortando su **final**, así el golpe no se mueve.
+   - Si la toma cambia de duración en la fuente, su pausa con panel congela el **nuevo** último cuadro.
+5. **Transiciones** en los cortes entre dos tomas con intensidad ≥ 3 (nunca contra una pausa con panel): `whip` (con el ángulo del paneo o golpe más cercano), `flash`, `black`, `invert` y `zoom` en rotación. Al menos 3 tipos y ninguno más de 6 veces; el resto, corte seco.
+
+`blocks.check(info["motion"], fps)` verifica el criterio de la fase 4 sobre el plan: desfase máximo efecto–golpe, intensidad del drop contra la subida y variedad de transiciones. El status trae `motion: {blocks, locked, transitions, intensity}`.
+
+**Rearmar el edit 3** (criterio de la fase 2): `python -m modules.anime_edit.repro "<carpeta Edit Magna vs Dante>" "<episodio.mkv>"`. Rearma el edit desde `P`/`MODES`, compara los cortes con la fórmula de `edit3.py`, busca el salto de diferencia en cada corte de los dos videos y mide el SSIM de 5 cuadros de control con una hoja lado a lado (`…-control.jpg`).
+
+## tf_explained — «La TF explicada» (motor, sin rutas)
+
+El tipo de video que detiene una pelea del competitivo para explicarla con voz narrada. La receta está en el PKB (`worlds-2026/receta-la-tf-explicada.md`); aquí, las piezas y cómo se usan desde un script:
+
+| Pieza | Para qué |
+|---|---|
+| `dossier.fight(game_id, clock0_utc, desde, hasta)` | El feed oficial alrededor de la pelea, en el reloj del marcador (con pausas): vida, oro, K/D/A y CS de cada jugador; objetos, wards y daño cada 5 s. **El feed no tiene posiciones** |
+| `dossier.timeline(d)` | El estado al empezar, cada muerte con su asesino y asistencias, y la vida de los 10 una vez por segundo |
+| `vod.download(url, {nombre: (desde, hasta)}, offset, carpeta)` | Los tramos del VOD por reloj: segundo del VOD = reloj + offset (el que mide el ancla de competitivo) |
+| `sheets.crop_sheets` / `sheets.fight_sheets` | Hojas para leer la pelea cuadro a cuadro: un recorte del broadcast (el casillero del jugador: R, Cleanse, Flash; la barra va 1–1.5 s atrasada) o el cuadro + su minimapa + la vida de los 10 |
+| `layout.layout(x0, y0, w, h, minimap, fit)` | El `vf` del plano: marcador arriba, gameplay 1080×850, fila de subtítulos, banda con el minimapa real. `layout.to_output` lleva un punto del broadcast a la salida (donde el deck dibuja el anillo) |
+| `plan.Span(video, offset)` | `run(desde, hasta, dur)`, `freeze(en, dur)` y `shot(vf, …)`: las piezas de la EDL en reloj del marcador, cada una con lo que dura en la voz |
+| `montage.run(base, segmentos_de_la_voz, desk, deck, nombre)` | El montaje por el Estudio: subtítulos con la ortografía del guion (`screen_words`), láminas colocadas por el guion marcado, render de Presentations y montage con subtítulos |
+
 ## montage — `/api/montage`
 
 Capas animadas con transparencia (ProRes 4444, VP9 con alfa o PNG) sobre un video vertical terminado, en un encode. Es el diseño de `PKB/…/montaje-automatico-con-animaciones-html.md`.
@@ -262,10 +457,16 @@ La vista «Estudio» (sección Edits) arma un video con las láminas de un deck 
 
 ## Tests
 
-`tests/synthetic.py` arma canciones (bombo y hi-hat con tempo conocido) y videos de planos de colores con cortes en segundos conocidos: nada con derechos y sin internet. `tests/beatmap`, `tests/editing`, `tests/competitivo/test_edit.py` (incluye el job completo con el VOD simulado), `tests/anime_edit`, `tests/montage`, `tests/studio`.
+`tests/synthetic.py` arma canciones (bombo y hi-hat con tempo conocido) y videos de planos de colores con cortes en segundos conocidos: nada con derechos y sin internet. `tests/beatmap`, `tests/editing`, `tests/competitivo/test_edit.py` (incluye el job completo con el VOD simulado), `tests/anime_edit`, `tests/montage`, `tests/studio`, `tests/motion` (golpes sintéticos con ángulo, cuadro, cadencia, paneo, destello, corte y ráfaga conocidos; `synthetic.motion_video`).
 
 ## Pendiente / ideas
 
+- **Mapa de movimiento (después del A/B):**
+  - La v2.0 de las reglas se escribe cuando Axl elija en el A/B (`Edits/AB Magna vs Dante - mapa de movimiento`).
+  - `pantalla_dividida` necesita planos con dos fuentes.
+  - Los umbrales de golpe se ajustaron con 10 parejas: hace falta un set aparte (otra pelea anotada).
+  - El analizador de referencias no distingue *whips* ni negros.
+  - El beatmap de Glee marca casi toda la canción como verso, y eso aplana la curva.
 - **Capas GSAP de presentations**: `cuadros.mjs --alfa` + un kit de recetas para edits (brasas, rayos, letreros de kill, palabra con máscara) que entren por montage o por la EDL.
 - **Máscaras** (SAM 2.1 / ToonOut) para el texto detrás del personaje, como en el edit de referencia.
 - Calibrar `kill_lead_s` y la intensidad de los acentos con un edit real de Worlds.

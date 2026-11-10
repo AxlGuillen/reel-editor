@@ -105,6 +105,27 @@ class Analysis(unittest.TestCase):
                 lyrics.words("x.wav")
 
 
+class ConstantGrid(unittest.TestCase):
+    def test_measures_bpm_and_downbeat_phase(self):
+        # A tempo the tracker rounds (133.37 → hint 136, 2 % off), first beat at 0.31 s.
+        bpm, first = 133.37, 0.31
+        y = S.signal(bpm=bpm, dur=60, loud_from=0, first_beat=first)
+        per = 60 / bpm
+        kicks = [first + 4 * k * per for k in range(int(55 / (4 * per)))]
+        g = A.measure_grid(y, sr=S.SR, bpm_hint=136.0, downbeats=kicks)
+        self.assertAlmostEqual(g["bpm"], bpm, delta=0.02)
+        off = (g["phase"] - first) % (4 * per)
+        self.assertLess(min(off, 4 * per - off), 0.025)          # a downbeat (a kick), within the tracker test's 25 ms
+        self.assertGreater(g["coherence"], 0.5)
+
+    def test_coherence_prefers_the_right_tempo(self):
+        y = S.signal(bpm=128, dur=40, loud_from=0)
+        import librosa
+        on = librosa.onset.onset_strength(y=y, sr=S.SR, hop_length=A.HOP_BEAT)
+        fs = A.HOP_BEAT / S.SR
+        self.assertGreater(A.coherence(on, fs, 128.0)[0], A.coherence(on, fs, 125.0)[0])
+
+
 class Window(unittest.TestCase):
     BM = {
         "beats": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0], "downbeats": [0.0, 2.0],
@@ -233,3 +254,26 @@ class Api(unittest.TestCase):
             self.assertEqual(client.post("/api/beatmap/process", data={}).status_code, 400)
         finally:
             S.remove(tmp)
+
+
+class DriftingTempo(unittest.TestCase):
+    def test_follows_a_drummer_speeding_up(self):
+        # 160 → 168 BPM over 60 s (a live take): no constant grid fits, the tracker follows it.
+        import numpy as np
+        y = np.zeros(int(S.SR * 62), np.float32)
+        tt = np.arange(int(S.SR * 0.08)) / S.SR
+        click = (np.sin(2 * np.pi * 60 * tt) * np.exp(-tt * 40)).astype(np.float32)
+        truth, t, k = [], 0.5, 0
+        while t < 60:
+            truth.append(t)
+            i = int(t * S.SR)
+            y[i:i + len(click)] += click * (1.0 if k % 4 == 0 else 0.5)
+            t += 60 / (160 + 8 * t / 60)
+            k += 1
+        r = A.track_drifting(y, sr=S.SR, bpm_hint=164)
+        b = np.asarray(r["beats"])
+        inner = [x for x in truth if 2 < x < 58]
+        err = np.asarray([b[np.argmin(np.abs(b - x))] - x for x in inner])
+        self.assertLess(abs(np.median(err)), 0.025)            # the onset envelope's lag (~15 ms), as in the tracker test
+        self.assertLess(err.std(), 0.005)                      # and steady: no beat jumps
+        self.assertLess(r["bpm_from"], r["bpm_to"])

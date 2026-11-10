@@ -13,6 +13,7 @@ Each accent is a pulse: it rises in `attack` s and falls quadratically in `dur` 
 """
 from __future__ import annotations
 
+import math
 import os
 
 import config
@@ -29,6 +30,10 @@ HOLD_EASE = 0.05              # a stair-zoom step reaches its level in this long
 WHIP_ZOOM = 0.35              # the whip's zoom punch at intensity 1 (35 %)
 WHIP_ATTACK = 0.08            # it starts this long BEFORE the cut (in the outgoing shot)
 WHIP_BLUR = 28.0              # horizontal motion blur (gblur sigma) at intensity 1
+WHIP_SHIFT = 0.08             # with a direction: the frame thrown 8 % of the width that way
+GLOW_ATTACK = 0.03
+GLOW_SIGMA = 10.0             # bloom blur at 1/4 size
+GLOW_OPACITY = 0.7
 
 # Measured on IG-GEN gameplay: mean luma 56.4 → 56.2, std 32.1 → 35.2.
 VIVID_CURVE = "curves=all='0/0 0.1/0.085 0.24/0.24 0.45/0.49 0.75/0.80 1/1'"
@@ -92,13 +97,21 @@ def color(look: str, lut: str = "") -> str:
     return ",".join(parts)
 
 
+def px_scale(width: int, height: int) -> float:
+    """How much the px constants (blur sigmas, color split, seams) grow with
+    the output: 1 at 1080p (1080×1920 or 1920×1080), 1.33 at 1440p, 2 at 4K.
+    The effects were tuned at 1080p; at 4K the same look needs twice the px.
+    Never below 1: smaller frames keep the 1080p px, as before."""
+    return max(1.0, min(width, height) / 1080)
+
+
 def _f(x: float) -> str:
     return f"{x:.4f}".rstrip("0").rstrip(".") if x else "0"
 
 
-def _pulse(t0: float, dur: float, attack: float = 0.0, var: str = "t") -> str:
-    """0 → 1 in `attack` s before t0, and 1 → 0 quadratically in `dur` s after."""
-    fall = f"if(between({var},{_f(t0)},{_f(t0 + dur)}),pow(1-({var}-{_f(t0)})/{_f(dur)},2),0)"
+def _pulse(t0: float, dur: float, attack: float = 0.0, var: str = "t", power: float = 2.0) -> str:
+    """0 → 1 in `attack` s before t0, and 1 → 0 as (1−x)^power in `dur` s after."""
+    fall = f"if(between({var},{_f(t0)},{_f(t0 + dur)}),pow(1-({var}-{_f(t0)})/{_f(dur)},{_f(power)}),0)"
     if attack <= 0:
         return fall
     rise = f"if(between({var},{_f(t0 - attack)},{_f(t0)}),({var}-{_f(t0 - attack)})/{_f(attack)},0)"
@@ -111,11 +124,77 @@ def _sum(terms: list[str]) -> str:
 
 def flash(events: list[Event], intensity: float = 1.0) -> str:
     """eq that whitens on every flash (empty if there are none)."""
-    fl = [e for e in events if e.kind == "flash"]
+    fl = [e for e in events if e.kind == "flash" and e.shape == "pulse"]
     if not fl:
         return ""
     expr = _sum([f"{_f(FLASH_MAX * e.intensity * intensity)}*{_pulse(e.t, e.dur)}" for e in fl])
     return f"eq=brightness='min({_f(FLASH_MAX)},{expr})':eval=frame"
+
+
+def frames_of(t: float, dur: float, fps: int) -> tuple[int, int]:
+    """First and last output frame whose time i/fps falls in [t, t + dur)."""
+    a = math.ceil(t * fps - 1e-6)
+    b = math.ceil((t + dur) * fps - 1e-6) - 1
+    return a, max(a, b)
+
+
+def _frames_enable(windows: list[tuple[int, int]]) -> str:
+    return _sum([f"between(n,{a},{b})" for a, b in windows])
+
+
+def flash_mix(events: list[Event], fps: int, intensity: float = 1.0) -> str:
+    """The "mix" flashes: the frame mixed with white by `intensity` during the
+    whole flash, by frame number (exact, like the manga edit: 55 % for the
+    frames in [t, t + 0.07)). In YUV tv range white is (235, 128, 128) and the
+    mix is linear, so it equals mixing R, G and B toward 255."""
+    fl = [e for e in events if e.kind == "flash" and e.shape == "mix"]
+    groups: dict[float, list[tuple[int, int]]] = {}
+    for e in fl:
+        groups.setdefault(round(min(1.0, e.intensity * intensity), 4), []).append(frames_of(e.t, e.dur, fps))
+    out = []
+    for a, windows in sorted(groups.items()):
+        out.append(f"format=yuv420p,lutyuv=y='val+(235-val)*{_f(a)}':u='val+(128-val)*{_f(a)}':"
+                   f"v='val+(128-val)*{_f(a)}':enable='{_frames_enable(windows)}'")
+    return ",".join(out)
+
+
+def fade_out(dur_total: float, fade: float) -> str:
+    """Linear fade to black over the last `fade` s of the picture."""
+    if fade <= 0:
+        return ""
+    return f"fade=t=out:st={_f(max(0.0, dur_total - fade))}:d={_f(fade)}"
+
+
+PANEL_PRESCALE = 1.1           # editing.panels resizes the panel ×1.1 once (LANCZOS)
+
+
+def panel_size(image_size: tuple[int, int], width: int, height: int) -> tuple[float, float]:
+    """The panel's size at scale 1: fitted inside PANEL_BOX of the frame."""
+    from modules.editing.edl import PANEL_BOX
+    w, h = image_size
+    s = min(PANEL_BOX[0] * width / w, PANEL_BOX[1] * height / h)
+    return w * s, h * s
+
+
+def panel_start(e: Event, fps: int) -> float:
+    """Where the panel input's first frame goes: half a frame before the event,
+    so overlay (which takes the last secondary frame at or before each main
+    frame, with the main timestamps rounded to the ms) never misses frame 0."""
+    return frames_of(e.t, e.dur, fps)[0] / fps - 0.5 / fps
+
+
+def panel(src: str, img: str, dst: str, e: Event, fps: int) -> str:
+    """One manga panel over the frozen frame (filter_complex parts). `img` is
+    the panel's frame sequence (editing.panels.frames: full-frame RGBA, the
+    panel already scaled and centered on each frame), its timestamps at
+    panel_start. The frame darkens to ×dim (black at 1−dim over it, which in
+    YUV tv range equals multiplying R, G and B) and the panel goes on top."""
+    a, b = frames_of(e.t, e.dur, fps)
+    on = f"between(n,{a},{b})"
+    if e.kind in ("follow", "speedlines", "glints"):   # the same overlay, no darkening
+        return f"[{src}][{img}]overlay=x=0:y=0:enable='{on}'[{dst}]"
+    return (f"[{src}]drawbox=x=0:y=0:w=iw:h=ih:color=black@{_f(1 - e.dim)}:t=fill:enable='{on}'[{img}d];"
+            f"[{img}d][{img}]overlay=x=0:y=0:enable='{on}'[{dst}]")   # eof_action=pass dropped the last frame
 
 
 def _push(t0: float, dur: float, var: str = "in_time") -> str:
@@ -147,11 +226,20 @@ def camera(events: list[Event], width: int, height: int, fps: int, intensity: fl
             env = _pulse(e.t, e.dur, e.attack or ZOOM_ATTACK, v)
             z.append(f"{_f(ZOOM_MAX * amp)}*{env}")
         elif e.kind == "shake":
-            env = _pulse(e.t, e.dur, 0, v)
+            env = _pulse(e.t, e.dur, 0, v, e.decay)
             # Margin to shake: twice the amplitude, while the shake lasts.
             z.append(f"{_f(2 * SHAKE_MAX * amp)}*{env}")
-            sx.append(f"{_f(SHAKE_MAX * amp)}*iw*{env}*sin({_f(2 * 3.14159 * SHAKE_HZ)}*{v}+{_f(i * 1.7)})")
-            sy.append(f"{_f(SHAKE_MAX * amp)}*ih*{env}*cos({_f(2 * 3.14159 * SHAKE_HZ * 1.3)}*{v}+{_f(i * 2.3)})")
+            if e.angle is None:
+                sx.append(f"{_f(SHAKE_MAX * amp)}*iw*{env}*sin({_f(2 * 3.14159 * SHAKE_HZ)}*{v}+{_f(i * 1.7)})")
+                sy.append(f"{_f(SHAKE_MAX * amp)}*ih*{env}*cos({_f(2 * 3.14159 * SHAKE_HZ * 1.3)}*{v}+{_f(i * 2.3)})")
+            else:
+                # along the hit's axis only (the frame recoils the way it was hit),
+                # starting toward the hit's direction (sin starts at 0 going up)
+                ux, uy = math.cos(math.radians(e.angle)), -math.sin(math.radians(e.angle))
+                osc = f"sin({_f(2 * 3.14159 * SHAKE_HZ)}*({v}-{_f(e.t)}))"
+                # the camera window moves opposite to the image: −u pushes the image along u
+                sx.append(f"{_f(-SHAKE_MAX * amp * ux)}*iw*{env}*{osc}")
+                sy.append(f"{_f(-SHAKE_MAX * amp * uy)}*iw*{env}*{osc}")
             continue
         elif e.kind == "push":
             env = _push(e.t, e.dur, v)
@@ -160,7 +248,13 @@ def camera(events: list[Event], width: int, height: int, fps: int, intensity: fl
             env = _hold(e.t, e.dur, v, e.attack)
             z.append(f"{_f(e.level)}*{env}")
         elif e.kind == "whip":
-            z.append(f"{_f(WHIP_ZOOM * amp)}*{_pulse(e.t, e.dur, WHIP_ATTACK, v)}")
+            env = _pulse(e.t, e.dur, WHIP_ATTACK, v)
+            z.append(f"{_f(WHIP_ZOOM * amp)}*{env}")
+            if e.angle is not None:
+                # the frame is thrown the way the hit goes (the window opposite)
+                ux, uy = math.cos(math.radians(e.angle)), -math.sin(math.radians(e.angle))
+                sx.append(f"{_f(-WHIP_SHIFT * amp * ux)}*iw*{env}")
+                sy.append(f"{_f(-WHIP_SHIFT * amp * uy)}*iw*{env}")
             continue
         else:
             continue
@@ -177,23 +271,107 @@ def camera(events: list[Event], width: int, height: int, fps: int, intensity: fl
     return f"zoompan=z='{zexpr}':x='{x}':y='{y}':d=1:s={width}x{height}:fps={fps}"
 
 
-def whip_blur(events: list[Event], intensity: float = 1.0) -> str:
-    """Horizontal motion blur around each whip (empty if there are none)."""
-    ev = [e for e in events if e.kind == "whip"]
+def whip_axis(e: Event) -> str:
+    """gblur only blurs horizontally or vertically: the whip's axis, quantized."""
+    if e.angle is None:
+        return "h"
+    a = math.radians(e.angle)
+    return "h" if abs(math.cos(a)) >= abs(math.sin(a)) else "v"
+
+
+def whip_blur(events: list[Event], intensity: float = 1.0, scale: float = 1.0) -> str:
+    """Motion blur around each whip along its axis (empty if there are none)."""
+    out = []
+    for axis in ("h", "v"):
+        ev = [e for e in events if e.kind == "whip" and whip_axis(e) == axis]
+        if not ev:
+            continue
+        sigma = _f(WHIP_BLUR * scale * intensity * max(e.intensity for e in ev))
+        enable = _sum([f"between(t,{_f(e.t - WHIP_ATTACK)},{_f(e.t + e.dur * 0.6)})" for e in ev])
+        size = f"sigma={sigma}:sigmaV=0.01" if axis == "h" else f"sigma=0.01:sigmaV={sigma}"
+        out.append(f"gblur={size}:enable='{enable}'")
+    return ",".join(out)
+
+
+def invert(events: list[Event], fps: int) -> str:
+    """The negative during each "invert" event, by frame number."""
+    ev = [e for e in events if e.kind == "invert"]
     if not ev:
         return ""
-    sigma = WHIP_BLUR * intensity * max(e.intensity for e in ev)
-    enable = _sum([f"between(t,{_f(e.t - WHIP_ATTACK)},{_f(e.t + e.dur * 0.6)})" for e in ev])
-    return f"gblur=sigma={_f(sigma)}:sigmaV=0.01:enable='{enable}'"
+    return f"negate=enable='{_frames_enable([frames_of(e.t, e.dur, fps) for e in ev])}'"
 
 
-def blackout(events: list[Event]) -> str:
+def strobe(events: list[Event], fps: int, intensity: float = 1.0) -> str:
+    """A white frame (mixed by `intensity`) every `every` frames during each
+    "strobe" event, starting on its first frame."""
+    ev = [e for e in events if e.kind == "strobe"]
+    if not ev:
+        return ""
+    out = []
+    for amount in sorted({round(min(1.0, e.intensity * intensity), 4) for e in ev}):
+        terms = []
+        for e in ev:
+            if round(min(1.0, e.intensity * intensity), 4) != amount:
+                continue
+            a, b = frames_of(e.t, e.dur, fps)
+            terms.append(f"between(n,{a},{b})*not(mod(n-{a},{e.every}))")
+        out.append(f"format=yuv420p,lutyuv=y='val+(235-val)*{_f(amount)}':u='val+(128-val)*{_f(amount)}':"
+                   f"v='val+(128-val)*{_f(amount)}':enable='{_sum(terms)}'")
+    return ",".join(out)
+
+
+def glow_pulse(src: str, dst: str, events: list[Event], width: int, height: int,
+               intensity: float = 1.0, fps: int = 30) -> str:
+    """A bloom that swells on each "glow" event: the frame blurred at 1/4,
+    darkened by (1 − envelope) and added in screen mode (screen with black is
+    no change, so outside the pulses the frame is untouched)."""
+    ev = [e for e in events if e.kind == "glow"]
+    env = _sum([f"{_f(min(1.0, e.intensity * intensity))}*{_pulse(e.t, e.dur, e.attack or GLOW_ATTACK)}"
+                for e in ev])
+    on = _frames_enable([frames_of(e.t - (e.attack or GLOW_ATTACK), e.dur + (e.attack or GLOW_ATTACK), fps)
+                         for e in ev])
+    # Screen on the luma only (eq at −1 takes the bloom's luma to 0, and
+    # screen with 0 is no change); the chroma stays the frame's (a screen of
+    # the chroma planes, centered on 128, shifted every frame's color). And
+    # only inside the pulses (enable). A round trip through RGB to blend all
+    # planes moved every frame of the edit ~5 levels (range conversion).
+    return (f"[{src}]split[gp_a][gp_b];"
+            f"[gp_b]scale={width // 4}:{height // 4},gblur=sigma={_f(GLOW_SIGMA * px_scale(width, height))},"
+            f"scale={width}:{height},"
+            f"eq=brightness='min(1,{env})-1':eval=frame[gp_c];"
+            f"[gp_a][gp_c]blend=c0_mode=screen:c0_opacity={_f(GLOW_OPACITY)}:c1_mode=normal:c1_opacity=0:"
+            f"c2_mode=normal:c2_opacity=0:enable='{on}'[{dst}]")
+
+
+def mblur(spec: dict, source_size: tuple[int, int]) -> str:
+    """Directional motion blur at any angle (pass 1, source frames): gblur only
+    blurs along x or y, so the frame turns until the motion is horizontal,
+    blurs horizontally and turns back. `amount` is px in a 1920-wide frame."""
+    sw, sh = source_size
+    angle = float(spec.get("angle") or 0.0)
+    sigma = max(0.5, float(spec["amount"]) * sw / 1920 / 2)
+    diag = int(math.ceil(math.hypot(sw, sh) / 2)) * 2
+    a = math.radians(angle)                 # rotate turns clockwise for a positive angle:
+    return (f"rotate={a:.6f}:ow={diag}:oh={diag}:c=black,"     # up (90°) becomes right
+            f"gblur=sigma={_f(sigma)}:sigmaV=0.01,"
+            f"rotate={-a:.6f}:ow={diag}:oh={diag}:c=black,crop={sw}:{sh}")
+
+
+def _window(events: list[Event], fps: int | None) -> str:
+    """enable expression for the events' spans: by frame number when `fps` is
+    given ([t, t + dur) exactly), else by time (both ends inclusive: one
+    frame more at the end; kept for callers that do not pass the fps)."""
+    if fps:
+        return _frames_enable([frames_of(e.t, e.dur, fps) for e in events])
+    return _sum([f"between(t,{_f(e.t)},{_f(e.t + e.dur)})" for e in events])
+
+
+def blackout(events: list[Event], fps: int | None = None) -> str:
     """The whole frame black during the "black" events (empty if there are none)."""
     ev = [e for e in events if e.kind == "black"]
     if not ev:
         return ""
-    enable = _sum([f"between(t,{_f(e.t)},{_f(e.t + e.dur)})" for e in ev])
-    return f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='{enable}'"
+    return f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='{_window(ev, fps)}'"
 
 
 def gain(keys: list) -> str:
@@ -211,19 +389,23 @@ def gain(keys: list) -> str:
     return f"volume='{_sum(terms)}':eval=frame"
 
 
-def rgb(events: list[Event], intensity: float = 1.0) -> str:
-    """rgbashift switched on during the "rgb" events (empty if there are none)."""
+def rgb(events: list[Event], intensity: float = 1.0, fps: int | None = None, scale: float = 1.0) -> str:
+    """Color split during the "rgb" events (empty if there are none): the
+    chroma planes shifted opposite ways, in YUV. rgbashift works in RGB, so
+    FFmpeg converted the WHOLE edit to RGB and back even while it was off, and
+    the round trip clipped saturated colors (luma −2.9 on average, measured)."""
     ev = [e for e in events if e.kind == "rgb"]
     if not ev:
         return ""
-    px = max(2, int(round(RGB_PX * intensity * max(e.intensity for e in ev))))
-    enable = _sum([f"between(t,{_f(e.t)},{_f(e.t + e.dur)})" for e in ev])
-    return f"rgbashift=rh=-{px}:bh={px}:enable='{enable}'"
+    px = max(2, int(round(RGB_PX * scale * intensity * max(e.intensity for e in ev))))
+    half = max(1, px // 2)                   # chroma is half the width in 4:2:0
+    return f"chromashift=crh=-{half}:cbh={half}:enable='{_window(ev, fps)}'"
 
 
 def glow(src: str, dst: str, amount: float, width: int, height: int) -> str:
     """Soft glow (cheap bloom): the image blurred at 1/4, added in screen mode.
     `src`/`dst` are filter_complex labels."""
     return (f"[{src}]split[gl_a][gl_b];"
-            f"[gl_b]scale={width // 4}:{height // 4},gblur=sigma=6,scale={width}:{height}[gl_c];"
+            f"[gl_b]scale={width // 4}:{height // 4},gblur=sigma={_f(6 * px_scale(width, height))},"
+            f"scale={width}:{height}[gl_c];"
             f"[gl_a][gl_c]blend=all_mode=screen:all_opacity={_f(min(1.0, amount) * 0.45)}[{dst}]")

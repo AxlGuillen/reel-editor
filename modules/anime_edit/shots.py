@@ -33,13 +33,16 @@ THUMB_W = 320
 SHOT_BRIGHTNESS = (25, 215)  # outside this the shot is a flash or a fade
 
 
-def _cuts_scenedetect(path: str) -> list[float] | None:
+ADAPTIVE = {"adaptive_threshold": 2.5, "min_scene_len": 4}
+
+
+def _cuts_scenedetect(path: str, start: float | None = None, end: float | None = None) -> list[float] | None:
     try:
         from scenedetect import AdaptiveDetector, detect
     except ImportError:
         return None
     try:
-        scenes = detect(path, AdaptiveDetector(adaptive_threshold=2.5, min_scene_len=4))
+        scenes = detect(path, AdaptiveDetector(**ADAPTIVE), start_time=start, end_time=end)
     except Exception:  # noqa: BLE001 - a file OpenCV can't open or decode: scdet reads it
         return None
     # `seconds` in new versions; get_seconds() in old ones. (`getattr(a, "seconds",
@@ -47,17 +50,49 @@ def _cuts_scenedetect(path: str) -> list[float] | None:
     return [float(a.seconds if hasattr(a, "seconds") else a.get_seconds()) for a, _ in scenes][1:]
 
 
-def _cuts_ffmpeg(path: str) -> list[float]:
-    err = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "info", "-i", path, "-an",
+def _cuts_ffmpeg(path: str, start: float | None = None, end: float | None = None) -> list[float]:
+    span = (["-ss", f"{start:.3f}"] if start else []) + (["-to", f"{end:.3f}"] if end else [])
+    err = ffmpeg_runner.capture([config.FFMPEG_PATH, "-v", "info", *span, "-copyts", "-i", path, "-an",
                                  "-vf", "scale=320:-2,scdet=threshold=12", "-f", "null", "-"],
                                 timeout=1800, stderr=True).decode("utf-8", "replace")
     return [float(m) for m in re.findall(r"lavfi\.scd\.time:\s*([\d.]+)", err)]
 
 
-def cuts(path: str) -> list[float]:
-    """Seconds where the shot changes (without 0)."""
-    found = _cuts_scenedetect(path)
-    return sorted(found if found is not None else _cuts_ffmpeg(path))
+def cuts(path: str, start: float | None = None, end: float | None = None) -> list[float]:
+    """Seconds of the file where the shot changes (without the first shot's
+    start). `start`/`end` limit it to a span (a fight in a 24-min episode)."""
+    found = _cuts_scenedetect(path, start, end)
+    found = found if found is not None else _cuts_ffmpeg(path, start, end)
+    return sorted(t for t in found if (start is None or t > start + 1e-3))
+
+
+class FrameCuts:
+    """The same AdaptiveDetector as cuts(), fed with frames another reader
+    already decoded (the motion map decodes once and shares its frames).
+    Frames are BGR uint8; returns the frame numbers where a shot starts.
+    None if PySceneDetect is not installed (the caller falls back to cuts())."""
+
+    def __init__(self, fps: float):
+        try:
+            from scenedetect import AdaptiveDetector
+            from scenedetect.common import FrameTimecode
+        except ImportError:
+            self.detector = None
+            return
+        self.detector, self._tc, self.fps = AdaptiveDetector(**ADAPTIVE), FrameTimecode, fps
+        self.found: list[int] = []
+        self.last = 0
+
+    def feed(self, k: int, frame: np.ndarray) -> None:
+        if self.detector is not None:
+            self.found += [int(c.frame_num) for c in self.detector.process_frame(self._tc(k, self.fps), frame)]
+            self.last = k
+
+    def finish(self) -> list[int] | None:
+        if self.detector is None:
+            return None
+        self.found += [int(c.frame_num) for c in self.detector.post_process(self._tc(self.last + 1, self.fps))]
+        return sorted(set(c for c in self.found if c > 0))
 
 
 def _samples(path: str) -> np.ndarray:

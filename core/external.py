@@ -65,18 +65,51 @@ def _assemble(folder: str, fps: float, out: str) -> str:
     return out
 
 
-def interpolate(src: str, start: float, end: float, factor: int, work: str) -> tuple[str, float]:
+DEDUPE_DIFF = 1.0             # mean |Δ| (0–255) on a 160-px gray copy below which a frame repeats the drawing
+
+
+def drop_repeats(folder: str) -> int:
+    """Drops the frames that repeat the previous drawing (anime on twos or
+    threes) from a folder of numbered PNGs and renumbers the rest. RIFE fed
+    with repeats invents nothing between them and then jumps; fed with the
+    drawings only, every invented frame moves. Returns how many are left."""
+    import numpy as np
+    from PIL import Image
+    files = sorted(glob.glob(os.path.join(folder, "*.png")))
+    keep, prev = [], None
+    for path in files:
+        with Image.open(path) as im:
+            small = np.asarray(im.convert("L").resize((160, 90)), dtype=np.float32)
+        if prev is None or float(np.abs(small - prev).mean()) >= DEDUPE_DIFF:
+            keep.append(path)
+            prev = small
+    for path in files:
+        if path not in keep:
+            os.remove(path)
+    for i, path in enumerate(keep, 1):
+        os.replace(path, os.path.join(folder, f"_{i:08d}.png"))
+    for i in range(1, len(keep) + 1):
+        os.replace(os.path.join(folder, f"_{i:08d}.png"), os.path.join(folder, f"{i:08d}.png"))
+    return len(keep)
+
+
+def interpolate(src: str, start: float, end: float, factor: int, work: str,
+                dedupe: bool = False) -> tuple[str, float]:
     """[start, end] of `src` with `factor` times more frames (RIFE).
 
     Returns (file, new fps). The file lasts as long as the span: when it is
     slowed down later with setpts, the invented frames are what makes the
-    slow motion smooth. The span starts at 0 (start → 0)."""
+    slow motion smooth. The span starts at 0 (start → 0). With `dedupe` the
+    repeated drawings go first, and RIFE fills the same duration from the
+    drawings alone."""
     fps = ffmpeg_runner.probe_fps(src) or 24.0
     frames_in, frames_out = os.path.join(work, "rife_in"), os.path.join(work, "rife_out")
     shutil.rmtree(frames_out, ignore_errors=True)
     os.makedirs(frames_out)
     n = _extract(src, start, end, frames_in)
-    if n < 2:
+    if dedupe and n >= 2:
+        drop_repeats(frames_in)
+    if len(glob.glob(os.path.join(frames_in, "*.png"))) < 2:
         raise RuntimeError("El tramo a interpolar tiene menos de 2 cuadros.")
     _run([config.RIFE_PATH, "-i", frames_in, "-o", frames_out, "-n", str(n * factor), "-f", "%08d.png"])
     out = _assemble(frames_out, fps * factor, os.path.join(work, "interpolated.mp4"))

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "note": "Bloques del edit por mapa de movimiento (fase 4). Cada toma del preset manga recibe un bloque: por la curva de la canción (sección → intensidad) o porque lo pide Claude. El bloque decide los efectos; el código los pone en el cuadro del golpe real (mapa de movimiento) y encaja el golpe en el beat. intensity 1–5; bars: compases típicos; effects: los del catálogo que usa; needs: lo que el mapa de la toma tiene que tener; available=false: todavía no se puede armar.",
+  "blocks": [
+    {"id": "calma", "intensity": 1, "bars": [1, 4], "effects": ["push"], "needs": {},
+     "description": "Respira: un acercamiento lento, sin acentos. Mejor si el mapa ve calma."},
+    {"id": "texto", "intensity": 1, "bars": [1, 2], "effects": ["push"], "needs": {},
+     "description": "Toma quieta para un texto propio (layout invert): acercamiento lento, nada que compita."},
+    {"id": "panel", "intensity": 2, "bars": [0.5, 0.5], "effects": ["panel", "flash_mix"], "needs": {},
+     "description": "La pausa con panel de manga (2 tiempos). Lo arma el preset manga."},
+    {"id": "camara_lenta", "intensity": 2, "bars": [1, 2], "effects": ["ramp", "dedupe", "zoom"],
+     "needs": {"impact": {"min": 1}}, "speed": 0.6,
+     "description": "La toma a 0.6× (con RIFE y sin dibujos repetidos, si está), zoom al centro en su golpe."},
+    {"id": "pantalla_dividida", "intensity": 3, "bars": [1, 2], "effects": [], "needs": {}, "available": false,
+     "description": "Dos tomas lado a lado. Necesita un plano con dos fuentes (el motor tiene una por plano): queda pendiente."},
+    {"id": "rampa", "intensity": 3, "bars": [1, 2], "effects": ["ramp", "flash", "shake"],
+     "needs": {"impact": {"min": 1}},
+     "description": "Rápido hacia el golpe más fuerte y lento después, con el golpe en el beat; destello y sacudida en su dirección."},
+    {"id": "rafaga_zooms", "intensity": 4, "bars": [1, 1], "effects": ["hold", "zoom"], "needs": {},
+     "description": "Zoom en escalera, un escalón por beat, hacia el centro de la acción."},
+    {"id": "estrobo", "intensity": 4, "bars": [1, 2], "effects": ["strobe"], "needs": {}, "sections": ["buildup"],
+     "description": "Estrobo cada 2 cuadros: la subida antes del drop."},
+    {"id": "rafaga_golpes", "intensity": 5, "bars": [1, 2], "effects": ["flash", "shake", "zoom", "invert"],
+     "needs": {"impact": {"min": 3}},
+     "description": "Cada golpe de la toma con su acento (destello, sacudida en su dirección, zoom al centro); el más fuerte invierte un cuadro."}
+  ],
+  "curve": {"intro": 1, "verse": 2, "bridge": 1, "outro": 1, "chorus": 4, "buildup": 3, "drop": 5},
+  "transitions": {"types": ["whip", "flash", "black", "invert", "zoom"], "min_types": 3, "max_per_type": 6,
+                  "from_intensity": 3,
+                  "note": "En los cortes entre tomas con intensidad ≥ 3: al menos 3 tipos, ninguno más de 6 veces; el resto, corte seco."}
+}

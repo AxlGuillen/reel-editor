@@ -16,14 +16,21 @@ dominates the total time.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 import config
 from core import external, ffmpeg_runner, file_utils, job_manager
-from modules.editing import effects, timing, titles
+from modules.editing import bank2, effects, panels, timing, titles
+
 from modules.editing.edl import Edl, Piece, Segment
+
+# events drawn as a full-frame RGBA sequence (editing.panels) and overlaid
+SEQUENCE_KINDS = ("panel", "follow", "speedlines", "glints")
+_SEQUENCE_DRAW = {"panel": "frames", "follow": "follow_frames", "speedlines": "speedline_frames",
+                  "glints": "glint_frames"}
 
 INTERMEDIATE_CRF = 14
 PARALLEL = 3
@@ -58,13 +65,43 @@ def vf_vertical_blur(width: int, height: int, scale: float = 1.0) -> str:
             f"[vb_bg][vb_fg]overlay=(W-w)/2:(H-h)/2")
 
 
+SPLIT_LINE = 6                # px of the white seam between the two halves
+
+
+def vf_split(layout: str, width: int, height: int, fps: float) -> str:
+    """Split-screen geometry: [0:v] and [1:v] each cover their half (or, in
+    `diagonal`, the whole frame, cut along the diagonal from the top right to
+    the bottom left) with a white seam. Last chain left open, like vf_cover."""
+    f = f"fps={fps:.6f},"           # the second source on the first one's clock
+    line_px = max(2, round(SPLIT_LINE * effects.px_scale(width, height) / 2) * 2)
+    if layout == "diagonal":
+        cover = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=gbrp"
+        line = line_px / (2 * min(width, height))
+        return (f"[0:v]{cover}[sp_a];[1:v]{f}{cover}[sp_b];"
+                f"[sp_a][sp_b]blend=all_expr='if(lt(abs(X/W+Y/H-1),{line:.5f}),255,"
+                f"if(lt(X/W+Y/H,1),A,B))',format=yuv420p")
+    if layout == "left_right":
+        w, h, stack = width // 2 // 2 * 2, height, "hstack"
+        seam = f"drawbox=x={w - line_px // 2}:y=0:w={line_px}:h=ih:color=white:t=fill"
+    else:
+        w, h, stack = width, height // 2 // 2 * 2, "vstack"
+        seam = f"drawbox=x=0:y={h - line_px // 2}:w=iw:h={line_px}:color=white:t=fill"
+    cover = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,format=yuv420p"
+    return (f"[0:v]{cover}[sp_a];[1:v]{f}{cover}[sp_b];[sp_a][sp_b]{stack}=inputs=2,"
+            f"scale={width}:{height},{seam}")
+
+
 def _n(dur: float, fps: int) -> int:
     return max(1, round(dur * fps))
 
 
 def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
-                with_audio: bool, source_fps: float) -> list[str]:
-    """Command for one shot: geometry + retimed pieces → .mkv intermediate."""
+                with_audio: bool, source_fps: float, source_size: tuple[int, int] | None = None,
+                windows: list | None = None, intensity: float = 1.0) -> list[str]:
+    """Command for one shot: geometry + retimed pieces → .mkv intermediate.
+    `source_size` is needed for Segment.mblur (it blurs the source frames).
+    `windows`: the window effects (bank2) that fall in this shot, with times
+    relative to its start (render.shot_windows)."""
     step = 1.0 / (source_fps or 30)
     a = min(p.start for p in seg.pieces)
     b = max(max(p.end, p.start + 2 * step) for p in seg.pieces)
@@ -72,9 +109,25 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
     cmd = [config.FFMPEG_PATH, "-y", "-ss", f"{ss:.3f}", "-t", f"{b - ss + 0.3:.3f}", "-i", seg.source]
     k = len(seg.pieces)
     geo = (seg.vf or vf_cover(width, height)).replace(SOURCE_T0, f"{ss:.4f}")
+    inputs = 1
+    if seg.split:
+        # split.start is the second source's instant at the shot's first piece
+        # (a): its input starts that far before, so both share the clock
+        ss2 = float(seg.split.get("start", 0.0)) - (a - ss)
+        pad = max(0.0, -ss2)
+        cmd += ["-ss", f"{max(0.0, ss2):.3f}", "-t", f"{b - ss + 0.3:.3f}", "-i", seg.split["source"]]
+        inputs = 2
+        geo = vf_split(seg.split.get("layout", "top_bottom"), width, height, source_fps or 30)
+        if pad:
+            geo = geo.replace("[1:v]", f"[1:v]tpad=start_duration={pad:.4f}:start_mode=clone,", 1)
     # A graph that already names its input ([0:v]…, like competitivo's layout)
     # goes as-is; otherwise the input is prepended. Its last chain must stay
     # open: the retime is appended here.
+    if seg.mblur:
+        if not source_size:
+            raise ValueError("El desenfoque de movimiento necesita el tamaño de la fuente.")
+        blur = effects.mblur(seg.mblur, source_size)
+        geo = (geo.replace("[0:v]", f"[0:v]{blur},", 1) if geo.startswith("[0:v]") else f"{blur},{geo}")
     head = geo if geo.startswith("[") else f"[0:v]{geo}"
     tint = f",{effects.TINTS[seg.tint]}" if seg.tint else ""
     parts = [f"{head}{tint},setsar=1,format=yuv420p,split={k}" + "".join(f"[p{i}]" for i in range(k))]
@@ -84,11 +137,24 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
         if p.frozen:
             src = f"trim=start={rel:.4f}:duration={2 * step:.4f},setpts=PTS-STARTPTS"
         else:
+            zero = f"{rel:.6f}/TB" if seg.exact_phase else "STARTPTS"
             src = (f"trim=start={rel:.4f}:end={rel + (p.end - p.start):.4f},"
-                   f"setpts=(PTS-STARTPTS)/{p.speed:.6f}")
+                   f"setpts=(PTS-{zero})/{p.speed:.6f}")
         parts.append(f"[p{i}]{src},fps={fps},tpad=stop_mode=clone:stop_duration={p.dur + 1:.3f},"
                      f"trim=end_frame={n},setpts=PTS-STARTPTS[v{i}]")
-    parts.append("".join(f"[v{i}]" for i in range(k)) + f"concat=n={k}:v=1:a=0[vout]")
+    parts.append("".join(f"[v{i}]" for i in range(k)) + f"concat=n={k}:v=1:a=0[vcat]")
+    vlab = "vcat"
+    for j, e in enumerate(windows or []):
+        asset = None
+        if e.kind == "overlay":
+            if os.path.splitext(e.image)[1].lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                cmd += ["-loop", "1", "-framerate", str(fps), "-t", f"{e.dur + 1:.3f}", "-i", e.image]
+            else:
+                cmd += ["-stream_loop", "-1", "-t", f"{e.dur + 1:.3f}", "-i", e.image]
+            asset = inputs
+            inputs += 1
+        parts.append(bank2.window(vlab, f"wv{j}", e, j, fps, width, height, intensity, asset))
+        vlab = f"wv{j}"
     if with_audio:
         parts.append("[0:a]aresample=48000,aformat=channel_layouts=stereo,asplit="
                      f"{k}" + "".join(f"[q{i}]" for i in range(k)))
@@ -107,17 +173,18 @@ def build_pass1(seg: Segment, out: str, width: int, height: int, fps: int,
     else:
         total = sum(_n(p.dur, fps) for p in seg.pieces) / fps
         cmd += ["-f", "lavfi", "-t", f"{total:.4f}", "-i", "anullsrc=r=48000:cl=stereo"]
-        amap = "1:a"
-    cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", amap,
+        amap = f"{inputs}:a"
+    cmd += ["-filter_complex", ";".join(parts), "-map", f"[{vlab}]", "-map", amap,
             *ffmpeg_runner.video_encode_flags(INTERMEDIATE_CRF), "-c:a", "pcm_s16le", out]
     return cmd
 
 
 def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
                 intensity: float = 1.0, watermark_crop: tuple | None = None,
-                subtitles_ass: str | None = None) -> list[str]:
+                subtitles_ass: str | None = None, panels: dict | None = None) -> list[str]:
     """Pass 2: joins the shots and applies color, accents, titles and music.
-    `subtitles_ass`: the "invert" subtitles (edl.subtitle_words), under the titles."""
+    `subtitles_ass`: the "invert" subtitles (edl.subtitle_words), under the titles.
+    `panels`: {id(event): frame pattern} of the panel events (editing.panels.frames)."""
     dur = timing.frame_count(edl) / edl.fps
     cmd = [config.FFMPEG_PATH, "-y", "-f", "concat", "-safe", "0", "-i", concat_list]
     idx = 1
@@ -128,6 +195,12 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if edl.watermark:
         cmd += ["-i", edl.watermark]
         watermark_idx, idx = idx, idx + 1
+    panel_events = [e for e in edl.events if e.kind in SEQUENCE_KINDS]
+    panel_inputs = []
+    for e in panel_events:
+        cmd += ["-framerate", str(edl.fps), "-start_number", "0", "-i", panels[id(e)]]
+        panel_inputs.append(idx)
+        idx += 1
 
     W, H = edl.width, edl.height
     parts = []
@@ -139,11 +212,34 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if edl.glow > 0:
         parts.append(effects.glow(current, "glowed", edl.glow, W, H))
         current = "glowed"
+    # the panels go over the frozen frame before the accents: a flash whitens them too
+    for j, (e, k) in enumerate(zip(panel_events, panel_inputs)):
+        start = effects.panel_start(e, edl.fps)
+        # in the sequence's own time base (1/fps) half a frame rounds away: the
+        # panel came out a frame early. AVTB (µs) keeps the offset.
+        parts.append(f"[{k}:v]format=rgba,settb=AVTB,setpts=PTS-STARTPTS+{start:.6f}/TB[pn{j}]")
+        parts.append(effects.panel(current, f"pn{j}", f"pv{j}", e, edl.fps))
+        current = f"pv{j}"
+    if any(e.kind == "glow" for e in edl.events):
+        parts.append(effects.glow_pulse(current, "glowp", edl.events, W, H, intensity, edl.fps))
+        current = "glowp"
+    # the window effects (bank2) are not here: they run in each shot's pass 1
+    # (shot_windows). Here, a branch split from the whole edit made the
+    # overlay wait for its first frame: FFmpeg held every frame before each
+    # window and a 3.5-min edit with ~100 windows never got going.
     accents = [f for f in (effects.flash(edl.events, intensity),
+                           effects.flash_mix(edl.events, edl.fps, intensity),
+                           effects.strobe(edl.events, edl.fps, intensity),
                            effects.camera(edl.events, W, H, edl.fps, intensity),
-                           effects.whip_blur(edl.events, intensity),
-                           effects.rgb(edl.events, intensity),
-                           effects.blackout(edl.events)) if f]
+                           effects.whip_blur(edl.events, intensity, effects.px_scale(W, H)),
+                           bank2.shake_blur(edl.events, edl.fps, W, H),
+                           effects.rgb(edl.events, intensity, edl.fps, effects.px_scale(W, H)),
+                           effects.invert(edl.events, edl.fps),
+                           bank2.impactframe(edl.events, edl.fps),
+                           bank2.glitch_chain(edl.events, edl.fps, intensity, effects.px_scale(W, H)),
+                           bank2.satpulse(edl.events, edl.fps, intensity),
+                           bank2.grain(edl.events, edl.fps, intensity),
+                           effects.blackout(edl.events, edl.fps)) if f]
     if edl.vignette:
         accents.append(effects.VIGNETTE)
     from modules.subtitles.processor import ass_filter
@@ -151,6 +247,8 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
         accents.append(ass_filter(subtitles_ass))      # a whole chain (difference blend)
     if ass:
         accents.append(ass_filter(ass))
+    if edl.video_fade_out > 0:
+        accents.append(effects.fade_out(dur, edl.video_fade_out))
     parts.append(f"[{current}]" + (",".join(accents) + "," if accents else "") + "setsar=1[pre]")
     if watermark_idx is not None:
         if watermark_crop:
@@ -172,8 +270,9 @@ def build_final(concat_list: str, edl: Edl, out: str, ass: str | None = None,
     if music_idx is not None:
         fade = min(edl.fade_out, dur / 3)
         vol = effects.gain(edl.music_gain) if edl.music_gain else f"volume={edl.music_volume:.3f}"
-        parts.append(f"[{music_idx}:a]{fmt},atrim=0:{dur:.4f},asetpts=PTS-STARTPTS,"
-                     f"afade=t=out:st={max(0.0, dur - fade):.4f}:d={fade:.4f},{vol}[mus]")
+        fades = (f"afade=t=in:d={edl.music_fade_in:.4f}," if edl.music_fade_in > 0 else "") + \
+                (f"afade=t=out:st={max(0.0, dur - fade):.4f}:d={fade:.4f}," if fade > 0 else "")
+        parts.append(f"[{music_idx}:a]{fmt},atrim=0:{dur:.4f},asetpts=PTS-STARTPTS,{fades}{vol}[mus]")
         sources.append("[mus]")
     if not sources:
         parts.append(f"[0:a]{fmt},volume=0[orig]")
@@ -196,12 +295,33 @@ def _subtitles(edl: Edl) -> str | None:
     from modules.subtitles import processor as subtitles
     from modules.subtitles.schema import SubtitlesParams
     params = SubtitlesParams(layout="invert", **edl.subtitle_style)
-    words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"])}
+    words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"]),
+              **{k: float(w[k]) for k in ("y", "clear") if w.get(k) is not None}}
              for w in edl.subtitle_words if str(w.get("word") or "").strip()]
     if not words:
         return None
     return subtitles._write_ass(subtitles._build_invert_ass([words], params, until=edl.subtitle_until,
                                                             windows=edl.subtitle_windows or None))
+
+
+def shot_windows(edl: Edl) -> list[list]:
+    """The window effects (bank2) of each shot, with times relative to the
+    shot's first frame. A window across a cut is split at the cut."""
+    fps = edl.fps
+    starts, f = [], 0
+    for seg in edl.segments:
+        starts.append(f)
+        f += sum(_n(p.dur, fps) for p in seg.pieces)
+    starts.append(f)
+    out: list[list] = [[] for _ in edl.segments]
+    for e in sorted((e for e in edl.events if bank2.is_window(e)), key=lambda e: e.t):
+        a, b = effects.frames_of(e.t, e.dur, fps)
+        for i in range(len(edl.segments)):
+            s0, s1 = starts[i], starts[i + 1]
+            lo, hi = max(a, s0), min(b, s1 - 1)
+            if lo <= hi:
+                out[i].append(dataclasses.replace(e, t=(lo - s0) / fps, dur=(hi - lo + 1) / fps))
+    return out
 
 
 def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> Segment:
@@ -222,9 +342,9 @@ def _prepare(seg: Segment, work: str, interpolate: bool, upscale_below: int) -> 
         start, end = 0.0, b - a
     if use_rife:
         factor = 4 if slowest < 0.3 else 2
-        source, _ = external.interpolate(source, start, end, factor, work)
+        source, _ = external.interpolate(source, start, end, factor, work, dedupe=seg.dedupe)
     pieces = [Piece(p.start - a, p.end - a, p.dur) for p in seg.pieces]
-    return Segment(source, pieces, seg.label, seg.vf, False, seg.tint)
+    return dataclasses.replace(seg, source=source, pieces=pieces, interpolate=False)
 
 
 def render(edl: Edl, out: str, job_id: str | None, work: str, *,
@@ -248,6 +368,8 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
     done = 0
     ass = subs = None
     try:
+        windows = shot_windows(edl)
+
         def one(i: int) -> str:
             seg = edl.segments[i]
             sub = os.path.join(work, f"pre_{i:03d}")
@@ -257,8 +379,9 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
             source_fps = ffmpeg_runner.probe_fps(ready.source) or 30.0
             with_audio = edl.uses_original and ffmpeg_runner.has_audio_stream(ready.source)
             path = os.path.join(work, f"shot_{i:03d}.mkv")
-            ffmpeg_runner.capture(build_pass1(ready, path, edl.width, edl.height, edl.fps, with_audio, source_fps),
-                                  timeout=1800, cwd=config.BASE_DIR)
+            size = ffmpeg_runner.probe_resolution(ready.source) if ready.mblur else None
+            ffmpeg_runner.capture(build_pass1(ready, path, edl.width, edl.height, edl.fps, with_audio, source_fps,
+                                              size, windows[i], intensity), timeout=1800, cwd=config.BASE_DIR)
             shutil.rmtree(sub, ignore_errors=True)
             return path
 
@@ -285,8 +408,11 @@ def render(edl: Edl, out: str, job_id: str | None, work: str, *,
                 fh.write(f"file '{path}'\n")
         ass = titles.write(edl.texts, edl.width, edl.height, text_y, accent)
         subs = _subtitles(edl)
+        prepared = {id(e): getattr(panels, _SEQUENCE_DRAW[e.kind])(
+                        e, edl.width, edl.height, edl.fps, os.path.join(work, "panels"))
+                    for e in edl.events if e.kind in SEQUENCE_KINDS}
         report("Color, acentos y música…", mid)
-        cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop, subs)
+        cmd = build_final(concat_list, edl, out, ass, intensity, watermark_crop, subs, prepared)
         if job_id:
             ffmpeg_runner.run(cmd, job_id, total_duration=edl.dur, cwd=config.BASE_DIR,
                               progress_range=(mid, hi))

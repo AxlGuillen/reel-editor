@@ -348,3 +348,82 @@ def nearest_beat(beats: list[float], t: float) -> int:
     """Index of the beat closest to `t`."""
     arr = np.asarray(beats)
     return int(np.argmin(np.abs(arr - t)))
+
+
+# ---------------------------------------------------------------- constant grid
+
+GRID_SPAN = 0.04              # BPMs searched: the tracker's ± 4 %
+GRID_STEP = 0.005             # BPM
+
+
+def coherence(onset: np.ndarray, frame_s: float, bpm: float) -> tuple[float, float]:
+    """(how well every onset lines up on a constant grid of `bpm`, 0–1; the
+    grid's phase in s, 0 ≤ phase < one beat). The onsets weigh by strength."""
+    period = 60.0 / bpm
+    t = np.arange(len(onset)) * frame_s
+    z = np.sum(onset * np.exp(2j * np.pi * t / period)) / max(float(onset.sum()), 1e-9)
+    return float(abs(z)), float((np.angle(z) / (2 * np.pi)) % 1.0 * period)
+
+
+def measure_grid(y: np.ndarray, sr: int = SR, bpm_hint: float | None = None,
+                 downbeats: list[float] | None = None, start: float = 0.0, end: float | None = None) -> dict:
+    """The constant grid of a song with a steady tempo: the BPM and phase that
+    line up ALL the onsets in [start, end) (phase coherence), not the tracker's
+    beats. A 2.4 % tracker error ("I Will Survive": 127.66 tracked, 128.00
+    measured) is 5 beats off by the end of the song. `phase` is a downbeat:
+    of the 4 grid phases, the one nearest the tracker's `downbeats`."""
+    import librosa
+    onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP_BEAT)
+    frame_s = HOP_BEAT / sr
+    a = int(start / frame_s)
+    b = len(onset) if end is None else int(end / frame_s)
+    win = np.zeros_like(onset)
+    win[a:b] = onset[a:b] - np.median(onset[a:b])
+    win = np.clip(win, 0, None)
+    hint = bpm_hint or float(librosa.feature.tempo(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT)[0])
+    bpms = np.arange(hint * (1 - GRID_SPAN), hint * (1 + GRID_SPAN), GRID_STEP)
+    scores = [coherence(win, frame_s, float(x))[0] for x in bpms]
+    bpm = float(bpms[int(np.argmax(scores))])
+    # refine to 0.001 BPM around the best
+    fine = np.arange(bpm - GRID_STEP, bpm + GRID_STEP, 0.001)
+    fs = [coherence(win, frame_s, float(x)) for x in fine]
+    k = int(np.argmax([c for c, _ in fs]))
+    bpm, (coh, phase) = round(float(fine[k]), 3), fs[k]
+    beat = 60.0 / bpm
+    bar_phase = 0
+    if downbeats:
+        d = np.asarray(downbeats, dtype=float)
+        best = None
+        for p in range(4):
+            ref = phase + p * beat
+            off = (d - ref) % (4 * beat)
+            dist = np.minimum(off, 4 * beat - off)
+            m = float(np.median(dist))
+            if best is None or m < best:
+                best, bar_phase = m, p
+    phase = (phase + bar_phase * beat) % (4 * beat)
+    return {"bpm": bpm, "phase": round(phase, 4), "coherence": round(coh, 4), "tracker_bpm": round(hint, 3)}
+
+
+DRIFT_TIGHTNESS = 400         # librosa's DP: high = the tempo moves slowly (a drummer speeding up, not jumps)
+
+
+def track_drifting(y: np.ndarray, sr: int = SR, bpm_hint: float = 120.0,
+                   tightness: float = DRIFT_TIGHTNESS) -> dict:
+    """The beats of a song whose tempo DRIFTS (a live drummer: Nightcore of a
+    band cover, 163 → 167 BPM over 3:38), where no constant grid fits
+    (measure_grid's coherence < 0.15). Dynamic programming with a tempo prior
+    at `bpm_hint` (the full-time tempo: the tracker often reports half) and a
+    high tightness, so the tempo follows the song slowly instead of jumping.
+    → {"beats" [s], "bpm" (median), "bpm_from", "bpm_to" (first / last 32 beats)}."""
+    import librosa
+    onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP_BEAT)
+    _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=HOP_BEAT,
+                                        start_bpm=bpm_hint, tightness=tightness, units="frames")
+    beats = np.asarray(frames, dtype=float) * HOP_BEAT / sr
+    if len(beats) < 8:
+        raise ValueError("No se encontraron beats suficientes en la canción.")
+    ibi = np.diff(beats)
+    head, tail = ibi[:32], ibi[-32:]
+    return {"beats": [round(float(b), 4) for b in beats], "bpm": round(60 / float(np.median(ibi)), 2),
+            "bpm_from": round(60 / float(np.mean(head)), 2), "bpm_to": round(60 / float(np.mean(tail)), 2)}

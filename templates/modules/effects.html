@@ -1,0 +1,42 @@
+<div class="module-header">
+  <h1><svg class="icon h-icon"><use href="#i-sparkles"/></svg> Efectos</h1>
+  <p class="subtitle">El banco de efectos del motor de edits: cada uno sobre la misma toma, con la dirección y el centro del mapa de movimiento</p>
+</div>
+
+<section class="card">
+  <div class="ed-file">
+    <input type="file" id="fx-video" accept="video/*,.mp4,.mov,.mkv,.avi" hidden>
+    <button type="button" id="fx-video-btn" class="btn-secondary">Elegir video</button>
+    <button type="button" id="fx-lib-btn" class="btn-secondary">Elegir de mis capturas</button>
+    <span id="fx-video-name" class="file-name"></span>
+    <span class="ed-or">o</span>
+    <input type="text" id="fx-path" class="ed-input" style="flex:1 1 260px" placeholder="Ruta de un archivo en esta compu">
+  </div>
+  <div class="ed-row">
+    <label class="control"><span>Desde (s o m:ss)</span><input type="text" id="fx-start" class="ed-input" placeholder="0"></label>
+  </div>
+  <div id="fx-pick" class="fx-pick"></div>
+  <button id="fx-process-btn" class="btn-primary">Armar la galería</button>
+  <p class="hint">2.4 s de la toma, con el efecto en el segundo 1. La sacudida, el whip y el desenfoque toman el ángulo del golpe más cercano; el zoom apunta al centro de la acción.</p>
+</section>
+
+<div id="fx-progress-wrap" class="card hidden">
+  <div class="progress-bar"><div id="fx-progress-fill"></div></div>
+  <p id="fx-progress-label">Armando… 0%</p>
+</div>
+
+<div id="fx-result-wrap" class="card card-accent hidden">
+  <p id="fx-hints" class="hint"></p>
+  <img id="fx-sheet" class="mo-sheet" alt="Galería de efectos">
+  <div id="fx-grid" class="fx-grid"></div>
+</div>
+
+<div id="fx-error-wrap" class="card error hidden"><p id="fx-error-msg"></p></div>
+
+<section class="card">
+  <h2 class="fx-h2">Catálogo</h2>
+  <table class="fx-table">
+    <thead><tr><th>Efecto</th><th>Dónde</th><th>Nivel</th><th>Qué hace</th><th>Cuándo</th></tr></thead>
+    <tbody id="fx-catalog"></tbody>
+  </table>
+</section>

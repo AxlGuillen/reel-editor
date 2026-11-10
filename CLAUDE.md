@@ -37,6 +37,7 @@ reel-editor/
 │   │                             Archivo Black, Montserrat ExtraBold/Black); SOLO archivos de fuente
 │   ├── font_licenses/          ← licencias OFL de las fuentes (fuera de fonts/ a propósito)
 │   ├── luts/                   ← LUTs .cube para la gradación de los edits (opcionales)
+│   ├── overlays/               ← light leaks, brasas, texturas para el efecto `overlay` (los pone Axl)
 │   └── vocab.json              ← correcciones de nombres en los subtítulos de Ibai (mal oído → correcto)
 │
 ├── modules/                    ← Cada feature es un módulo independiente
@@ -55,10 +56,13 @@ reel-editor/
 │   ├── competitivo/            ← PIPELINE: highlights de Worlds (solo kills) desde el VOD de Ibai;
 │   │                             edit.py = modo edit (las peleas al ritmo de una canción)
 │   ├── beatmap/                ← Ritmo de una canción: beats, compases, secciones, drop, letra
+│   ├── motion/                 ← Mapa de movimiento de un tramo: golpes, barridos, paneos, calma, cortes
 │   ├── editing/                ← MOTOR de los edits: EDL → render en dos pasadas (sin routes de proceso)
 │   ├── anime_edit/             ← PIPELINE: pelea de anime + canción → variantes de edit (2 fases)
 │   ├── montage/                ← Montaje: capas animadas con alfa sobre un video, por palabra o segundo
 │   ├── studio/                 ← Estudio: las láminas de un deck de Presentations sobre el video, en vivo
+│   ├── tf_explained/           ← MOTOR de «La TF explicada»: expediente del feed, tramos del VOD, hojas, layout de análisis, montaje
+│   ├── research/               ← investigación de referencias (TikTok sin descargar: perfiles, vistas, menciones)
 │   └── pasarela/               ← PIPELINE: video narrado de punta a punta (banda del deck + gameplay vertical
 │                                 + clips), operado por Claude con JSON; highlights de Insights Capture
 │
@@ -74,12 +78,13 @@ reel-editor/
 ├── cache/thumbs/               ← miniaturas de la librería de clips (temporal)
 ├── cache/beatmaps/             ← análisis de canciones cacheados por huella (temporal)
 ├── docs/edits.md               ← beatmap, motor, modo edit, anime_edit, montage y el estudio en detalle
+├── docs/efectos.md             ← el banco de efectos del motor (qué hace cada uno, parámetros, lo medido)
 ├── docs/contratos/             ← montaje.schema.json: el contrato del montaje.json del estudio
 │
 ├── tests/                      ← unittest (sin pytest): python -m unittest discover -s tests -t .
 │   ├── synthetic.py            ← canciones y videos sintéticos (tempo y cortes conocidos)
 │   ├── competitivo/            ← detección de peleas (fixture real), layout, sincronía, validación, edit
-│   └── beatmap/ editing/ anime_edit/ montage/ studio/ pasarela/
+│   └── beatmap/ editing/ anime_edit/ montage/ studio/ motion/ pasarela/ (motion/pairs.json: la verdad de las 10 parejas)
 │
 ├── core/
 │   ├── ffmpeg_runner.py        ← Único lugar que ejecuta FFmpeg + helpers ffprobe
@@ -478,10 +483,48 @@ Fase 1 termina en `status=done`, `finished=false`, `stage="esperando_ancla"`; fa
 
 **El detalle está en [`docs/edits.md`](docs/edits.md)** (contratos, algoritmos, presets, cómo los opera Claude). Lo esencial:
 
+- **motion** (`/api/motion`, vista **Movimiento** en Edits): el mapa de movimiento de un tramo de video, cuadro por cuadro → `motion.json`, cacheado en `cache/motion/` por huella + tramo + ancho + versión. `motion.processor.get(path, start, end)` es lo que usan los demás.
+  - Señales: cadencia (flujo DIS solo entre dibujos distintos), cámara (homografía), fuerza, ángulo y directograma del personaje, luma, saturación, invertido y centro de la acción.
+  - Eventos: `impact`, `smear`, `pan`, `calm`, `flash`, `cut`.
+  - Salidas: un resumen en texto para Claude, la hoja de eventos (JPG) y la vista previa opcional.
+  - Decodifica **al cuadro exacto** (`select` sobre los timestamps del archivo: el seek solo se saltaba cuadros en el mkv).
+  - Medido: 10/10 parejas de Magna vs Dante (golpes a ±1 cuadro) a ~170 cuadros/s en la CPU.
+  - `python -m modules.motion.reference <edit.mp4>` mide un edit terminado:
+    - dónde corta y pone destellos, zooms y sacudidas;
+    - si caen en el beat o en los golpes del anime;
+    - si corta en una rejilla;
+    - la densidad por sección.
+    - Es lo que se usó con la referencia de asen en el A/B.
 - **beatmap** (`/api/beatmap`): beats, primer tiempo de cada compás, energía, secciones (`intro`/`verse`/`chorus`/`bridge`/`outro`), drop, subidas (`buildups`) y la letra palabra por palabra (`words`) → `beatmap.json`, cacheado por huella en `cache/beatmaps/`. `beatmap.processor.get()` es lo que usan los demás. Preview con pitidos para validar la rejilla.
 - **editing** (motor, `/api/editing/options`): una EDL (`Segment` con `Piece` a velocidad, `Event` flash/zoom/shake/rgb/push/hold/whip/black que pueden apuntar a un punto, `Text`, volúmenes automatizados de música y juego, y palabras para subtítulos invertidos) que arman los **planificadores puros** y que `render.py` ejecuta en dos pasadas: por plano (geometría y retime cuadrado al cuadro, intermedios mkv con PCM) y final (LUT/look, glow, acentos, subtítulos, ASS, watermark y música). RIFE / Real-ESRGAN por `core/external.py` si están.
+  - **Banco de efectos:** [`docs/efectos.md`](docs/efectos.md) y `modules/editing/catalog.json` (`GET /api/editing/catalog`).
+    - Eventos nuevos: `panel`, `invert`, `strobe` y `glow`, más el destello `shape="mix"`.
+    - `shake` y `whip` toman `angle` (el del golpe del mapa de movimiento).
+    - En el `Segment`: `mblur` (cualquier ángulo) y `dedupe` (antes de RIFE). `timing.hit_ramp` pone el cuadro del golpe en su tiempo exacto.
+    - **Banco 2** (`editing/bank2.py`): `speedlines` (radiales o paralelas), `impactframe` (bw / inv / poster), `spin`, `zoomblur`, `glitch` (blocks / vhs / flicker), `echo`, `grain`, `satpulse`, `overlay` (assets de `assets/overlays/`), `lens` (con aberración cromática), `tilt` y `shake` con `blur`.
+      - Los caros van en **ventanas**: una rama recortada a sus cuadros y superpuesta de vuelta, así fuera de la ventana el cuadro no se toca.
+      - En la toma: curvas de velocidad suaves (`timing.velocity`, `velocity_hit`) y pantalla dividida (`Segment.split`: arriba/abajo, lado a lado o diagonal).
+    - **Compuestos** (`editing/recipes.py`, de la investigación de los edits más vistos de TikTok): corte con desenfoque, golpe completo, ráfaga de impacto, aislamiento de color y la letra palabra por palabra con los subtítulos invertidos. Primitivas nuevas: `freeze`, `duotone`, `isolate`, `glints`, `blur`. En el preset `manga`: `blur_cuts`, `composites` (momentos en segundos del video), `lyrics_srt` y `resolution` (1080/1440/2160; los px del banco crecen con `effects.px_scale`).
+    - Los efectos con duración se prenden por número de cuadro.
+    - Vista **Efectos** en Edits: galería con cada efecto sobre la misma toma (`POST /api/editing/gallery`).
+    - `follow`: una imagen que sigue al personaje.
+      - La trayectoria sale de `motion.subject.track`, con los detectores de anime de deepghs en ONNX y `onnxruntime`, sin PyTorch.
+      - Los modelos se bajan de Hugging Face a `cache/models/` la primera vez.
+      - `python -m modules.anime_edit.edit4` rearma los logos del pecho del edit 4.
 - **competitivo — modo edit** (`POST /api/competitivo/edit`, job nuevo): con la sesión de la fase 1 y una canción, cada kill cae en un beat, cada pelea arranca en un primer tiempo y la pelea clave cae en el drop. Letreros NOMBRE · CAMPEÓN (el feed guarda el campeón; `kills.kill_authors()`), sin la cámara de Ibai por defecto. Queda como `Edit Mapa N - <titulo>.mp4`. **Por defecto `structure=acts`** (v2) en **orden cronológico** (el cold open es un adelanto de 2–3 s de la pelea clave; `short=1` = solo la clave y la de más puntaje, ~20–25 s; `ambient=1` suma planos de escenario y público sin marcador): cold open y build en tiempo real con la voz de Ibai (subtitulada con el layout invertido), 0.3 s de silencio, el drop al ritmo con una **receta por kill** (`ramp`, `freeze_zoom`, `hard_cut`, `instant_replay` en la clave, `stair_zoom` en multikills) y outro con el nexo; el zoom apunta a la acción (`layout.action_focus`) y el status trae el plan por actos. Desde el feedback del 23/10: sin letreros por defecto (`text=off`), `kill_before_s`/`kill_after_s` (3/2 s), `max_duration_s=0` sin tope, `team=T1`, los **picos de emoción de Ibai** en tiempo real sobre el drop (`voice_peaks`, `competitivo/voice.py`), `last_fight_look=bw` y un render que se puede reintentar. `structure=beat` es el edit anterior, todo al ritmo y sin su voz.
 - **anime_edit** (`/api/anime-edit`, dos fases): fase 1 analiza la canción y detecta los planos (PySceneDetect o `scdet`) con puntaje y **hojas de cuadros numeradas** para que Claude elija; fase 2 renderiza variantes (`impact`, `velocity`, `cinematic`, `lyrics`) con el héroe en el drop. Salida en `EDITS_FOLDER/<title>/`.
+  - El preset **`manga`** son las reglas v1.0 (edit 3 de Magna vs Dante).
+    - Recibe **tomas por segundo** (`takes`) con encuadre B/C/A, foco y color frío/cálido, y las parejas panel–escena (`panels`).
+    - El panel es un evento nuevo de la EDL que congela el último cuadro de la toma. Los cortes caen en la rejilla de `grid` o del beatmap.
+    - Salen además dos `.srt` solo con tiempos.
+    - En la fase 1, `shots=0` evita detectar planos en un episodio entero, y `video_path`/`music_path` toman archivos locales.
+    - `python -m modules.anime_edit.repro` rearma el edit 3 y lo compara con el original.
+    - `python -m modules.anime_edit.long_edit <plan.json>`: el edit largo (la canción entera) desde un plan; plantilla en `anime_edit/examples/`. La letra se alinea con `editing/lyrics_align.py`. El uso, en `docs/edits.md`; la receta, en el PKB (`worlds-2026/receta-edit-largo-anime.md`).
+    - Con **`motion=on`** (por omisión `off`, idéntico a las reglas v1.0), cada toma recibe un bloque de `anime_edit/blocks.json` según la curva de la canción y su mapa de movimiento.
+      - Los efectos caen en el cuadro de salida de cada golpe real (`fit.out_frame`).
+      - `rampa` pone el golpe en el beat.
+      - Las transiciones rotan entre al menos 3 tipos.
+      - Claude puede fijar bloques con `blocks=[{take, block}]`.
 - **montage** (`/api/montage`): capas con alfa (ProRes 4444, VP9, PNG) sobre un video vertical, por segundo o por PALABRA de la transcripción, con las reglas de suiza y Lux; también como `layers` en el `/finish` de Reel Express (misma pasada que los subtítulos).
 
 La regla: **el LLM elige momentos y estilo, nunca tiempos.** Los tiempos los calcula el código.
@@ -661,6 +704,8 @@ expr_sum(terms) -> str                    # suma de términos de una expresión 
                                           # en árbol balanceado (ver abajo)
 capture(command) -> bytes                 # corre FFmpeg y devuelve su stdout (frames en
                                           # rawvideo para analizar con numpy)
+stream(command, frame_bytes)              # lo mismo cuadro por cuadro (generador): un tramo
+                                          # largo se analiza sin tenerlo entero en memoria
 ```
 
 **Dos límites de FFmpeg que en la nube no aparecían:**
@@ -699,6 +744,7 @@ THUMBS_FOLDER                      # cache/thumbs/ (miniaturas de la librería)
 COMPETITIVO_FOLDER                 # resúmenes de competitivo, PERSISTENTE (env REELFORGE_COMPETITIVO_FOLDER)
 EDITS_FOLDER                       # edits de anime y de series sin día, PERSISTENTE (env REELFORGE_EDITS_FOLDER)
 BEATMAPS_FOLDER                    # cache/beatmaps/ (análisis de canciones)
+MOTION_FOLDER                      # cache/motion/ (mapas de movimiento por huella + tramo + ancho + versión)
 SESSIONS_FOLDER                    # cache/competitivo/sessions/ (fases 1 de competitivo, sobreviven a un reinicio)
 CALIBRATION_FOLDER                 # casos reales de calibración, fuera de git (env REELFORGE_CALIBRATION_FOLDER)
 ANCHORS_FOLDER                     # cache/competitivo/anchors/: anclas ya medidas por (VOD, partida)
@@ -731,7 +777,7 @@ En Windows `FFMPEG_PATH` puede necesitar el path completo; o setear las env vars
 
 ## app.py
 
-- Registra los 19 blueprints + `/` (index) + `POST /api/cleanup`.
+- Registra los 20 blueprints + `/` (index) + `POST /api/cleanup`.
 - **La API siempre responde JSON:** `errorhandler` para `RequestEntityTooLarge` (413), `HTTPException` y `Exception` (500) — sin esto el frontend rompía al parsear el HTML de error de Flask.
 - `SEND_FILE_MAX_AGE_DEFAULT = 0`: no cachea estáticos en dev, así el browser toma el JS/CSS recién editado.
 
@@ -753,6 +799,7 @@ Cada módulo trae su propio JS y usa `runJob(apiBase, formData, {onProgress, onD
 - **librosa** (pip) para beatmap y **scenedetect + opencv-python-headless** para los planos de anime_edit (sin scenedetect cae al `scdet` de FFmpeg).
 - **Opcionales** de los edits: `beat-this` (beats con red neuronal), `audio-separator` (voz para la letra), y los binarios `rife-ncnn-vulkan` / `realesrgan-ncnn-vulkan`. `GET /api/editing/options` dice cuáles hay.
 - **Pillow** (pip) para dibujar las tarjetas de jugador (`modules/competitivo/cards.py`).
+- **onnxruntime** (pip, opcional) para seguir personajes (`motion/subject.py`, evento `follow`): los detectores de deepghs se bajan solos de Hugging Face a `cache/models/deepghs/` (~85 MB). Sin él, todo lo demás funciona.
 - **jsonschema** (pip) para validar el `montaje.json` del Estudio contra su contrato.
 - **El servidor local de Presentations** (`node tools/servidor-local.mjs` en ese repo, puerto 3125) para el Estudio: sin él, la vista lo avisa y no lista decks.
 - **faster-whisper** (pip) para subtitles. La 1ª transcripción descarga el modelo (~1.6 GB turbo). En Mac corre en **CPU** (CTranslate2 no usa Metal/GPU); modelos chicos (small/medium) son más livianos.
@@ -786,6 +833,13 @@ carpeta entera: arrastraría `venv/` y, peor, `cookies/`).
 
 ---
 
+## Dónde va cada cosa (decisión de Axl, 07/11/2026)
+
+- **En este repo, el motor y los recursos de cada TIPO de video**, no de cada video: un módulo por tipo (`tf_explained`, `anime_edit` con `long_edit`, `competitivo`…) y lo que reutiliza en `assets/`. Un video concreto es un archivo de datos (un plan JSON, un guion), nunca un script propio. Si hay que escribir un script para un video, lo que sirva para el siguiente se sube al módulo de su tipo.
+- **En el PKB, el conocimiento**: la receta de cada tipo de video (cómo se hace, qué se aprendió, los errores) en `redes-sociales/creador-de-contenido-axelsine/worlds-2026/receta-*.md`. Aquí, en `docs/`, solo cómo se usa el código.
+- **Fuera de git**: los videos, audios y episodios (pesan y tienen derechos). Las salidas van a `EDITS_FOLDER` / `COMPETITIVO_FOLDER`.
+- **Las láminas** siguen en el repo de Presentations: el Estudio las lee de ahí.
+
 ## Idioma del código
 
 Desde el 22 de octubre de 2026 **el código nuevo se escribe en inglés**. La documentación y lo que ve el usuario siguen en español.
@@ -798,7 +852,7 @@ Desde el 22 de octubre de 2026 **el código nuevo se escribe en inglés**. La do
 | Mensajes de error, `stage` de los jobs y textos de la UI | Español |
 | `CLAUDE.md`, `README` de `assets/` y `docs/` | Español |
 
-- **Ya están en inglés:** `beatmap`, `editing`, `anime_edit`, `montage`, `core/external.py`, el modo edit de competitivo (`competitivo/edit.py`, `EditParams`, `/edit` y lo que suma en `kills.py` y `layout.py`) y sus tests (`tests/synthetic.py`).
+- **Ya están en inglés:** `beatmap`, `motion`, `editing`, `anime_edit`, `montage`, `core/external.py`, el modo edit de competitivo (`competitivo/edit.py`, `EditParams`, `/edit` y lo que suma en `kills.py` y `layout.py`) y sus tests (`tests/synthetic.py`).
 - **El código viejo en español** (competitivo, subtitles, reel_express…) **se migra cuando se toca**, no en un refactor aparte. Al tocarlo, se traduce lo que el cambio toca y se deja el resto como está.
 - **Los contratos públicos no se rompen al traducir.** Un campo del formulario, una clave del status o una ruta que ya consume algo (la UI, Claude, otro repo) se cambia solo junto con quien la consume, en el mismo cambio. Por eso el modo edit sigue aceptando `carpeta_dia`, `partido`, `titulo`, `mapa`, `anchors` y `marca_alto` (los comparte con `/finish`) y su status sigue usando `resultado`, `aviso` y `modo`.
 - Lo que viene de fuera conserva su forma: el `manifest.json` de presentations (`archivo`, `laminas`) y las palabras en español de las transcripciones (los números escritos de `montage/layers.py`).

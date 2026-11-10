@@ -331,6 +331,37 @@ def capture(command: list[str], timeout: float = 300, cwd: str | None = None,
     return _capture(command, timeout, cwd, stderr)
 
 
+def stream(command: list[str], frame_bytes: int, cwd: str | None = None):
+    """Runs FFmpeg and yields its stdout in chunks of `frame_bytes` (one raw
+    frame each), so a long span is analyzed without holding it in memory.
+    Raises RuntimeError if FFmpeg fails; closing the generator early kills it."""
+    command, graphs = _spill_long_graphs(command)
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            cwd=cwd, bufsize=frame_bytes * 4)
+    err: list[bytes] = []
+    reader = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
+    reader.start()
+    try:
+        while True:
+            chunk = proc.stdout.read(frame_bytes)
+            if len(chunk) < frame_bytes:
+                break
+            yield chunk
+        proc.wait()
+        reader.join(5)
+        if proc.returncode != 0:
+            tail = b"".join(err).decode("utf-8", "replace").strip().splitlines()[-12:]
+            raise RuntimeError(f"FFmpeg falló (code {proc.returncode}):\n" + "\n".join(tail))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        reader.join(5)
+        proc.stdout.close()
+        proc.stderr.close()
+        _remove(graphs)
+
+
 def _capture(command: list[str], timeout: float, cwd: str | None, stderr: bool) -> bytes:
     command, graphs = _spill_long_graphs(command)
     try:

@@ -58,5 +58,14 @@ PRESETS: dict[str, Preset] = {
 }
 
 
+# The rules v1.0 edit (Magna vs Dante, edit 3): not a cut rule but a planner
+# of its own (anime_edit/manga.py) that takes explicit takes and panel pairs.
+PRESETS["manga"] = Preset(
+    "Reglas v1.0 (edit 3 de Magna vs Dante): tomas elegidas por segundo con encuadre B/C/A y color "
+    "frío o cálido, pausas con panel de manga, la canción completa desde el estribillo, destellos "
+    "en las frases y fundido a negro. Necesita 'takes' (y 'panels' o paneles en línea).",
+    text="off", look="neutral", glow=0.0)
+
+
 def listing() -> list[dict]:
     return [{"id": k, "description": p.description} for k, p in PRESETS.items()]
